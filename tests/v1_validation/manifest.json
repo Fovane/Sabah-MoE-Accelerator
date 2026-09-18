@@ -1,0 +1,155 @@
+{
+ "schema": 1,
+ "note": "v1 confirmatory corpus. Not used in RC4 or v1 development; frozen before any validation run.",
+ "prompts": [
+  {
+   "id": "english_prose_1",
+   "category": "english_prose",
+   "sha256_utf8": "d95dbcc07250c167421b175dcfede61cbde80bc4652b88b47336fe2d7cc3875b"
+  },
+  {
+   "id": "english_prose_2",
+   "category": "english_prose",
+   "sha256_utf8": "3cd9292d99425c1f1712a4d4886d77f3eef3e983b2efdcc2b075b1d22fa39522"
+  },
+  {
+   "id": "turkish_prose_1",
+   "category": "turkish_prose",
+   "sha256_utf8": "d22b23fff8555d6da486c1eb99957139b2fd7380361a44e6a21444b4248d8d7e"
+  },
+  {
+   "id": "turkish_prose_2",
+   "category": "turkish_prose",
+   "sha256_utf8": "303d1c210801e9e37effdba55be2e75dabc3cecf7c5d8c429d294d71a5d64320"
+  },
+  {
+   "id": "python_code_1",
+   "category": "python_code",
+   "sha256_utf8": "f43327f09bdfd5081f7a62d24aad873f2425020edf579baf76d9c95b5a968653"
+  },
+  {
+   "id": "python_code_2",
+   "category": "python_code",
+   "sha256_utf8": "8345e4fb0b6bed6bc59c67893fb7c8d23ee5865f87468374a4eb021cb2c38bdc"
+  },
+  {
+   "id": "json_1",
+   "category": "structured_json",
+   "sha256_utf8": "62d69e54264b432e0eb89248dc80d5cddc3d1f1db2868ec43931c70c48bc40ad"
+  },
+  {
+   "id": "json_2",
+   "category": "structured_json",
+   "sha256_utf8": "00741b1480c631ab4fd6d211144d218cd8ca833ecc5540b4124272cec553d99e"
+  },
+  {
+   "id": "math_1",
+   "category": "math_reasoning",
+   "sha256_utf8": "cabe2efa3b2895fcd55009da02ae6eed43ecb76ba95a58b2d4e294a9b85607b5"
+  },
+  {
+   "id": "math_2",
+   "category": "math_reasoning",
+   "sha256_utf8": "8496c2b4ed4ad78550b74d362fc665faa7d57120dc4462de862c7a6556d163ac"
+  },
+  {
+   "id": "instruction_1",
+   "category": "instruction_following",
+   "sha256_utf8": "7d40973488ac21a63ea961979a1adf1a10689fda505c4084805227fbfd23f8bd"
+  },
+  {
+   "id": "instruction_2",
+   "category": "instruction_following",
+   "sha256_utf8": "32e90b2f4e24f171cc22a47750617d892815968ee1e90575f4043b612f11a33e"
+  },
+  {
+   "id": "long_context_1",
+   "category": "long_context",
+   "sha256_utf8": "cdfd870e4d013ad3be99424e697b8094ae6dff98cb49a1aab0aef86c5ac39ec1"
+  },
+  {
+   "id": "long_context_2",
+   "category": "long_context",
+   "sha256_utf8": "8e32e32249188b7692fe67b8efa261c8369305a37fa0e51a30c2bc846493e9b8"
+  }
+ ],
+ "ubatch": [
+  {
+   "id": "ubatch_511",
+   "n_tokens": 511,
+   "sha256_token_ids": "972471bc012662933d6ac78f79bf28fb869aa83a75ba3da2f912bb0e3a41b022"
+  },
+  {
+   "id": "ubatch_512",
+   "n_tokens": 512,
+   "sha256_token_ids": "0547f82f59972c87829f2c990d072b9f1b6ea11b8969d2b1e395a1c0083ea5d0"
+  },
+  {
+   "id": "ubatch_513",
+   "n_tokens": 513,
+   "sha256_token_ids": "ca705d1794e85697ab241813907eeee543c6f1c4ee8c764c38ad879de8fbb59e"
+  },
+  {
+   "id": "ubatch_1100",
+   "n_tokens": 1100,
+   "sha256_token_ids": "cce1106671593d856b7b69001ad917387b1d558e0e105c8fa5ab075d2b4a3333"
+  }
+ ],
+ "ubatch_source": {
+  "generator": "tools/v1/make_corpus.py:ubatch_passage",
+  "seed": 20260919,
+  "passage_sha256_utf8": "5d9c8c8f8e74d5fd6b5da997dcd00fab2a08240f9e8248b9e0241d48b095464b",
+  "passage_tokens": 7856
+ },
+ "roles": {
+  "sentinel": [
+   "english_prose_1",
+   "turkish_prose_1",
+   "python_code_1",
+   "math_1"
+  ],
+  "cache_invariance": [
+   "json_1",
+   "instruction_1"
+  ],
+  "determinism_repeat": [
+   "json_1",
+   "math_1"
+  ],
+  "multiseq": [
+   "english_prose_2",
+   "turkish_prose_2",
+   "python_code_2",
+   "json_2"
+  ],
+  "api_ab": [
+   "math_2",
+   "instruction_2",
+   "long_context_1",
+   "english_prose_1"
+  ],
+  "api_concurrency_1": [
+   "math_2"
+  ],
+  "api_concurrency_2": [
+   "instruction_2",
+   "turkish_prose_2"
+  ],
+  "api_concurrency_4": [
+   "english_prose_1",
+   "python_code_1",
+   "json_1",
+   "long_context_2"
+  ],
+  "api_stream": [
+   "math_1"
+  ],
+  "benchmark": [
+   "math_1"
+  ]
+ },
+ "files": {
+  "prompts.jsonl": "79207e79f3e75cdd1c203f7a231a00798b56c426703d95820594a7a87a986f24",
+  "ubatch.jsonl": "7d96b240543983e31449f5f9c29284f1aaa462103bcec481f512df08fd858b84"
+ }
+}

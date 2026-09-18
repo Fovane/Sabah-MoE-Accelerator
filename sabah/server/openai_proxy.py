@@ -224,14 +224,15 @@ def _wait_backend(port: int, process: subprocess.Popen, timeout: float = 900.0):
 
 
 def backend_launch(backend: str, exe: str, model: str, backend_port: int, context: int,
-                   n_gpu_layers: int, hot_bytes: int) -> tuple:
+                   n_gpu_layers: int, hot_bytes: int, parallel: int = 4,
+                   validate: bool = False) -> tuple:
     """Command and environment for a backend. Both backends get identical
     graphs and op placement: experts stay in host memory (--cpu-moe) and every
     expert MUL_MAT_ID is sent to the GPU (GGML_OP_OFFLOAD_MIN_BATCH=1), so the
     only difference is who executes it."""
     cmd = [exe, "-m", model, "--host", "127.0.0.1", "--port", str(backend_port),
            "--ctx-size", str(context), "--n-gpu-layers", str(n_gpu_layers),
-           "--cpu-moe", "--no-webui"]
+           "--cpu-moe", "--no-webui", "--parallel", str(parallel)]
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("SABAH_LLAMA", "SABAH_RT_LIB", "GGML_OP_OFFLOAD"))}
     env["GGML_OP_OFFLOAD_MIN_BATCH"] = "1"
@@ -244,6 +245,10 @@ def backend_launch(backend: str, exe: str, model: str, backend_port: int, contex
             os.remove(status)
         env.update(SABAH_LLAMA="1", SABAH_RT_LIB=RUNTIME_LIB,
                    SABAH_LLAMA_HOT_BYTES=str(hot_bytes), SABAH_LLAMA_STATUS_FILE=status)
+        if validate:
+            # self-validating mode: float64 recomputation of 2 sampled outputs
+            # per expert op, and byte verification of every fetch (+ 1/64 hits)
+            env.update(SABAH_LLAMA_SELFCHECK="2", SABAH_LLAMA_VERIFY_BYTES="fetch")
     elif backend != "reference":
         raise ValueError("backend must be 'sabah' or 'reference'")
     return cmd, env
@@ -252,8 +257,8 @@ def backend_launch(backend: str, exe: str, model: str, backend_port: int, contex
 def serve(model: str, host: str = "127.0.0.1", port: int = 8080,
           backend_port: int = 18080, context: int = 4096,
           llama_server: str = "", n_gpu_layers: int = 99,
-          backend: str = "sabah", hot_bytes: int = 1 << 30,
-          allow_reference: bool = False, quiet: bool = False) -> int:
+          backend: str = "sabah", hot_bytes: int = 1 << 30, parallel: int = 4,
+          validate: bool = False, allow_reference: bool = False, quiet: bool = False) -> int:
     profile = inspect_model(model)
     if not profile.supported:
         raise ValueError("unsupported model; Sabah refuses to serve it")
@@ -265,7 +270,8 @@ def serve(model: str, host: str = "127.0.0.1", port: int = 8080,
         raise RuntimeError("backend=reference serves stock llama.cpp expert execution; "
                            "pass --allow-reference to confirm that is intended")
     exe = find_llama_server(llama_server)
-    cmd, env = backend_launch(backend, exe, model, backend_port, context, n_gpu_layers, hot_bytes)
+    cmd, env = backend_launch(backend, exe, model, backend_port, context, n_gpu_layers, hot_bytes,
+                              parallel, validate and backend == "sabah")
     execution = "SABAH_NATIVE_MUL_MAT_ID" if backend == "sabah" else "REFERENCE"
     if not quiet:
         print("execution  : %s" % execution)
@@ -307,6 +313,9 @@ def main(argv=None):
     ap.add_argument("--n-gpu-layers", type=int, default=99)
     ap.add_argument("--backend", choices=["sabah", "reference"], default="sabah")
     ap.add_argument("--hot-bytes", type=int, default=1 << 30)
+    ap.add_argument("--parallel", type=int, default=4)
+    ap.add_argument("--validate", action="store_true",
+                    help="sabah backend: in-runtime float64 self-check and byte verification")
     ap.add_argument("--allow-reference", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)

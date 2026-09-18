@@ -22,37 +22,46 @@ index 000000000..ee7d2aa54
 +target_compile_features(${TARGET} PRIVATE cxx_std_17)
 diff --git a/tools/sabah-diag/sabah-diag.cpp b/tools/sabah-diag/sabah-diag.cpp
 new file mode 100644
-index 000000000..db80f8071
+index 000000000..000b6c22c
 --- /dev/null
 +++ b/tools/sabah-diag/sabah-diag.cpp
-@@ -0,0 +1,294 @@
-+// sabah-diag: deterministic greedy run that dumps what is needed to compare
-+// two execution paths of the same llama.cpp graph without trusting the final
-+// text.
+@@ -0,0 +1,532 @@
++// sabah-diag: deterministic greedy runs that dump what is needed to compare
++// execution paths of the same llama.cpp graph without trusting the final text.
 +//
-+// It writes, per decode step, the full logit vector, the argmax token and the
-+// token actually fed back; and, when asked, selected graph tensors captured
-+// through the scheduler eval callback. For the MoE expert projections it can
-+// also dump the exact MUL_MAT_ID input (src[1]) and ids (src[2]), which is the
-+// boundary where the Sabah bridge takes over.
++// Per decode step it writes the full logit vector, the argmax token and the
++// token actually fed back; on request it also writes selected graph tensors
++// captured through the scheduler eval callback. For expert projections it can
++// dump the exact MUL_MAT_ID input (src[1]) and ids (src[2]): the boundary where
++// the Sabah bridge takes over. The tool only observes the graph.
 +//
-+// Configuration is through standard llama.cpp arguments plus these variables:
++// Standard llama.cpp arguments plus:
 +//
-+//   SABAH_DIAG_OUT      output directory (required)
-+//   SABAH_DIAG_NAMES    comma list of tensor base names to capture. Empty means
-+//                       no eval callback at all, i.e. the uninstrumented graph.
-+//   SABAH_DIAG_LAYERS   optional comma list of layers to capture
-+//   SABAH_DIAG_STEPS    "all" (default), "prefill", "decode", or a comma list
-+//                       of step indices; step 0 is the prompt, step s>0 is the
-+//                       s-th single-token decode
-+//   SABAH_DIAG_MMID     1: also dump MUL_MAT_ID src[1]/src[2] for the captured
-+//                       ffn_moe_gate / ffn_moe_up / ffn_moe_down tensors
-+//   SABAH_DIAG_FORCE    path to an int32 token file; step s feeds forced[s]
-+//                       instead of the argmax (teacher forcing, so two paths
-+//                       are compared on the same context at every step)
-+//   SABAH_DIAG_RAW      1: use -p verbatim instead of the chat template
-+//
-+// The tool never changes the graph: it only observes it.
++//   SABAH_DIAG_OUT       output directory (required)
++//   SABAH_DIAG_MANIFEST  JSON-lines file, one prompt per line:
++//                          {"id": "...", "text": "..."}           chat-templated text
++//                          {"id": "...", "text": "...", "raw": true}  text used verbatim
++//                          {"id": "...", "tokens": [ ... ]}        exact token ids
++//                        optional "n_predict". Without a manifest, -p is used
++//                        and results go directly to SABAH_DIAG_OUT.
++//   SABAH_DIAG_MULTISEQ  1: run every manifest prompt as its own sequence in
++//                        the SAME batches (prefill together, then one token
++//                        per sequence per decode step)
++//   SABAH_DIAG_FORCE_DIR teacher forcing: step s of prompt <id> feeds
++//                        <dir>/<id>/fed.i32[s] instead of the argmax
++//   SABAH_DIAG_FORCE     (single-prompt mode) path of a fed.i32 file
++//   SABAH_DIAG_NAMES     comma list of tensor base names to capture; empty
++//                        means no eval callback (uninstrumented graph)
++//   SABAH_DIAG_LAYERS    optional comma list of layers
++//   SABAH_DIAG_STEPS     "all" | "prefill" | "decode" | comma list of steps
++//   SABAH_DIAG_MMID      1: also dump MUL_MAT_ID src[1] (_in) and src[2] (_ids)
++//                        for captured ffn_moe_gate / ffn_moe_up / ffn_moe_down
++//   SABAH_DIAG_ROWS      "all" (default) or "sel": keep only token rows
++//                        {0, n/3, 2n/3, n-1} of each captured tensor, where n
++//                        is the tensor's token extent. Expert slots are never
++//                        subsampled.
++//   SABAH_DIAG_RAW       1: single-prompt mode uses -p verbatim
++//   SABAH_DIAG_TOKENIZE_ONLY 1: write each prompt's token ids and exit
 +
 +#include "arg.h"
 +#include "chat.h"
@@ -61,24 +70,32 @@ index 000000000..db80f8071
 +#include "ggml.h"
 +#include "ggml-backend.h"
 +
++#include <nlohmann/json.hpp>
++
++#include <algorithm>
 +#include <chrono>
 +#include <cstdio>
 +#include <cstdlib>
 +#include <cstring>
++#include <fstream>
 +#include <map>
 +#include <set>
 +#include <sstream>
 +#include <string>
 +#include <vector>
 +
++using json = nlohmann::ordered_json;
++
 +struct diag_state {
-+    std::string dir;
++    std::string cap_dir;
 +    std::set<std::string> names;
 +    std::set<int> layers;
 +    bool mmid = false;
++    bool sel_rows = false;
 +    bool active = false;
 +    int step = 0;
 +    std::map<std::string, size_t> offsets;
++    std::map<std::string, int> occ;          // occurrences of a key in this step (= ubatch index)
 +    FILE * index = nullptr;
 +    std::vector<uint8_t> buf;
 +};
@@ -98,6 +115,16 @@ index 000000000..db80f8071
 +    return out;
 +}
 +
++static void make_dir(const std::string & d) {
++#if defined(_WIN32)
++    std::string cmd = "mkdir \"" + d + "\" 2>nul";
++    for (auto & c : cmd) if (c == '/') c = '\\';
++#else
++    std::string cmd = "mkdir -p \"" + d + "\"";
++#endif
++    (void) std::system(cmd.c_str());
++}
++
 +static void split_name(const char * full, std::string & base, int & il) {
 +    const std::string s(full);
 +    const size_t p = s.rfind('-');
@@ -111,49 +138,98 @@ index 000000000..db80f8071
 +    il = std::atoi(s.c_str() + p + 1);
 +}
 +
-+// Reads a tensor into a dense row-major buffer, honouring non-contiguous views
-+// (ffn_moe_topk is a view of the argsort result).
-+static bool read_dense(const ggml_tensor * t, std::vector<uint8_t> & out) {
++// Which dimension of a captured tensor indexes token rows. Named explicitly so
++// that expert slots (dim 1 of [rows, n_used, T] tensors) are never subsampled.
++static int token_dim(const std::string & base) {
++    static const std::set<std::string> d1 = {
++        "ffn_moe_topk", "ffn_moe_logits", "ffn_moe_probs", "ffn_moe_out", "ffn_out",
++        "result_norm", "ffn_moe_gate_ids", "ffn_moe_up_ids", "ffn_moe_down_ids",
++        // router weights are [n_used, T] when observed; the graph reshapes
++        // them to [1, n_used, T] only afterwards
++        "ffn_moe_weights", "ffn_moe_weights_norm", "ffn_moe_weights_scaled" };
++    static const std::set<std::string> d2 = {
++        "ffn_moe_gate", "ffn_moe_up", "ffn_moe_down", "ffn_moe_weighted",
++        "ffn_moe_gate_in", "ffn_moe_up_in", "ffn_moe_down_in", "l_last" };
++    if (d1.count(base)) return 1;
++    if (d2.count(base)) return 2;
++    return -1;
++}
++
++static std::vector<int64_t> select_rows(int64_t n, bool sel) {
++    std::vector<int64_t> r;
++    if (!sel || n <= 4) {
++        for (int64_t i = 0; i < n; ++i) r.push_back(i);
++        return r;
++    }
++    for (int64_t v : { (int64_t) 0, n / 3, (2 * n) / 3, n - 1 }) {
++        if (std::find(r.begin(), r.end(), v) == r.end()) r.push_back(v);
++    }
++    return r;
++}
++
++// Dense row-major copy of a tensor, keeping only `keep` indices along `dim`
++// (dim < 0: everything). Honours non-contiguous views (ffn_moe_topk).
++static bool read_rows(const ggml_tensor * t, int dim, const std::vector<int64_t> & keep,
++                      std::vector<uint8_t> & out) {
 +    if (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_I32) return false;
 +    const size_t es = ggml_type_size(t->type);
 +    if ((size_t) t->nb[0] != es) return false;
 +    const size_t row = (size_t) t->ne[0] * es;
-+    out.resize((size_t) ggml_nelements(t) * es);
-+    size_t o = 0;
++    out.clear();
++    std::vector<uint8_t> tmp(row);
++    std::set<int64_t> keep_set(keep.begin(), keep.end());
 +    for (int64_t i3 = 0; i3 < t->ne[3]; ++i3)
 +    for (int64_t i2 = 0; i2 < t->ne[2]; ++i2)
 +    for (int64_t i1 = 0; i1 < t->ne[1]; ++i1) {
++        const int64_t idx = dim == 1 ? i1 : dim == 2 ? i2 : dim == 3 ? i3 : 0;
++        if (dim > 0 && !keep_set.count(idx)) continue;
 +        const size_t off = (size_t) (i1 * t->nb[1] + i2 * t->nb[2] + i3 * t->nb[3]);
-+        ggml_backend_tensor_get(t, out.data() + o, off, row);
-+        o += row;
++        ggml_backend_tensor_get(t, tmp.data(), off, row);
++        out.insert(out.end(), tmp.begin(), tmp.end());
 +    }
 +    return true;
 +}
 +
-+static void dump(diag_state * st, const std::string & base, int il, const ggml_tensor * t) {
++static void dump(diag_state * st, const std::string & base, int il, const ggml_tensor * t,
++                 int occ, int dim_hint) {
 +    if (!t) return;
-+    if (!read_dense(t, st->buf)) {
++    int dim = dim_hint;
++    if (dim > 0 && ggml_n_dims(t) <= dim) dim = -1;           // token extent 1: keep all
++    const int64_t n_tok = dim > 0 ? t->ne[dim] : 1;
++    const std::vector<int64_t> keep = dim > 0 ? select_rows(n_tok, st->sel_rows)
++                                              : std::vector<int64_t>{ 0 };
++    if (!read_rows(t, dim, keep, st->buf)) {
 +        fprintf(stderr, "sabah-diag: skip %s-%d (type %s)\n", base.c_str(), il, ggml_type_name(t->type));
 +        return;
 +    }
 +    const std::string key = il >= 0 ? base + "_L" + std::to_string(il) : base;
-+    // open-append-close: hundreds of (tensor, layer) keys exceed the C
-+    // runtime's open-file limit on Windows
++    // open-append-close: hundreds of keys exceed the CRT open-file limit
 +    const bool first = st->offsets.find(key) == st->offsets.end();
-+    const std::string p = st->dir + "/cap/" + key + ".bin";
++    const std::string p = st->cap_dir + "/" + key + ".bin";
 +    FILE * f = std::fopen(p.c_str(), first ? "wb" : "ab");
 +    if (!f) { fprintf(stderr, "sabah-diag: cannot open %s\n", p.c_str()); std::exit(3); }
 +    std::fwrite(st->buf.data(), 1, st->buf.size(), f);
 +    std::fclose(f);
 +    const size_t off = st->offsets[key];
 +    st->offsets[key] = off + st->buf.size();
-+    fprintf(st->index,
-+            "{\"step\":%d,\"key\":\"%s\",\"name\":\"%s\",\"il\":%d,\"type\":\"%s\","
-+            "\"ne\":[%lld,%lld,%lld,%lld],\"offset\":%zu,\"nbytes\":%zu,\"op\":\"%s\",\"buf\":\"%s\"}\n",
-+            st->step, key.c_str(), base.c_str(), il, ggml_type_name(t->type),
-+            (long long) t->ne[0], (long long) t->ne[1], (long long) t->ne[2], (long long) t->ne[3],
-+            off, st->buf.size(), ggml_op_desc(t),
-+            t->buffer ? ggml_backend_buffer_name(t->buffer) : (t->view_src && t->view_src->buffer ? ggml_backend_buffer_name(t->view_src->buffer) : "none"));
++
++    json rec;
++    rec["step"] = st->step;
++    rec["occ"] = occ;
++    rec["key"] = key;
++    rec["name"] = base;
++    rec["il"] = il;
++    rec["type"] = ggml_type_name(t->type);
++    rec["ne"] = { t->ne[0], t->ne[1], t->ne[2], t->ne[3] };
++    rec["token_dim"] = dim;
++    rec["rows"] = keep;
++    rec["offset"] = off;
++    rec["nbytes"] = st->buf.size();
++    rec["op"] = ggml_op_desc(t);
++    rec["buf"] = t->buffer ? ggml_backend_buffer_name(t->buffer)
++               : (t->view_src && t->view_src->buffer ? ggml_backend_buffer_name(t->view_src->buffer) : "none");
++    const std::string line = rec.dump() + "\n";
++    std::fwrite(line.data(), 1, line.size(), st->index);
 +}
 +
 +static bool diag_cb(struct ggml_tensor * t, bool ask, void * ud) {
@@ -165,15 +241,17 @@ index 000000000..db80f8071
 +                      (st->layers.empty() || il < 0 || st->layers.count(il));
 +    if (ask) return want;
 +    if (!want) return true;
-+    dump(st, base, il, t);
++    const std::string key = il >= 0 ? base + "_L" + std::to_string(il) : base;
++    const int occ = st->occ[key]++;
++    dump(st, base, il, t, occ, token_dim(base));
 +    if (st->mmid && (base == "ffn_moe_gate" || base == "ffn_moe_up" || base == "ffn_moe_down")) {
 +        const ggml_tensor * mm = t;
 +        for (int guard = 0; mm && mm->op != GGML_OP_MUL_MAT_ID && guard < 4; ++guard) {
 +            mm = mm->src[0];
 +        }
 +        if (mm && mm->op == GGML_OP_MUL_MAT_ID) {
-+            dump(st, base + "_in", il, mm->src[1]);
-+            dump(st, base + "_ids", il, mm->src[2]);
++            dump(st, base + "_in", il, mm->src[1], occ, 2);
++            dump(st, base + "_ids", il, mm->src[2], occ, 1);
 +        }
 +    }
 +    return true;
@@ -196,6 +274,84 @@ index 000000000..db80f8071
 +    std::fclose(f);
 +}
 +
++static std::vector<int32_t> read_i32(const std::string & path) {
++    std::vector<int32_t> v;
++    FILE * f = std::fopen(path.c_str(), "rb");
++    if (!f) return v;
++    int32_t x;
++    while (std::fread(&x, 4, 1, f) == 1) v.push_back(x);
++    std::fclose(f);
++    return v;
++}
++
++struct item {
++    std::string id;
++    std::vector<llama_token> tokens;
++    int n_steps = 1;
++    std::vector<int32_t> forced;
++    std::string dir;
++    // results
++    std::vector<float> logits;
++    std::vector<int32_t> argmax, fed;
++    std::vector<double> step_ms;
++    int n_past = 0;
++};
++
++static std::string apply_template(llama_model * model, const common_params & params, const std::string & text) {
++    auto tmpls = common_chat_templates_init(model, params.chat_template);
++    common_chat_templates_inputs in;
++    common_chat_msg msg;
++    msg.role = "user";
++    msg.content = text;
++    in.messages.push_back(msg);
++    in.add_generation_prompt = true;
++    in.use_jinja = params.use_jinja;
++    return common_chat_templates_apply(tmpls.get(), in).prompt;
++}
++
++// Copy the Sabah runtime's status file (exact counters, rewritten after every
++// expert call) so each prompt carries its own before/after snapshot.
++static void snapshot_status(const std::string & dst) {
++    const std::string src = env_str("SABAH_LLAMA_STATUS_FILE");
++    if (src.empty()) return;
++    std::ifstream in(src, std::ios::binary);
++    std::ofstream out(dst, std::ios::binary);
++    if (in) out << in.rdbuf();
++    else out << "null\n";                     // no expert call has happened yet
++}
++
++static int argmax_of(const float * lg, int n) {
++    int best = 0;
++    for (int v = 1; v < n; ++v) if (lg[v] > lg[best]) best = v;
++    return best;
++}
++
++static void open_capture(diag_state & st, const std::string & dir) {
++    if (st.names.empty()) return;
++    if (st.index) std::fclose(st.index);
++    st.cap_dir = dir + "/cap";
++    make_dir(st.cap_dir);
++    st.offsets.clear();
++    st.index = std::fopen((st.cap_dir + "/index.jsonl").c_str(), "wb");
++    if (!st.index) { fprintf(stderr, "sabah-diag: cannot open capture index\n"); std::exit(1); }
++}
++
++static void finish_item(const item & it, int n_vocab, const std::string & extra) {
++    write_file(it.dir + "/prompt_tokens.i32", it.tokens.data(), it.tokens.size() * sizeof(llama_token));
++    write_file(it.dir + "/logits.f32", it.logits.data(), it.logits.size() * sizeof(float));
++    write_file(it.dir + "/argmax.i32", it.argmax.data(), it.argmax.size() * sizeof(int32_t));
++    write_file(it.dir + "/fed.i32", it.fed.data(), it.fed.size() * sizeof(int32_t));
++    write_file(it.dir + "/step_ms.f64", it.step_ms.data(), it.step_ms.size() * sizeof(double));
++    json r;
++    r["id"] = it.id;
++    r["n_vocab"] = n_vocab;
++    r["n_prompt"] = it.tokens.size();
++    r["n_steps"] = it.argmax.size();
++    r["forced"] = it.forced.size();
++    r["mode"] = extra;
++    std::ofstream(it.dir + "/run.json") << r.dump() << "\n";
++}
++
 +int main(int argc, char ** argv) {
 +    common_params params;
 +    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_COMMON)) {
@@ -204,36 +360,38 @@ index 000000000..db80f8071
 +    common_init();
 +
 +    diag_state st;
-+    st.dir = env_str("SABAH_DIAG_OUT");
-+    if (st.dir.empty()) {
++    const std::string out = env_str("SABAH_DIAG_OUT");
++    if (out.empty()) {
 +        fprintf(stderr, "sabah-diag: SABAH_DIAG_OUT is required\n");
 +        return 1;
 +    }
++    make_dir(out);
 +    for (const auto & n : split_csv(env_str("SABAH_DIAG_NAMES"))) st.names.insert(n);
 +    for (const auto & l : split_csv(env_str("SABAH_DIAG_LAYERS"))) st.layers.insert(std::atoi(l.c_str()));
 +    st.mmid = env_str("SABAH_DIAG_MMID") == "1";
++    st.sel_rows = env_str("SABAH_DIAG_ROWS") == "sel";
 +    const std::string steps_spec = env_str("SABAH_DIAG_STEPS", "all");
++    const std::string manifest = env_str("SABAH_DIAG_MANIFEST");
++    const bool multiseq = env_str("SABAH_DIAG_MULTISEQ") == "1";
++    const std::string force_dir = env_str("SABAH_DIAG_FORCE_DIR");
 +
-+    std::vector<llama_token> forced;
-+    const std::string force_path = env_str("SABAH_DIAG_FORCE");
-+    if (!force_path.empty()) {
-+        FILE * f = std::fopen(force_path.c_str(), "rb");
-+        if (!f) { fprintf(stderr, "sabah-diag: cannot read %s\n", force_path.c_str()); return 1; }
-+        int32_t v;
-+        while (std::fread(&v, 4, 1, f) == 1) forced.push_back(v);
-+        std::fclose(f);
++    // read the manifest before the model so its size can configure sequences
++    std::vector<json> entries;
++    if (!manifest.empty()) {
++        std::ifstream mf(manifest);
++        std::string line;
++        while (std::getline(mf, line)) {
++            if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
++            entries.push_back(json::parse(line));
++        }
++        if (entries.empty()) { fprintf(stderr, "sabah-diag: empty manifest\n"); return 1; }
 +    }
-+
++    if (multiseq) {
++        if (entries.size() < 2) { fprintf(stderr, "sabah-diag: MULTISEQ needs >= 2 prompts\n"); return 1; }
++        params.n_parallel = std::max<int>(params.n_parallel, (int) entries.size());
++        params.kv_unified = true;
++    }
 +    if (!st.names.empty()) {
-+        std::string mk = st.dir + "/cap";
-+#if defined(_WIN32)
-+        std::string cmd = "mkdir \"" + mk + "\" 2>nul";
-+#else
-+        std::string cmd = "mkdir -p \"" + mk + "\"";
-+#endif
-+        (void) std::system(cmd.c_str());
-+        st.index = std::fopen((st.dir + "/cap/index.jsonl").c_str(), "wb");
-+        if (!st.index) { fprintf(stderr, "sabah-diag: cannot open capture index\n"); return 1; }
 +        params.cb_eval = diag_cb;
 +        params.cb_eval_user_data = &st;
 +    }
@@ -243,7 +401,6 @@ index 000000000..db80f8071
 +
 +    llama_backend_init();
 +    llama_numa_init(params.numa);
-+
 +    auto init = common_init_from_params(params);
 +    llama_model * model = init->model();
 +    llama_context * ctx = init->context();
@@ -253,69 +410,150 @@ index 000000000..db80f8071
 +    }
 +    const llama_vocab * vocab = llama_model_get_vocab(model);
 +    const int n_vocab = llama_vocab_n_tokens(vocab);
++    const int default_steps = params.n_predict > 0 ? params.n_predict : 1;
 +
-+    std::string prompt = params.prompt;
-+    if (env_str("SABAH_DIAG_RAW") != "1") {
-+        auto tmpls = common_chat_templates_init(model, params.chat_template);
-+        common_chat_templates_inputs in;
-+        common_chat_msg msg;
-+        msg.role = "user";
-+        msg.content = params.prompt;
-+        in.messages.push_back(msg);
-+        in.add_generation_prompt = true;
-+        in.use_jinja = params.use_jinja;
-+        prompt = common_chat_templates_apply(tmpls.get(), in).prompt;
-+    }
-+    std::vector<llama_token> toks = common_tokenize(ctx, prompt, true, true);
-+    write_file(st.dir + "/prompt_tokens.i32", toks.data(), toks.size() * sizeof(llama_token));
-+    write_file(st.dir + "/prompt.txt", prompt.data(), prompt.size());
-+
-+    const int n_steps = params.n_predict > 0 ? params.n_predict : 1;
-+    std::vector<float> logits((size_t) n_steps * n_vocab);
-+    std::vector<int32_t> argmax(n_steps), fed(n_steps);
-+    std::vector<double> step_ms(n_steps);
-+
-+    st.step = 0;
-+    st.active = step_selected(steps_spec, 0);
-+    auto t0 = std::chrono::steady_clock::now();
-+    if (llama_decode(ctx, llama_batch_get_one(toks.data(), (int32_t) toks.size()))) {
-+        fprintf(stderr, "sabah-diag: prompt decode failed\n");
-+        return 2;
-+    }
-+    for (int s = 0; s < n_steps; ++s) {
-+        const float * lg = llama_get_logits_ith(ctx, -1);
-+        std::memcpy(logits.data() + (size_t) s * n_vocab, lg, (size_t) n_vocab * sizeof(float));
-+        int best = 0;
-+        for (int v = 1; v < n_vocab; ++v) if (lg[v] > lg[best]) best = v;
-+        argmax[s] = best;
-+        fed[s] = (s < (int) forced.size()) ? forced[s] : best;
-+        auto t1 = std::chrono::steady_clock::now();
-+        step_ms[s] = std::chrono::duration<double, std::milli>(t1 - t0).count();
-+        fprintf(stderr, "sabah-diag: step %d argmax %d fed %d  %.1f ms\n", s, best, fed[s], step_ms[s]);
-+        if (s == n_steps - 1) break;
-+        st.step = s + 1;
-+        st.active = step_selected(steps_spec, s + 1);
-+        llama_token next = fed[s];
-+        t0 = std::chrono::steady_clock::now();
-+        if (llama_decode(ctx, llama_batch_get_one(&next, 1))) {
-+            fprintf(stderr, "sabah-diag: decode failed at step %d\n", s + 1);
-+            return 2;
++    // ---- build items -----------------------------------------------------
++    std::vector<item> items;
++    if (entries.empty()) {
++        item it;
++        it.id = "prompt";
++        it.dir = out;
++        std::string prompt = params.prompt;
++        if (env_str("SABAH_DIAG_RAW") != "1") prompt = apply_template(model, params, prompt);
++        write_file(out + "/prompt.txt", prompt.data(), prompt.size());
++        it.tokens = common_tokenize(ctx, prompt, true, true);
++        it.n_steps = default_steps;
++        it.forced = read_i32(env_str("SABAH_DIAG_FORCE"));
++        items.push_back(it);
++    } else {
++        for (const auto & e : entries) {
++            item it;
++            it.id = e.at("id").get<std::string>();
++            it.dir = out + "/" + it.id;
++            make_dir(it.dir);
++            if (e.contains("tokens")) {
++                it.tokens = e.at("tokens").get<std::vector<llama_token>>();
++            } else {
++                std::string text = e.at("text").get<std::string>();
++                if (!e.value("raw", false)) text = apply_template(model, params, text);
++                write_file(it.dir + "/prompt.txt", text.data(), text.size());
++                it.tokens = common_tokenize(ctx, text, true, true);
++            }
++            it.n_steps = e.value("n_predict", default_steps);
++            if (!force_dir.empty()) it.forced = read_i32(force_dir + "/" + it.id + "/fed.i32");
++            items.push_back(it);
 +        }
 +    }
 +
-+    write_file(st.dir + "/logits.f32", logits.data(), logits.size() * sizeof(float));
-+    write_file(st.dir + "/argmax.i32", argmax.data(), argmax.size() * sizeof(int32_t));
-+    write_file(st.dir + "/fed.i32", fed.data(), fed.size() * sizeof(int32_t));
-+    write_file(st.dir + "/step_ms.f64", step_ms.data(), step_ms.size() * sizeof(double));
-+    {
-+        FILE * f = std::fopen((st.dir + "/run.json").c_str(), "wb");
-+        fprintf(f, "{\"n_vocab\":%d,\"n_prompt\":%zu,\"n_steps\":%d,\"forced\":%zu,"
-+                   "\"captured\":%s,\"mmid\":%s,\"steps\":\"%s\"}\n",
-+                n_vocab, toks.size(), n_steps, forced.size(),
-+                st.names.empty() ? "false" : "true", st.mmid ? "true" : "false",
-+                steps_spec.c_str());
-+        std::fclose(f);
++    if (env_str("SABAH_DIAG_TOKENIZE_ONLY") == "1") {
++        // write the exact token ids each prompt will be run with, and stop
++        for (const auto & it : items) {
++            write_file(it.dir + "/prompt_tokens.i32", it.tokens.data(), it.tokens.size() * sizeof(llama_token));
++        }
++        llama_backend_free();
++        return 0;
 +    }
++
++    auto record = [&](item & it, const float * lg, double ms) {
++        it.logits.insert(it.logits.end(), lg, lg + n_vocab);
++        const int best = argmax_of(lg, n_vocab);
++        it.argmax.push_back(best);
++        const int s = (int) it.fed.size();
++        it.fed.push_back(s < (int) it.forced.size() ? it.forced[s] : best);
++        it.step_ms.push_back(ms);
++    };
++
++    if (!multiseq) {
++        // ---- one prompt after another, memory cleared between them --------
++        for (auto & it : items) {
++            llama_memory_clear(llama_get_memory(ctx), true);
++            snapshot_status(it.dir + "/sabah_status_start.json");
++            open_capture(st, it.dir);
++            st.occ.clear();
++            st.step = 0;
++            st.active = step_selected(steps_spec, 0);
++            auto t0 = std::chrono::steady_clock::now();
++            if (llama_decode(ctx, llama_batch_get_one(it.tokens.data(), (int32_t) it.tokens.size()))) {
++                fprintf(stderr, "sabah-diag: prompt decode failed (%s)\n", it.id.c_str());
++                return 2;
++            }
++            for (int s = 0; s < it.n_steps; ++s) {
++                const double ms = std::chrono::duration<double, std::milli>(
++                        std::chrono::steady_clock::now() - t0).count();
++                record(it, llama_get_logits_ith(ctx, -1), ms);
++                fprintf(stderr, "sabah-diag: %s step %d argmax %d fed %d  %.1f ms\n",
++                        it.id.c_str(), s, it.argmax.back(), it.fed.back(), ms);
++                if (s == it.n_steps - 1) break;
++                st.step = s + 1;
++                st.occ.clear();
++                st.active = step_selected(steps_spec, s + 1);
++                llama_token next = it.fed.back();
++                t0 = std::chrono::steady_clock::now();
++                if (llama_decode(ctx, llama_batch_get_one(&next, 1))) {
++                    fprintf(stderr, "sabah-diag: decode failed at %s step %d\n", it.id.c_str(), s + 1);
++                    return 2;
++                }
++            }
++            snapshot_status(it.dir + "/sabah_status_end.json");
++            finish_item(it, n_vocab, "sequential");
++        }
++    } else {
++        // ---- all prompts share every batch ---------------------------------
++        const std::string mdir = out + "/_multiseq";
++        make_dir(mdir);
++        open_capture(st, mdir);
++        std::ofstream layout(mdir + "/batches.jsonl");
++        llama_memory_clear(llama_get_memory(ctx), true);
++        const int n_seq = (int) items.size();
++        int n_total = 0;
++        for (auto & it : items) n_total += (int) it.tokens.size();
++        int max_steps = 0;
++        for (auto & it : items) max_steps = std::max(max_steps, it.n_steps);
++
++        llama_batch batch = llama_batch_init(std::max(n_total, n_seq), 0, n_seq);
++        std::vector<int> out_idx(n_seq);
++        for (int step = 0; step < max_steps; ++step) {
++            batch.n_tokens = 0;
++            json rows = json::array();
++            for (int q = 0; q < n_seq; ++q) {
++                item & it = items[q];
++                if (step > 0 && step >= it.n_steps) { out_idx[q] = -1; continue; }
++                std::vector<llama_token> toks = step == 0 ? it.tokens
++                                                          : std::vector<llama_token>{ it.fed.back() };
++                for (size_t j = 0; j < toks.size(); ++j) {
++                    const int b = batch.n_tokens++;
++                    batch.token[b] = toks[j];
++                    batch.pos[b] = it.n_past + (int) j;
++                    batch.n_seq_id[b] = 1;
++                    batch.seq_id[b][0] = q;
++                    batch.logits[b] = j + 1 == toks.size();
++                    rows.push_back({ { "row", b }, { "id", it.id }, { "seq", q }, { "pos", batch.pos[b] } });
++                    if (batch.logits[b]) out_idx[q] = b;
++                }
++                it.n_past += (int) toks.size();
++            }
++            if (batch.n_tokens == 0) break;
++            layout << json({ { "step", step }, { "rows", rows } }).dump() << "\n";
++            st.step = step;
++            st.occ.clear();
++            st.active = step_selected(steps_spec, step);
++            auto t0 = std::chrono::steady_clock::now();
++            if (llama_decode(ctx, batch)) {
++                fprintf(stderr, "sabah-diag: multiseq decode failed at step %d\n", step);
++                return 2;
++            }
++            const double ms = std::chrono::duration<double, std::milli>(
++                    std::chrono::steady_clock::now() - t0).count();
++            for (int q = 0; q < n_seq; ++q) {
++                if (out_idx[q] < 0) continue;
++                record(items[q], llama_get_logits_ith(ctx, out_idx[q]), ms);
++            }
++            fprintf(stderr, "sabah-diag: multiseq step %d (%d rows)  %.1f ms\n", step, batch.n_tokens, ms);
++        }
++        llama_batch_free(batch);
++        for (auto & it : items) finish_item(it, n_vocab, "multiseq");
++    }
++
 +    if (st.index) std::fclose(st.index);
 +    llama_backend_free();
 +    return 0;

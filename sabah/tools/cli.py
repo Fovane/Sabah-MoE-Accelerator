@@ -215,6 +215,7 @@ def cmd_serve(args):
             "--backend-port", str(args.backend_port), "--context", str(args.context),
             "--n-gpu-layers", str(args.n_gpu_layers),
             "--backend", backend, "--hot-bytes", str(args.hot_bytes),
+            "--parallel", str(args.parallel), *( ["--validate"] if args.validate else [] ),
             *( ["--llama-server", args.llama_server] if args.llama_server else [] ),
             *( ["--allow-reference"] if args.allow_reference else [] ),
             *( ["--quiet"] if args.quiet else [] ),
@@ -347,6 +348,9 @@ def main(argv=None):
     a.add_argument("--backend", choices=["sabah", "reference"], default=None)
     a.add_argument("--hot-bytes", type=int, default=1 << 30,
                    help="VRAM budget for Sabah's expert hot tier")
+    a.add_argument("--parallel", type=int, default=4, help="server slots")
+    a.add_argument("--validate", action="store_true",
+                   help="self-validating Sabah backend (float64 self-check, byte verification)")
     a.add_argument("--llama-server", default="")
     a.add_argument("--allow-reference", action="store_true",
                    help="required with --backend reference: stock llama.cpp expert execution")
