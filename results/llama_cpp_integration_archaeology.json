@@ -1,0 +1,29 @@
+{
+  "classification": "MEASURED",
+  "timestamp": "2026-09-18",
+  "sabah_repo_head": "425a944f8478ce030f575b537677a19e2e7a0173",
+  "llama_cpp_path": "D:/llama-glm53",
+  "llama_cpp_head": "96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b",
+  "llama_cpp_describe": "b10969-2-g96ffdc41c",
+  "architecture": "qwen4exp",
+  "router_function": "llm_graph_context::build_moe_ffn",
+  "router_source": "D:/llama-glm53/src/llama-graph.cpp:1994-2154",
+  "selection_op": "GGML_OP_ARGSORT_TOP_K",
+  "selection_tensor": "selected_experts",
+  "expert_projection_function": "llm_graph_context::build_lora_mm_id",
+  "expert_projection_op": "GGML_OP_MUL_MAT_ID",
+  "expert_projection_source": "D:/llama-glm53/src/llama-graph.cpp:1546-1580",
+  "expert_tensor_shapes": {
+    "down": "[n_ff_exp, n_embd, n_expert]",
+    "gate_up": "qwen4exp merged gate/up tensor with expert axis"
+  },
+  "existing_host_moe_hook": "D:/llama-glm53/ggml/src/ggml-backend.cpp:1703-1818",
+  "existing_host_moe_hook_behavior": "copies selected contiguous expert ranges into an ephemeral backend tensor",
+  "sabah_native_api": "sabah_moe_block(single-vector ctypes ABI)",
+  "sabah_native_graph_adapter": false,
+  "persistent_sabah_lru_in_llama_graph": false,
+  "full_model_sabah_token": false,
+  "chosen_strategy": "reversible Strategy A/C hybrid at GGML_OP_MUL_MAT_ID backend boundary",
+  "blocker": "No native GGML adapter connects llama.cpp tensors and authoritative IDs to the existing Sabah HotTier/sabah_rt.dll; relabelling the current CPU-MoE copy path would be incorrect.",
+  "release_verdict": "v1.0.0 NOT READY"
+}

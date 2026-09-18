@@ -25,9 +25,11 @@ from __future__ import annotations
 import os
 import re
 import ctypes
+import threading
 import numpy as np
 
 from sabah.runtime import rt
+from sabah.runtime.identity import ExpertId, ExpertRange
 
 
 def shard_paths(path: str) -> list:
@@ -73,12 +75,24 @@ class ExpertBank:
         self._maps = {}
         self._ram = {}
         self._pinned_ptrs = []
+        self._lock = threading.RLock()
+        self._ranges = {}
 
         paths = shard_paths(model_profile.path)
         for t in self.desc.values():
             si = t["shard"]
             if si not in self._maps and si < len(paths):
                 self._maps[si] = np.memmap(paths[si], dtype=np.uint8, mode="r")
+
+        for b in self.blocks:
+            for e in range(self.n_experts):
+                for r in self.ROLES:
+                    t = self.desc[(b, r)]
+                    n = int(t["per_expert_bytes"])
+                    self._ranges[(ExpertId(b, e), r)] = ExpertRange(
+                        identity=ExpertId(b, e), role=r, shard=int(t["shard"]),
+                        offset=int(t["offset"]) + e * n, size=n,
+                        qtype=str(t["qtype"]))
 
         if mode == "ram":
             self._load_ram()
@@ -105,15 +119,36 @@ class ExpertBank:
         """A read-only uint8 view of exactly one expert's weight slice."""
         if not (0 <= expert < self.n_experts):
             raise IndexError("expert %d out of range" % expert)
-        key = (block, role)
-        if self.mode == "ram":
-            buf = self._ram[key]
-            n = self.expert_bytes(block, role)
-            return buf[expert * n:(expert + 1) * n]
-        t = self.desc[key]
-        n = int(t["per_expert_bytes"])
-        off = int(t["offset"]) + expert * n
-        return self._maps[t["shard"]][off:off + n]
+        if role not in self.ROLES or block not in self.blocks:
+            raise KeyError("unknown expert range block=%s role=%s" % (block, role))
+        with self._lock:
+            key = (block, role)
+            if self.mode == "ram":
+                buf = self._ram[key]
+                n = self.expert_bytes(block, role)
+                out = buf[expert * n:(expert + 1) * n]
+            else:
+                rng = self._ranges[(ExpertId(block, expert), role)]
+                file_map = self._maps[rng.shard]
+                if rng.end > file_map.size:
+                    raise IOError("expert range exceeds shard: %s" % rng)
+                out = file_map[rng.offset:rng.end]
+            out.setflags(write=False)
+            return out
+
+    def range(self, block: int, expert: int, role: str) -> ExpertRange:
+        """Return the validated exact byte range for an expert role."""
+        if not (0 <= expert < self.n_experts):
+            raise IndexError("expert %d out of range" % expert)
+        try:
+            return self._ranges[(ExpertId(block, expert), role)]
+        except KeyError as exc:
+            raise KeyError("unknown expert range block=%s role=%s" %
+                           (block, role)) from exc
+
+    def read(self, identity: ExpertId, role: str) -> np.ndarray:
+        """ExpertSource-compatible exact read."""
+        return self.slice(identity.block, identity.expert, role)
 
     def expert_ptr_bytes(self, block: int, expert: int) -> list:
         """[(role, ndarray)] for one expert, in gate/up/down order."""
@@ -141,11 +176,13 @@ class ExpertBank:
         self.loaded_bytes = total
 
     def close(self):
-        for p in self._pinned_ptrs:
-            rt.lib().sabah_host_free(p)
-        self._pinned_ptrs = []
-        self._ram.clear()
-        self._maps.clear()
+        with self._lock:
+            for p in self._pinned_ptrs:
+                rt.lib().sabah_host_free(p)
+            self._pinned_ptrs = []
+            self._ram.clear()
+            self._maps.clear()
+            self._ranges.clear()
 
     def __enter__(self):
         return self

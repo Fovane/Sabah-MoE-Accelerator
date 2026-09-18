@@ -10,7 +10,10 @@ Sabah Accelerator — command line.
     sabah selftest [model.gguf]     prove the runtime decodes and executes
                                     experts exactly (needs the CUDA runtime)
     sabah bench    [model.gguf]     MEASURED per-block throughput and the
-                                    forced-resident vs streamed A/B
+                                   forced-resident vs streamed A/B
+    sabah benchmark <model.gguf>   full-model reference provenance benchmark
+    sabah serve    <model.gguf>    local OpenAI-compatible API (reference mode
+                                   until full-model Sabah integration lands)
     sabah calibrate                 re-measure the planner hit curve from a
                                     routing trace
 
@@ -184,6 +187,37 @@ def cmd_calibrate(args):
     return calib_check.main(argv)
 
 
+def cmd_benchmark(args):
+    from sabah.tools import benchmark
+    argv = [args.model, "--prompt", args.prompt, "--tokens", str(args.tokens),
+            "--context", str(args.context)]
+    if args.threads:
+        argv += ["--threads", str(args.threads)]
+    if args.llama_cli:
+        argv += ["--llama-cli", args.llama_cli]
+    if args.json:
+        argv += ["--json-out", args.json]
+    if args.dry_run:
+        argv += ["--dry-run"]
+    return benchmark.main(argv)
+
+
+def cmd_serve(args):
+    from sabah.server import openai_proxy
+    try:
+        return openai_proxy.main([
+            args.model, "--host", args.host, "--port", str(args.port),
+            "--backend-port", str(args.backend_port), "--context", str(args.context),
+            "--n-gpu-layers", str(args.n_gpu_layers),
+            *( ["--llama-server", args.llama_server] if args.llama_server else [] ),
+            *( ["--allow-reference"] if args.allow_reference else [] ),
+            *( ["--quiet"] if args.quiet else [] ),
+        ])
+    except (RuntimeError, ValueError, FileNotFoundError) as e:
+        print("serve: %s" % e)
+        return 2
+
+
 def cmd_doctor(args):
     _banner("doctor")
     ok = True
@@ -285,6 +319,30 @@ def main(argv=None):
     a.add_argument("--bank-mode", default="mmap", choices=["mmap", "ram"])
     a.add_argument("--json", default="")
     a.set_defaults(fn=cmd_bench)
+
+    a = sub.add_parser("benchmark", help="measure the full-model reference path")
+    a.add_argument("model")
+    a.add_argument("--prompt", default="Reply with exactly: SABAH_OK")
+    a.add_argument("--tokens", type=int, default=16)
+    a.add_argument("--context", type=int, default=4096)
+    a.add_argument("--threads", type=int, default=0)
+    a.add_argument("--llama-cli", default="")
+    a.add_argument("--json", default="")
+    a.add_argument("--dry-run", action="store_true")
+    a.set_defaults(fn=cmd_benchmark)
+
+    a = sub.add_parser("serve", help="serve a local OpenAI-compatible API")
+    a.add_argument("model")
+    a.add_argument("--host", default="127.0.0.1")
+    a.add_argument("--port", type=int, default=8080)
+    a.add_argument("--backend-port", type=int, default=18080)
+    a.add_argument("--context", type=int, default=4096)
+    a.add_argument("--n-gpu-layers", type=int, default=0)
+    a.add_argument("--llama-server", default="")
+    a.add_argument("--allow-reference", action="store_true",
+                   help="serve through llama.cpp reference mode; not Sabah hot-tier mode")
+    a.add_argument("--quiet", action="store_true")
+    a.set_defaults(fn=cmd_serve)
 
     a = sub.add_parser("calibrate", help="re-measure the planner hit curve")
     a.add_argument("model", nargs="?", default="")
