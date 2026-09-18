@@ -1,0 +1,33 @@
+# build artifacts
+*.exe
+*.exp
+*.lib
+*.obj
+*.pdb
+*.o
+*.so
+*.dll
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# sabah state (machine-specific measurements)
+.sabah/
+*.sabah-profile.json
+
+# never commit model weights or traces
+*.gguf
+*.safetensors
+*.bin
+traces/
+*.trace.jsonl
+
+# scratch
+tmp/
+scratch/
+
+# scratch run directory; the evidence behind README claims lives in results/
+logs/
