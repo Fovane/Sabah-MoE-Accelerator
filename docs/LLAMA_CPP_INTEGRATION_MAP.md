@@ -1,8 +1,8 @@
 # llama.cpp integration map
 
-Status: archaeology complete; the full Sabah backend is **not integrated yet**.
-This document records the real seam so that the next implementation does not
-confuse tracing or llama.cpp's existing CPU-MoE offload with Sabah execution.
+Status: Gate F first-token integration is working in the local pinned checkout.
+The full correctness ladder is still open; this is not a v1.0 claim. The
+result is recorded in `results/full_model_first_token.json`.
 
 ## Pinned dependency and working-tree state
 
@@ -65,13 +65,21 @@ Already proven in the Sabah repository:
   block path;
 - real llama.cpp loading and reference generation for the target GGUF.
 
-Not proven by the current llama.cpp modifications:
+Proven by the current integration run:
 
-- a llama.cpp graph calling `sabah_rt.dll`;
-- persistent Sabah residency across full-model graph executions;
-- Sabah execution of the authoritative `selected_experts` IDs;
-- full-model logits, hidden-state or greedy-token equality;
-- a Sabah-backed API server.
+- the real llama.cpp qwen4exp graph calls `sabah_rt.dll` at `MUL_MAT_ID`;
+- host-backed original GGUF expert ranges are retained in a native Sabah LRU;
+- the authoritative device `selected_experts` IDs are copied with their real
+  GGML strides and used without substitution;
+- the full graph completes one deterministic token and matches the reference
+  token ID (`1596`, piece `We`).
+
+Still not proven by the current integration run:
+
+- independently dumped router IDs/weights against a reference run;
+- full-model logits, intermediate states or MoE-boundary numerical equality;
+- sequential 16/64-token equality;
+- a Sabah-backed API server or a comparable benchmark.
 
 The existing `GLM53_SABAH_TRACE` and `GLM53_MOE_TRACE` changes materialize or
 record tensors such as `ffn_moe_topk`; they are useful diagnostics but cannot be
@@ -79,17 +87,17 @@ the production routing authority.
 
 ## Chosen implementation strategy
 
-The smallest correct target is a reversible **Strategy A/C hybrid**:
+The implemented target is a reversible **Strategy A/C hybrid**:
 
 1. Keep `qwen4exp`'s full llama.cpp graph unchanged when Sabah is disabled.
 2. Add an optional native adapter at the scheduler/backend boundary where the
    exact `MUL_MAT_ID` IDs and host expert tensor are both available.
 3. Give that adapter a persistent per-device residency table keyed by
    `(tensor identity, block, expert, role)` and an exact source-range callback.
-4. Execute the existing CUDA `MUL_MAT_ID` quantized kernels against the
-   adapter's resident representation, or add a narrowly scoped custom GGML op
-   if the current full-index tensor contract cannot represent a compact hot
-   tier without remapping IDs.
+4. The native adapter keeps the original IDs for routing/aggregate ordering,
+   caches exact expert byte ranges keyed by `(source tensor, expert)`, and
+   launches an exact quantized CUDA `MUL_MAT_ID` kernel against a device pointer
+   table. It does not create a full-shaped device copy or remap expert IDs.
 5. Keep reference and Sabah modes explicit. A requested Sabah benchmark must
    fail loudly when the native adapter is unavailable; it must never silently
    fall back to `--cpu-moe`.
@@ -101,11 +109,11 @@ persistent LRU slot mapping and cannot be relabelled as Sabah execution.
 
 ## Concrete blocker for v1.0
 
-The current `sabah_rt.cu` API is a standalone single-vector block executor:
-`sabah_moe_block(d_x, d_out, d_h, d_ptrs, d_w, ...)`. It does not expose a
-GGML backend interface, tensor-backed `MUL_MAT_ID`, batched activations, or a
-source-range callback. The Python `HotTier` owns the cache through ctypes, so
-llama.cpp cannot call it during graph execution.
+The original standalone `sabah_moe_block` API remains, but the runtime now also
+exposes a native tensor-backed `sabah_rt_mul_mat_id` ABI for the llama.cpp
+boundary. It accepts GGML strides, downloads the authoritative IDs, fetches
+the exact source expert ranges into the native LRU, and returns the routed
+projection into the graph's device output tensor.
 
 Bridging this requires a native adapter and either:
 
@@ -114,8 +122,8 @@ Bridging this requires a native adapter and either:
 - a new compact expert op that carries authoritative IDs plus a slot map while
   keeping the original IDs for router weights and aggregate ordering.
 
-Until that native seam is implemented and tested through the real graph, Gate F
-remains `NOT READY`; no v1.0 package or Sabah API claim is justified.
+Gate F's first-token sub-gate is now PASS. Gate F as a release gate remains
+open until the independent correctness ladder and sequential tests are added.
 
 ## Dependency policy
 
