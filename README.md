@@ -33,7 +33,7 @@ verified against the real artifact in Sabah v3/v4.
 
 ---
 
-## Status — `v0.9.0-rc1`
+## Status — `v0.9.0-rc3`
 
 **This is not a "download it and your model gets faster" release.** It is a
 release candidate: the exact expert runtime and block-level correctness gate
@@ -58,7 +58,7 @@ This is **Phase A complete**, on a single-GPU development machine.
 | GPU hot-tier runtime (expert/block path) | **working, CUDA-tested** |
 | full-model attention/KV integration | **not complete** |
 | OpenAI-compatible server | **working in REFERENCE mode** |
-| correctness harness vs reference | **expert/block PASS; logits/tokens pending** |
+| correctness harness vs reference | **native boundary PASS; multi-token numerical ladder BLOCKED** |
 
 Nothing in this repository claims a measured speedup. The planner emits
 **projections**, always labelled, and they are replaced by measurements only

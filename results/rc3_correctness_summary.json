@@ -1,0 +1,27 @@
+{
+  "release": "0.9.0-rc3",
+  "verdict": "v1.0.0 blocked",
+  "model": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+  "blocks": 48,
+  "prompts": 3,
+  "trace_rows": 78,
+  "router_files_compared": 48,
+  "router_ids": "BLOCKED_CPU_REFERENCE_VS_CUDA_ARITHMETIC",
+  "router_weights": "BLOCKED_CPU_REFERENCE_VS_CUDA_ARITHMETIC",
+  "first_token": {"reference": 1596, "sabah": 1596, "piece": "We"},
+  "generated_tokens": {
+    "reference": [[32], [32], [760]],
+    "sabah": [[32], [76], [760]]
+  },
+  "block0_gate_up_max_abs": 0.028523921966552734,
+  "block0_moe_out_max_abs": 0.2465589940547943,
+  "native_cache": {
+    "hits": 33780,
+    "misses": 13740,
+    "evictions": 12798,
+    "bytes_fetched": 14397132800,
+    "resident_bytes": 1072844800
+  },
+  "clean_llama_base": "96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b",
+  "notes": "The graph IDs are passed unchanged and original GGUF expert bytes are used. The comparison reference is llama.cpp --cpu-moe; CUDA expert arithmetic equivalence is not yet established."
+}
