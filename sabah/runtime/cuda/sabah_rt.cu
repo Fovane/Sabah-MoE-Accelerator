@@ -19,8 +19,13 @@
 // ---------------------------------------------------------------------------
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <mutex>
 #include <stdio.h>
 #include <string.h>
+#include <vector>
 
 #if defined(_WIN32)
   #define SABAH_API __declspec(dllexport)
@@ -37,6 +42,113 @@
 static char g_err[512] = {0};
 static cudaStream_t g_copy    = 0;
 static cudaStream_t g_compute = 0;
+
+// The Python block executor and the llama.cpp adapter share this native
+// residency core.  Entries are keyed by the logical source tensor pointer and
+// expert id; the source tensor pointer is stable for the lifetime of a loaded
+// GGUF model.  A single global byte budget is used so gate/up/down tensors
+// compete for the same hot tier instead of creating three independent caches.
+struct sb_mmid_entry {
+    const void * source_key;
+    int expert;
+    void * device;
+    size_t bytes;
+    uint64_t touch;
+};
+
+static std::mutex g_mmid_mutex;
+static std::vector<sb_mmid_entry> g_mmid_entries;
+static size_t g_mmid_capacity = 0;
+static size_t g_mmid_bytes = 0;
+static uint64_t g_mmid_tick = 0;
+static uint64_t g_mmid_hits = 0;
+static uint64_t g_mmid_misses = 0;
+static uint64_t g_mmid_evictions = 0;
+static uint64_t g_mmid_bytes_fetched = 0;
+
+static bool ck(cudaError_t e, const char * what);
+
+static size_t sb_mmid_capacity_bytes() {
+    const char * env = std::getenv("SABAH_LLAMA_HOT_BYTES");
+    if (env && *env) {
+        char * end = nullptr;
+        const unsigned long long value = std::strtoull(env, &end, 10);
+        if (end != env && value > 0) {
+            return (size_t) value;
+        }
+    }
+    return (size_t) 2ull * 1024ull * 1024ull * 1024ull;
+}
+
+static void sb_mmid_reset() {
+    std::lock_guard<std::mutex> lock(g_mmid_mutex);
+    for (const auto & entry : g_mmid_entries) {
+        if (entry.device) {
+            cudaFree(entry.device);
+        }
+    }
+    g_mmid_entries.clear();
+    g_mmid_capacity = sb_mmid_capacity_bytes();
+    g_mmid_bytes = 0;
+    g_mmid_tick = 0;
+    g_mmid_hits = 0;
+    g_mmid_misses = 0;
+    g_mmid_evictions = 0;
+    g_mmid_bytes_fetched = 0;
+}
+
+static void sb_mmid_evict_until(size_t needed, cudaStream_t compute_stream) {
+    // A slot can still be read by a previously submitted compute kernel.  The
+    // conservative synchronization is only taken on an actual eviction and
+    // preserves the exact-output invariant.
+    while (!g_mmid_entries.empty() && g_mmid_bytes + needed > g_mmid_capacity) {
+        auto it = std::min_element(g_mmid_entries.begin(), g_mmid_entries.end(),
+            [](const sb_mmid_entry & a, const sb_mmid_entry & b) {
+                return a.touch < b.touch;
+            });
+        cudaStreamSynchronize(compute_stream);
+        cudaStreamSynchronize(g_copy);
+        cudaFree(it->device);
+        g_mmid_bytes -= it->bytes;
+        g_mmid_entries.erase(it);
+        ++g_mmid_evictions;
+    }
+}
+
+static void * sb_mmid_resident(const void * source_key, int expert,
+                               const void * source, size_t bytes,
+                               cudaStream_t compute_stream) {
+    std::lock_guard<std::mutex> lock(g_mmid_mutex);
+    if (g_mmid_capacity == 0) {
+        g_mmid_capacity = sb_mmid_capacity_bytes();
+    }
+
+    for (auto & entry : g_mmid_entries) {
+        if (entry.source_key == source_key && entry.expert == expert && entry.bytes == bytes) {
+            entry.touch = ++g_mmid_tick;
+            ++g_mmid_hits;
+            return entry.device;
+        }
+    }
+
+    ++g_mmid_misses;
+    sb_mmid_evict_until(bytes, compute_stream);
+
+    void * device = nullptr;
+    if (!ck(cudaMalloc(&device, bytes), "Sabah expert slot allocation")) {
+        return nullptr;
+    }
+    if (!ck(cudaMemcpyAsync(device, source, bytes, cudaMemcpyHostToDevice, g_copy),
+            "Sabah expert H2D")) {
+        cudaFree(device);
+        return nullptr;
+    }
+
+    g_mmid_entries.push_back({ source_key, expert, device, bytes, ++g_mmid_tick });
+    g_mmid_bytes += bytes;
+    g_mmid_bytes_fetched += bytes;
+    return device;
+}
 
 static bool ck(cudaError_t e, const char * what) {
     if (e == cudaSuccess) return true;
@@ -288,6 +400,44 @@ __global__ void k_down(const float * __restrict__ h,
     if (threadIdx.x == 0) out[i] = accumulate ? out[i] + total : total;
 }
 
+// Generic GGML MUL_MAT_ID path used by the optional llama.cpp integration.
+// The host graph keeps the authoritative ids and this kernel receives one
+// resident device pointer per (token, selected-expert) output slice.  No id is
+// rewritten, filtered or substituted.
+__global__ void k_mul_mat_id(const void * const * __restrict__ weights,
+                             const float * __restrict__ x,
+                             float * __restrict__ dst,
+                             int rows, int k, int n_ids, int n_tokens,
+                             size_t row_stride, size_t x_token_stride,
+                             size_t dst_id_stride, size_t dst_token_stride,
+                             int qt) {
+    __shared__ float sh[NWARP + 1];
+
+    const int row = (int) blockIdx.x;
+    const int id_i = (int) blockIdx.y;
+    const int token = (int) blockIdx.z;
+    if (row >= rows || id_i >= n_ids || token >= n_tokens) {
+        return;
+    }
+
+    const void * expert = weights[(size_t) token * n_ids + id_i];
+    const uint8_t * row_ptr = (const uint8_t *) expert + (size_t) row * row_stride;
+    const float * x_ptr = (const float *) ((const uint8_t *) x + (size_t) token * x_token_stride);
+
+    const int nsub = k / 32;
+    float partial = 0.0f;
+    for (int s = threadIdx.x; s < nsub; s += NT) {
+        partial += sub32(qt, row_ptr, s, x_ptr + (size_t) s * 32);
+    }
+    const float value = block_sum(partial, sh);
+    if (threadIdx.x == 0) {
+        uint8_t * out_ptr = (uint8_t *) dst + (size_t) token * dst_token_stride
+                          + (size_t) id_i * dst_id_stride
+                          + (size_t) row * sizeof(float);
+        *(float *) out_ptr = value;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // standalone dequantizer - used only to prove the kernels above read the
 // formats correctly, by diffing against gguf-py.
@@ -327,10 +477,12 @@ SABAH_API int sabah_rt_init(int device) {
     if (!ck(cudaSetDevice(device), "cudaSetDevice")) return -1;
     if (!ck(cudaStreamCreate(&g_copy),    "create copy stream"))    return -1;
     if (!ck(cudaStreamCreate(&g_compute), "create compute stream")) return -1;
+    sb_mmid_reset();
     return 0;
 }
 
 SABAH_API int sabah_rt_shutdown(void) {
+    sb_mmid_reset();
     if (g_copy)    { cudaStreamDestroy(g_copy);    g_copy = 0; }
     if (g_compute) { cudaStreamDestroy(g_compute); g_compute = 0; }
     return 0;
@@ -434,6 +586,141 @@ SABAH_API int sabah_moe_block(const float * d_x, float * d_out, float * d_h,
     k_down<<<g2, NT, 0, g_compute>>>(d_h, d_out, d_ptrs + 2 * n_used, d_w,
                                      d_model, ff, n_used, qt_down, accumulate);
     return ck(cudaGetLastError(), "moe_block launch") ? 0 : -1;
+}
+
+// Exact host-backed GGML MUL_MAT_ID adapter.  `source` is the original
+// read-only GGUF tensor, not a compacted or rewritten expert bank.  `stream`
+// is llama.cpp's active CUDA compute stream; the copy stream is owned by
+// Sabah and joined with an event before the kernel launch.
+SABAH_API int sabah_rt_mul_mat_id(
+        const void * source,
+        size_t expert_stride,
+        size_t row_stride,
+        const void * d_x,
+        size_t x_token_stride,
+        const void * d_ids,
+        size_t ids_id_stride,
+        size_t ids_token_stride,
+        int n_ids,
+        int n_tokens,
+        float * d_dst,
+        size_t dst_id_stride,
+        size_t dst_token_stride,
+        int rows,
+        int k,
+        int n_experts,
+        int qt,
+        void * stream_ptr) {
+    if (!source || !d_x || !d_ids || !d_dst || !g_copy) {
+        snprintf(g_err, sizeof(g_err), "invalid Sabah MUL_MAT_ID arguments");
+        return -1;
+    }
+    if (k <= 0 || rows <= 0 || n_ids <= 0 || n_tokens <= 0 || n_experts <= 0 || (k % 32) != 0) {
+        snprintf(g_err, sizeof(g_err), "invalid Sabah MUL_MAT_ID geometry");
+        return -1;
+    }
+    if (sb_block_bytes(qt) == 0 || row_stride < sb_row_bytes(qt, k)) {
+        snprintf(g_err, sizeof(g_err), "unsupported Sabah MUL_MAT_ID quantized row");
+        return -1;
+    }
+
+    cudaStream_t compute_stream = stream_ptr ? (cudaStream_t) stream_ptr : g_compute;
+
+    const size_t ids_bytes = (size_t) (n_ids - 1) * ids_id_stride
+                           + (size_t) (n_tokens - 1) * ids_token_stride
+                           + sizeof(int32_t);
+    std::vector<uint8_t> ids_raw(ids_bytes);
+    if (!ck(cudaMemcpyAsync(ids_raw.data(), d_ids, ids_bytes,
+                            cudaMemcpyDeviceToHost, compute_stream),
+            "Sabah router id download")) {
+        return -1;
+    }
+    if (!ck(cudaStreamSynchronize(compute_stream), "Sabah router id synchronize")) {
+        return -1;
+    }
+
+    std::vector<int32_t> ids((size_t) n_ids * n_tokens);
+    std::vector<const void *> ptrs(ids.size());
+    for (int token = 0; token < n_tokens; ++token) {
+        for (int id_i = 0; id_i < n_ids; ++id_i) {
+            const size_t raw_offset = (size_t) token * ids_token_stride
+                                    + (size_t) id_i * ids_id_stride;
+            const int expert = *(const int32_t *) (ids_raw.data() + raw_offset);
+            ids[(size_t) token * n_ids + id_i] = expert;
+            const size_t i = (size_t) token * n_ids + id_i;
+            if (expert < 0 || expert >= n_experts) {
+                snprintf(g_err, sizeof(g_err), "Sabah expert id out of range");
+                return -1;
+            }
+            void * resident = sb_mmid_resident(
+                source, expert,
+                (const uint8_t *) source + (size_t) expert * expert_stride,
+                expert_stride, compute_stream);
+            if (!resident) {
+                return -1;
+            }
+            ptrs[i] = resident;
+        }
+    }
+
+    void ** d_ptrs = nullptr;
+    if (!ck(cudaMalloc(&d_ptrs, ptrs.size() * sizeof(void *)),
+            "Sabah pointer table allocation")) {
+        return -1;
+    }
+    if (!ck(cudaMemcpyAsync(d_ptrs, ptrs.data(), ptrs.size() * sizeof(void *),
+                            cudaMemcpyHostToDevice, g_copy),
+            "Sabah pointer table upload")) {
+        cudaFree(d_ptrs);
+        return -1;
+    }
+
+    cudaEvent_t ready = nullptr;
+    if (!ck(cudaEventCreateWithFlags(&ready, cudaEventDisableTiming),
+            "Sabah copy event")) {
+        cudaFree(d_ptrs);
+        return -1;
+    }
+    if (!ck(cudaEventRecord(ready, g_copy), "Sabah copy event record") ||
+        !ck(cudaStreamWaitEvent(compute_stream, ready, 0), "Sabah compute wait")) {
+        cudaEventDestroy(ready);
+        cudaFree(d_ptrs);
+        return -1;
+    }
+
+    dim3 grid((unsigned) rows, (unsigned) n_ids, (unsigned) n_tokens);
+    k_mul_mat_id<<<grid, NT, 0, compute_stream>>>(
+        (const void * const *) d_ptrs,
+        (const float *) d_x,
+        d_dst,
+        rows, k, n_ids, n_tokens,
+        row_stride, x_token_stride, dst_id_stride, dst_token_stride, qt);
+    if (!ck(cudaGetLastError(), "Sabah MUL_MAT_ID launch")) {
+        cudaEventDestroy(ready);
+        cudaFree(d_ptrs);
+        return -1;
+    }
+
+    // The event is no longer needed after the wait has been enqueued. CUDA
+    // permits deferred destruction while dependent work is in flight.
+    cudaEventDestroy(ready);
+    cudaFree(d_ptrs);
+    return 0;
+}
+
+SABAH_API int sabah_rt_get_metrics(
+        unsigned long long * hits,
+        unsigned long long * misses,
+        unsigned long long * evictions,
+        unsigned long long * bytes_fetched,
+        unsigned long long * resident_bytes) {
+    std::lock_guard<std::mutex> lock(g_mmid_mutex);
+    if (hits)           *hits = g_mmid_hits;
+    if (misses)         *misses = g_mmid_misses;
+    if (evictions)      *evictions = g_mmid_evictions;
+    if (bytes_fetched)  *bytes_fetched = g_mmid_bytes_fetched;
+    if (resident_bytes) *resident_bytes = g_mmid_bytes;
+    return 0;
 }
 
 SABAH_API int sabah_dequant(const void * d_src, float * d_dst,
