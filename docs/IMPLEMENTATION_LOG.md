@@ -220,3 +220,36 @@ static hit rate, rather than a flat percentage band.
    attention and the fixed path, so that logits can be diffed.
 2. Correctness harness: router ids, expert outputs, logits, greedy tokens.
 3. Only then the API server.
+
+## Session 3 - release-candidate hardening
+
+Starting commit: `425a944f8478ce030f575b537677a19e2e7a0173`.
+
+### Verified on the current machine
+
+- Built `sabah_rt.dll` and `mgpu_qualify.exe` with CUDA 13.3, `sm_89`, and
+  MSVC 14.44.
+- Ran the real-GGUF CUDA self-test: all four qtypes decode correctly; block
+  agreement, wrong-expert discrimination, and eviction/refetch independence
+  passed.
+- Ran the real block-0 forced-resident/streamed A/B benchmark and preserved
+  `results/bench_release_block0.json`.
+- Ran hardware qualification: 12.73 GB/s simultaneous H2D, 25.5 GB usable
+  RAM, and 2.43 GB/s storage read at the model path.
+- Added five pure contract tests; `python -m pytest -q` passes 5/5.
+
+### Hardened
+
+- Added `ExpertId`/`ExpertRange` and an explicit source protocol.
+- Added range bounds checks, read-only views, and a lock around bank access.
+- Serialized hot-tier admission and synchronize before reusing a slot that may
+  still be read by queued compute work. This is conservative but protects
+  exactness until per-slot CUDA fences are integrated.
+- Added byte-weighted cache telemetry and duplicate-request accounting.
+- Added `sabah benchmark` and `sabah serve`; the latter refuses to silently
+  call the reference engine and requires `--allow-reference`.
+
+### Honest remaining blocker
+
+The full attention/PLE/KV/tokenizer/sampling graph is still not wired to the
+Sabah hot tier. Therefore the release remains `v0.9.0-rc1`, not `v1.0.0`.

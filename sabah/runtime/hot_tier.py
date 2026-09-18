@@ -35,6 +35,7 @@ from __future__ import annotations
 import time
 import ctypes
 import collections
+import threading
 import numpy as np
 
 from sabah.runtime import rt
@@ -55,6 +56,10 @@ class Telemetry:
     def reset(self):
         self.hits = 0
         self.misses = 0
+        self.requests = 0
+        self.byte_hits = 0
+        self.byte_misses = 0
+        self.duplicate_transfers_suppressed = 0
         self.evictions = 0
         self.bytes_fetched = 0
         self.gpu_wait_expert_ms = 0.0
@@ -63,22 +68,37 @@ class Telemetry:
         self.host_stage_ms = 0.0      # backing store -> pinned staging, on the
                                       # calling thread, i.e. on the critical path
         self.host_stage_bytes = 0
+        self.per_block = collections.defaultdict(lambda: {
+            "requests": 0, "hits": 0, "misses": 0, "bytes_fetched": 0,
+        })
 
     @property
     def hit_rate(self) -> float:
         n = self.hits + self.misses
         return (self.hits / n) if n else 0.0
 
+    @property
+    def byte_hit_rate(self) -> float:
+        n = self.byte_hits + self.byte_misses
+        return (self.byte_hits / n) if n else 0.0
+
     def as_dict(self) -> dict:
         return dict(hits=self.hits, misses=self.misses,
                     evictions=self.evictions,
+                    requests=self.requests,
+                    byte_hits=self.byte_hits,
+                    byte_misses=self.byte_misses,
+                    byte_hit_rate=round(self.byte_hit_rate, 6),
+                    duplicate_transfers_suppressed=self.duplicate_transfers_suppressed,
                     hit_rate=round(self.hit_rate, 6),
                     bytes_fetched=self.bytes_fetched,
                     gpu_wait_expert_ms=round(self.gpu_wait_expert_ms, 3),
                     host_stage_ms=round(self.host_stage_ms, 3),
                     host_stage_bytes=self.host_stage_bytes,
                     blocks_executed=self.blocks_executed,
-                    tokens=self.tokens)
+                    tokens=self.tokens,
+                    per_block={str(block): dict(values)
+                               for block, values in self.per_block.items()})
 
     def summary(self) -> str:
         return ("hits %d  misses %d  hit_rate %.4f  evictions %d\n"
@@ -128,6 +148,7 @@ class HotTier:
         self.bank = bank
         self.device = device
         self.tel = Telemetry()
+        self._lock = threading.RLock()
         self.blocks = list(blocks if blocks is not None else bank.blocks)
 
         # ---- size the per-block pools -------------------------------------
@@ -183,6 +204,7 @@ class HotTier:
                     rt.check_ptr(rt.lib().sabah_event_create(), "wait-end event")))
         self._stall_i = 0
         self._stall_pending = 0
+        self._last_compute_submission = False
 
     # ------------------------------------------------------------------
     def state_of(self, block: int, expert: int) -> str:
@@ -284,12 +306,18 @@ class HotTier:
         asked for. `experts` comes from the router; it is never filtered,
         reordered or substituted here.
         """
+        with self._lock:
+            return self._ensure_locked(block, experts)
+
+    def _ensure_locked(self, block: int, experts) -> list:
         p = self.pools[block]
         if p.n_slots == 0:
             raise RuntimeError(
                 "block %d has no VRAM slots; this tier cannot execute it" % block)
 
         want = list(experts)
+        distinct_want = list(dict.fromkeys(want))
+        self.tel.duplicate_transfers_suppressed += max(0, len(want) - len(distinct_want))
         if len(set(want)) > p.n_slots:
             raise RuntimeError(
                 "block %d routes %d distinct experts but the pool holds %d slots; "
@@ -300,10 +328,19 @@ class HotTier:
         for e in want:
             if e in p.slot_of:
                 self.tel.hits += 1
+                self.tel.per_block[block]["hits"] += 1
                 p.lru.move_to_end(e)
             else:
                 self.tel.misses += 1
+                self.tel.per_block[block]["misses"] += 1
                 misses.append(e)
+
+        self.tel.requests += len(want)
+        self.tel.per_block[block]["requests"] += len(want)
+        self.tel.byte_hits += sum(self.bank.block_expert_bytes(block)
+                                  for e in want if e in p.slot_of)
+        self.tel.byte_misses += sum(self.bank.block_expert_bytes(block)
+                                    for e in misses)
 
         # protect everything needed this step from eviction
         protected = set(want)
@@ -311,12 +348,23 @@ class HotTier:
             if p.free_slots:
                 slot = p.free_slots.pop(0)
             else:
+                # The previous compute submission may still be reading the
+                # victim slot.  Overwriting it before that work completes is
+                # a silent correctness bug.  This conservative synchronization
+                # is only needed on an actual eviction; it is preferable to
+                # an occasional wrong token and can later be replaced by
+                # per-slot CUDA fences without changing the contract.
+                if self._last_compute_submission:
+                    rt.check(rt.lib().sabah_sync_compute(),
+                             "sync before expert eviction")
+                    self._last_compute_submission = False
                 slot = self._evict(p, protected)
             p.slot_of[e] = slot
             p.expert_of[slot] = e
             p.state[e] = TRANSFERRING
             p.lru[e] = None
             self._fetch_async(block, e, slot)
+            self.tel.per_block[block]["bytes_fetched"] += self.bank.block_expert_bytes(block)
 
         if misses:
             L = rt.lib()
@@ -333,6 +381,7 @@ class HotTier:
             self._stall_pending += 1
             for e in misses:
                 p.state[e] = GPU_RESIDENT
+            self._last_compute_submission = True
 
         return [p.slot_of[e] for e in want]
 
@@ -370,19 +419,20 @@ class HotTier:
         return {r: [p.slot_ptr(s, r) for s in slots] for r in self.bank.ROLES}
 
     def free(self):
-        L = rt.lib()
-        for p in self.pools.values():
-            p.free()
-        for s in self._stage:
-            L.sabah_host_free(ctypes.c_void_p(s))
-        evs = list(self._stage_ev) + [self._ev_fetch]
-        for a, b in self._stall_ring:
-            evs += [a, b]
-        for ev in evs:
-            L.sabah_event_destroy(ctypes.c_void_p(ev))
-        self._stage = []
-        self._stage_ev = []
-        self._stall_ring = []
+        with self._lock:
+            L = rt.lib()
+            for p in self.pools.values():
+                p.free()
+            for s in self._stage:
+                L.sabah_host_free(ctypes.c_void_p(s))
+            evs = list(self._stage_ev) + [self._ev_fetch]
+            for a, b in self._stall_ring:
+                evs += [a, b]
+            for ev in evs:
+                L.sabah_event_destroy(ctypes.c_void_p(ev))
+            self._stage = []
+            self._stage_ev = []
+            self._stall_ring = []
 
     def describe(self) -> str:
         return ("hot tier   : %d blocks x %d slots = %.3f GB VRAM\n"

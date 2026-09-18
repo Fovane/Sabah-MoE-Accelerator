@@ -362,7 +362,18 @@ def plan(model, hw, context: int = 8192, concurrency: int = 1,
         p.projected_speedup_low = p.projected_tok_s_low / p.reference_tok_s_estimate
         p.projected_speedup_high = p.projected_tok_s_high / p.reference_tok_s_estimate
 
-    p.recommended = p.projected_speedup_low >= 1.10
+    # Storage-backed mode is a correctness/development fallback.  Its simple
+    # ratio can look positive against a very weak CPU reference while still
+    # being dominated by page faults and disk reads, so it must never be
+    # presented as a recommended acceleration plan without a measured
+    # full-model result.
+    if p.exec_class == ExecClass.STORAGE_BACKED:
+        p.recommended = False
+        p.notes.append(
+            "storage-backed mode is for correctness/development; acceleration "
+            "is not recommended until a full-model measurement exists")
+    else:
+        p.recommended = p.projected_speedup_low >= 1.10
     if p.projected_tok_s_high < 5.0:
         p.notes.append(
             "absolute throughput is very low (%.1f-%.1f tok/s) whatever the "
@@ -371,12 +382,17 @@ def plan(model, hw, context: int = 8192, concurrency: int = 1,
             % (p.projected_tok_s_low, p.projected_tok_s_high,
                (bank + fixed + model.lookup_bytes) / 1e9, bank / 1e9))
     if not p.recommended:
+        storage_fallback = p.exec_class == ExecClass.STORAGE_BACKED
         p.exec_class = ExecClass.REFERENCE if p.projected_speedup_high < 1.0 \
             else p.exec_class
-        p.notes.append(
-            "projected speedup %.2f-%.2fx does not clear the 1.10x bar; "
-            "reference runtime recommended"
-            % (p.projected_speedup_low, p.projected_speedup_high))
+        if storage_fallback:
+            p.notes.append("reference runtime recommended until storage-backed "
+                           "full-model performance is measured")
+        else:
+            p.notes.append(
+                "projected speedup %.2f-%.2fx does not clear the 1.10x bar; "
+                "reference runtime recommended"
+                % (p.projected_speedup_low, p.projected_speedup_high))
 
     p.limitations.append(
         "hit rate from a measured mixed-workload curve (%s); actual traffic "

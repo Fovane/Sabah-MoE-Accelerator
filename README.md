@@ -1,4 +1,4 @@
-# Sabah MoE Accelerator
+# Sabah Accelerator
 
 ![status: experimental](https://img.shields.io/badge/status-experimental-orange)
 ![routing: exact](https://img.shields.io/badge/expert%20routing-exact-brightgreen)
@@ -33,12 +33,13 @@ verified against the real artifact in Sabah v3/v4.
 
 ---
 
-## Status — `v0.1.0-alpha`
+## Status — `v0.9.0-rc1`
 
-**This is not a "download it and your model gets faster" release.** It is an
-alpha of the inspection, qualification and planning layer. The accelerator
-runtime — the thing that would actually make tokens come out faster — is
-Phase B, and it is not finished.
+**This is not a "download it and your model gets faster" release.** It is a
+release candidate: the exact expert runtime and block-level correctness gate
+are working, while the full-model Sabah integration is still being completed.
+The local API can be used in explicitly labelled `REFERENCE` mode through the
+installed llama.cpp engine.
 
 What you can do today: point Sabah at a GGUF and at your machine, and get an
 honest answer about whether this hardware could run it well, including the
@@ -54,9 +55,10 @@ This is **Phase A complete**, on a single-GPU development machine.
 | expert pipeline micro-benchmark (`expert_pipe_bench.cu`) | **built, measured** |
 | execution planner + estimator | **working**, validated by synthetic machine-class tests |
 | CLI (`inspect` / `qualify` / `plan` / `doctor` / `status`) | **working** |
-| GPU hot-tier runtime | **not built** |
-| OpenAI-compatible server | **not built** |
-| correctness harness vs reference | **not built** |
+| GPU hot-tier runtime (expert/block path) | **working, CUDA-tested** |
+| full-model attention/KV integration | **not complete** |
+| OpenAI-compatible server | **working in REFERENCE mode** |
+| correctness harness vs reference | **expert/block PASS; logits/tokens pending** |
 
 Nothing in this repository claims a measured speedup. The planner emits
 **projections**, always labelled, and they are replaced by measurements only
@@ -69,6 +71,7 @@ python -m sabah.tools.cli doctor
 python -m sabah.tools.cli inspect  <model>-00001-of-00004.gguf
 python -m sabah.tools.cli qualify  <model>-00001-of-00004.gguf
 python -m sabah.tools.cli plan     <model>-00001-of-00004.gguf
+python -m sabah.tools.cli benchmark <model>-00001-of-00004.gguf --dry-run
 ```
 
 Once the CUDA runtime is built, the two commands that produce evidence rather
@@ -82,6 +85,17 @@ python -m sabah.tools.cli bench    <model>-00001-of-00004.gguf --bank-mode ram
 `selftest` refuses to pass unless the GPU decodes every expert quant type
 bit-exactly and reproduces a CPU reference block. Run it before trusting any
 speed number.
+
+The API command is intentionally explicit about its current limitation:
+
+```bash
+python -m sabah.tools.cli serve <model>-00001-of-00004.gguf --allow-reference
+```
+
+This starts a localhost-only OpenAI-compatible proxy backed by llama.cpp. It
+does not claim that the full model is using Sabah's hot tier. Without
+`--allow-reference`, `serve` refuses to start rather than silently falling
+back.
 
 Building the CUDA pieces (`<cc>` is the GPU's compute capability without the
 dot, from `nvidia-smi --query-gpu=compute_cap --format=csv,noheader`):
@@ -250,9 +264,9 @@ Needs hardware this project does not have:
 
 Needs more building:
 
-- the full-model pipeline, and therefore any end-to-end tokens/s claim
+- the full-model Sabah pipeline, and therefore any Sabah end-to-end tokens/s claim
 - a correctness harness against llama.cpp at the logits/greedy-token level
-  (block-level exactness is proven; whole-model equivalence is not)
+  (expert/block exactness is proven; whole-model equivalence is not)
 - the hit curve is measured on one 18,960-token trace of 13 families; it
   drifted ~0.01 per doubling of trace length in v4 and should be expected to
   come in 1-3 points lower on longer traffic
