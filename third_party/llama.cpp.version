@@ -1,0 +1,6 @@
+upstream_url=https://github.com/ggml-org/llama.cpp.git
+base_commit=96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b
+integration_patch=patches/llama.cpp/0001-sabah-native-mul-mat-id.patch
+verified_clean_worktree=D:/sabah_scaling/llama-sabah-clean
+verified_build=cmake -S . -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=89
+verified_result=llama-cli native Sabah bridge; deterministic first token 1596 (We)

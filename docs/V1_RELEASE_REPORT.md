@@ -4,13 +4,15 @@
 
 ```text
 v1.0.0 NOT READY
-Release candidate produced instead: v0.9.0-rc2
+Release candidate produced instead: v0.9.0-rc3
 ```
 
 The exact expert/block runtime is real and tested. Gate F's first real
-full-model Sabah token now passes through the native `MUL_MAT_ID` boundary,
-but the independent numerical ladder and sequential/API gates are not yet
-complete, so shipping `v1.0.0` would overstate the result.
+full-model Sabah token now passes through the reproducible native
+`MUL_MAT_ID` boundary, but the multi-token numerical ladder shows measured
+CPU-reference versus CUDA expert arithmetic differences, so shipping `v1.0.0`
+would overstate the result. Detailed RC3 evidence is in
+[`RC3_CORRECTNESS_REPORT.md`](RC3_CORRECTNESS_REPORT.md).
 
 The llama.cpp archaeology and implemented native seam are recorded in
 [`LLAMA_CPP_INTEGRATION_MAP.md`](LLAMA_CPP_INTEGRATION_MAP.md). The selected
@@ -19,10 +21,10 @@ now receives the real host GGUF tensor, authoritative IDs and device hidden
 states there, uses a native LRU and exact quantized expert execution, then
 returns to the normal graph.
 
-Starting repository commit: `425a944f8478ce030f575b537677a19e2e7a0173`.
+Starting repository commit: `1bc838c67d11c48a8740306ea4a036dea965ddf9`.
 
-RC package: `dist/sabah_moe_accelerator-0.9.0rc2-py3-none-any.whl`.
-SHA-256: `3f63746abb02e483730f51ba05aa7b49757c7e858334979111f51e88f24df69e`.
+RC3 package: `dist/sabah_moe_accelerator-0.9.0rc3-py3-none-any.whl`.
+SHA-256: `6d54780040ee9a8dff78ffb19da72e5a51f87dc99d9de5e56b14d2f28366e611`.
 
 ## Gates
 
@@ -33,7 +35,7 @@ SHA-256: `3f63746abb02e483730f51ba05aa7b49757c7e858334979111f51e88f24df69e`.
 | C — real expert runtime | PASS | Real GGUF expert bytes loaded and executed on RTX 4050 |
 | D — hot-tier cache | PASS | Hit/miss, LRU eviction, reload and residency independence exercised |
 | E — expert/MoE correctness | PASS | Four qtypes `max|diff|=0`; block relative L2 `6.03e-7` / `6.02e-7`; wrong-expert discrimination PASS |
-| F — end-to-end model | FIRST TOKEN PASS / OPEN | One real full-model token passed through native Sabah; independent ladder and sequential tests remain |
+| F — end-to-end model | FIRST TOKEN PASS / MULTI-TOKEN BLOCKED | Clean native bridge reproduces the first token; all-block multi-token comparison exposes CPU-reference vs CUDA expert arithmetic drift |
 | G — server | PARTIAL | OpenAI-compatible localhost proxy works in explicitly labelled reference mode |
 | H — user flow | PARTIAL | inspect/qualify/plan/selftest/benchmark/serve reference flow documented |
 | I — claim hygiene | PASS | measured/projected/speedup-unavailable states are separated |
@@ -98,8 +100,8 @@ storage-backed path is primarily for correctness and runtime validation.
 
 ## Next work
 
-1. Add router, intermediate-state, logits, and deterministic greedy-token
-   comparisons against the same GGUF in llama.cpp.
-3. Replace the reference-mode API backend with the integrated Sabah backend.
-4. Re-run identical full-model reference/Sabah benchmarks before considering
+1. Establish a numerically equivalent reference backend (or a documented
+   semantic tolerance) and close the all-block router/intermediate/logit ladder.
+2. Replace the reference-mode API backend with the integrated Sabah backend.
+3. Re-run identical full-model reference/Sabah benchmarks before considering
    `v1.0.0`.

@@ -1,0 +1,202 @@
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 6faa68047..2a4822864 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -28,6 +28,19 @@
+ #include <sys/sysctl.h>
+ #endif
+ 
++// Sabah's optional native MUL_MAT_ID adapter consumes the original read-only
++// host GGUF expert tensor directly. Avoid constructing llama.cpp's enormous
++// full-shaped CUDA copy only for that operation; the adapter performs exact
++// expert residency and uses the authoritative device ids at execution time.
++static bool ggml_backend_sched_sabah_direct_expert(const ggml_tensor * node,
++                                                   const ggml_tensor * src,
++                                                   int src_index) {
++    return std::getenv("SABAH_LLAMA") != nullptr &&
++           src_index == 0 && node->op == GGML_OP_MUL_MAT_ID &&
++           src->buffer != nullptr && ggml_backend_buffer_is_host(src->buffer) &&
++           ggml_is_quantized(src->type) && src->ne[2] > 1;
++}
++
+ 
+ // backend buffer type
+ 
+@@ -1397,6 +1410,14 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
+                 }
+ 
+                 if (src_backend_id != cur_backend_id && !ggml_backend_sched_buffer_supported(sched, src, cur_backend_id)) {
++                    if (ggml_backend_sched_sabah_direct_expert(node, src, j)) {
++                        // Keep the original host tensor in the graph. The
++                        // Sabah CUDA bridge consumes its immutable GGUF bytes
++                        // directly and therefore must not receive a full
++                        // device-shaped copy of the expert bank.
++                        tensor_id_copy(src_id, cur_backend_id, sched->cur_copy) = src;
++                        continue;
++                    }
+                     // create a copy of the input in the split's backend
+                     if (tensor_id_copy(src_id, cur_backend_id, 0) == NULL) {
+                         ggml_backend_t backend = sched->backends[cur_backend_id];
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 790553888..043b28953 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -91,6 +91,12 @@
+ #include <string>
+ #include <vector>
+ 
++#if defined(_WIN32)
++#include <windows.h>
++#else
++#include <dlfcn.h>
++#endif
++
+ static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
+ 
+ #define GGML_LOG_WARN_ONCE(str) \
+@@ -137,6 +143,131 @@ int ggml_cuda_get_device() {
+     return id;
+ }
+ 
++// Optional Sabah native bridge. It is loaded only when SABAH_LLAMA is set;
++// the normal llama.cpp CUDA path remains untouched otherwise. The bridge is
++// deliberately located at MUL_MAT_ID so the real graph supplies the host GGUF
++// tensor, hidden-state device pointer, authoritative ids and output tensor.
++struct sabah_llama_bridge {
++#if defined(_WIN32)
++    HMODULE handle = nullptr;
++#else
++    void * handle = nullptr;
++#endif
++    bool ready = false;
++    using init_fn = int (*)(int);
++    using mul_mat_id_fn = int (*) (
++        const void *, size_t, size_t,
++        const void *, size_t,
++        const void *, size_t, size_t, int, int,
++        float *, size_t, size_t,
++        int, int, int, int, void *);
++    using last_error_fn = const char *(*)();
++    using get_metrics_fn = int (*)(unsigned long long *, unsigned long long *,
++                                   unsigned long long *, unsigned long long *,
++                                   unsigned long long *);
++    init_fn init = nullptr;
++    mul_mat_id_fn mul_mat_id = nullptr;
++    last_error_fn last_error = nullptr;
++    get_metrics_fn get_metrics = nullptr;
++};
++
++static sabah_llama_bridge g_sabah_llama_bridge;
++static std::once_flag g_sabah_llama_once;
++
++static void sabah_bridge_report_metrics() {
++    auto & bridge = g_sabah_llama_bridge;
++    if (!bridge.ready || !bridge.get_metrics || std::getenv("SABAH_LLAMA_TRACE") == nullptr) {
++        return;
++    }
++    unsigned long long hits = 0;
++    unsigned long long misses = 0;
++    unsigned long long evictions = 0;
++    unsigned long long bytes_fetched = 0;
++    unsigned long long resident_bytes = 0;
++    if (bridge.get_metrics(&hits, &misses, &evictions, &bytes_fetched, &resident_bytes) == 0) {
++        std::fprintf(stderr,
++                     "SABAH_METRICS hits=%llu misses=%llu evictions=%llu bytes_fetched=%llu resident_bytes=%llu\n",
++                     hits, misses, evictions, bytes_fetched, resident_bytes);
++    }
++}
++
++static void * sabah_bridge_symbol(sabah_llama_bridge & bridge, const char * name) {
++#if defined(_WIN32)
++    return (void *) GetProcAddress(bridge.handle, name);
++#else
++    return dlsym(bridge.handle, name);
++#endif
++}
++
++static bool sabah_bridge_load() {
++    std::call_once(g_sabah_llama_once, []() {
++        auto & bridge = g_sabah_llama_bridge;
++        const char * configured = std::getenv("SABAH_RT_LIB");
++        const char * path = configured && *configured ? configured :
++#if defined(_WIN32)
++            "sabah_rt.dll";
++#else
++            "libsabah_rt.so";
++#endif
++
++#if defined(_WIN32)
++        bridge.handle = LoadLibraryA(path);
++#else
++        bridge.handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
++#endif
++        if (!bridge.handle) {
++            GGML_LOG_ERROR("SABAH_LLAMA requested but Sabah runtime could not be loaded: %s\n", path);
++            return;
++        }
++        bridge.init = (sabah_llama_bridge::init_fn) sabah_bridge_symbol(bridge, "sabah_rt_init");
++        bridge.mul_mat_id = (sabah_llama_bridge::mul_mat_id_fn) sabah_bridge_symbol(bridge, "sabah_rt_mul_mat_id");
++        bridge.last_error = (sabah_llama_bridge::last_error_fn) sabah_bridge_symbol(bridge, "sabah_rt_last_error");
++        bridge.get_metrics = (sabah_llama_bridge::get_metrics_fn) sabah_bridge_symbol(bridge, "sabah_rt_get_metrics");
++        if (!bridge.init || !bridge.mul_mat_id || !bridge.last_error || !bridge.get_metrics) {
++            GGML_LOG_ERROR("SABAH_LLAMA runtime is missing the native MUL_MAT_ID ABI\n");
++            return;
++        }
++        if (bridge.init(ggml_cuda_get_device()) != 0) {
++            GGML_LOG_ERROR("SABAH_LLAMA runtime init failed: %s\n", bridge.last_error());
++            return;
++        }
++        bridge.ready = true;
++        std::atexit(sabah_bridge_report_metrics);
++        GGML_LOG_INFO("SABAH_LLAMA native exact-expert backend enabled (%s)\n", path);
++    });
++    return g_sabah_llama_bridge.ready;
++}
++
++static bool sabah_bridge_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
++    const ggml_tensor * src0 = dst->src[0];
++    const ggml_tensor * src1 = dst->src[1];
++    const ggml_tensor * ids  = dst->src[2];
++    if (!sabah_bridge_load()) {
++        return false;
++    }
++    if (!ggml_backend_buffer_is_host(src0->buffer) ||
++        src1->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32 ||
++        ids->type != GGML_TYPE_I32 || src0->ne[0] > INT_MAX ||
++        src0->ne[1] > INT_MAX || src0->ne[2] > INT_MAX ||
++        ids->ne[0] > INT_MAX || ids->ne[1] > INT_MAX) {
++        GGML_LOG_ERROR("SABAH_LLAMA received an unsupported MUL_MAT_ID layout\n");
++        return false;
++    }
++    const int rc = g_sabah_llama_bridge.mul_mat_id(
++        src0->data, src0->nb[2], src0->nb[1],
++        src1->data, src1->nb[2],
++        ids->data, ids->nb[0], ids->nb[1],
++        (int) ids->ne[0], (int) ids->ne[1],
++        (float *) dst->data, dst->nb[1], dst->nb[2],
++        (int) src0->ne[1], (int) src0->ne[0], (int) src0->ne[2],
++        (int) src0->type, (void *) ctx.stream());
++    if (rc != 0) {
++        GGML_LOG_ERROR("SABAH_LLAMA MUL_MAT_ID failed: %s\n", g_sabah_llama_bridge.last_error());
++        return false;
++    }
++    return true;
++}
++
+ static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
+     ggml_cuda_set_device(device);
+     cudaError_t err;
+@@ -1912,6 +2043,14 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor *
+     const ggml_tensor * src1 = dst->src[1];
+     const ggml_tensor * ids  = dst->src[2];
+ 
++    if (std::getenv("SABAH_LLAMA") != nullptr && src0->buffer != nullptr &&
++        ggml_backend_buffer_is_host(src0->buffer)) {
++        if (!sabah_bridge_mul_mat_id(ctx, dst)) {
++            GGML_ABORT("SABAH_LLAMA could not execute the host-backed exact expert operation");
++        }
++        return;
++    }
++
+     GGML_ASSERT(src1->type == GGML_TYPE_F32);
+     GGML_ASSERT(dst->type  == GGML_TYPE_F32);

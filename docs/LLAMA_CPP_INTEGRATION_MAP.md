@@ -1,12 +1,16 @@
 # llama.cpp integration map
 
-Status: Gate F first-token integration is working in the local pinned checkout.
-The full correctness ladder is still open; this is not a v1.0 claim. The
-result is recorded in `results/full_model_first_token.json`.
+Status: Gate F first-token integration is working in a reproducible clean
+checkout. The full multi-token correctness ladder is blocked by measured
+CPU-reference versus CUDA expert arithmetic differences; this is not a v1.0
+claim. See `RC3_CORRECTNESS_REPORT.md` and
+`results/full_model_first_token.json`.
 
 ## Pinned dependency and working-tree state
 
-The inspected checkout is `D:\llama-glm53`.
+The inspected dirty development checkout is `D:\llama-glm53`; it is preserved
+for archaeology only. The reproducible integration source of truth is the
+clean pinned worktree and patch under `third_party/` and `patches/llama.cpp/`.
 
 ```text
 HEAD: 96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b
