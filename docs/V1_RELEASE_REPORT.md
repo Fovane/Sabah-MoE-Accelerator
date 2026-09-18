@@ -4,7 +4,7 @@
 
 ```text
 v1.0.0 NOT READY
-Release candidate produced instead: v0.9.0-rc3
+Release candidate produced instead: v0.9.0-rc4 (see RC4_NUMERICAL_EQUIVALENCE_REPORT.md)
 ```
 
 The exact expert/block runtime is real and tested. Gate F's first real

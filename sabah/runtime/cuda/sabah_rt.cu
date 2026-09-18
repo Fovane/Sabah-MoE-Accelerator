@@ -25,6 +25,8 @@
 #include <mutex>
 #include <stdio.h>
 #include <string.h>
+#include <cstring>
+#include <cstdio>
 #include <vector>
 
 #if defined(_WIN32)
@@ -54,6 +56,7 @@ struct sb_mmid_entry {
     void * device;
     size_t bytes;
     uint64_t touch;
+    uint64_t epoch;     // last MUL_MAT_ID call that referenced this slot
 };
 
 static std::mutex g_mmid_mutex;
@@ -65,6 +68,16 @@ static uint64_t g_mmid_hits = 0;
 static uint64_t g_mmid_misses = 0;
 static uint64_t g_mmid_evictions = 0;
 static uint64_t g_mmid_bytes_fetched = 0;
+// Diagnostics. `epoch` identifies the MUL_MAT_ID call in progress: a slot whose
+// pointer has already been handed to that call must not be evicted before the
+// call's kernel has run, whatever the capacity says.
+static uint64_t g_mmid_epoch = 0;
+static uint64_t g_mmid_calls = 0;
+static uint64_t g_mmid_tokens = 0;
+static uint64_t g_mmid_overflow = 0;       // allocations that exceeded capacity
+static uint64_t g_mmid_verify_ok = 0;
+static uint64_t g_mmid_verify_fail = 0;
+static bool     g_mmid_verify = false;     // SABAH_LLAMA_VERIFY_BYTES=1
 
 static bool ck(cudaError_t e, const char * what);
 
@@ -95,24 +108,58 @@ static void sb_mmid_reset() {
     g_mmid_misses = 0;
     g_mmid_evictions = 0;
     g_mmid_bytes_fetched = 0;
+    g_mmid_epoch = 0;
+    g_mmid_calls = 0;
+    g_mmid_tokens = 0;
+    g_mmid_overflow = 0;
+    g_mmid_verify_ok = 0;
+    g_mmid_verify_fail = 0;
+    const char * v = std::getenv("SABAH_LLAMA_VERIFY_BYTES");
+    g_mmid_verify = v && std::strcmp(v, "1") == 0;
 }
 
 static void sb_mmid_evict_until(size_t needed, cudaStream_t compute_stream) {
     // A slot can still be read by a previously submitted compute kernel.  The
     // conservative synchronization is only taken on an actual eviction and
     // preserves the exact-output invariant.
-    while (!g_mmid_entries.empty() && g_mmid_bytes + needed > g_mmid_capacity) {
-        auto it = std::min_element(g_mmid_entries.begin(), g_mmid_entries.end(),
-            [](const sb_mmid_entry & a, const sb_mmid_entry & b) {
-                return a.touch < b.touch;
-            });
+    //
+    // Slots already handed to the call in progress are never victims: their
+    // device pointers sit in that call's pointer table and the kernel has not
+    // run yet. If nothing else can be evicted the tier temporarily exceeds its
+    // budget instead of producing a dangling pointer.
+    while (g_mmid_bytes + needed > g_mmid_capacity) {
+        auto victim = g_mmid_entries.end();
+        for (auto it = g_mmid_entries.begin(); it != g_mmid_entries.end(); ++it) {
+            if (it->epoch == g_mmid_epoch) continue;
+            if (victim == g_mmid_entries.end() || it->touch < victim->touch) victim = it;
+        }
+        if (victim == g_mmid_entries.end()) {
+            ++g_mmid_overflow;
+            return;
+        }
         cudaStreamSynchronize(compute_stream);
         cudaStreamSynchronize(g_copy);
-        cudaFree(it->device);
-        g_mmid_bytes -= it->bytes;
-        g_mmid_entries.erase(it);
+        cudaFree(victim->device);
+        g_mmid_bytes -= victim->bytes;
+        g_mmid_entries.erase(victim);
         ++g_mmid_evictions;
     }
+}
+
+// Byte-exact check of a resident slot against the original GGUF range.
+static bool sb_mmid_verify(const void * device, const void * source, size_t bytes) {
+    std::vector<uint8_t> back(bytes);
+    if (cudaStreamSynchronize(g_copy) != cudaSuccess ||
+        cudaMemcpy(back.data(), device, bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        ++g_mmid_verify_fail;
+        return false;
+    }
+    if (std::memcmp(back.data(), source, bytes) != 0) {
+        ++g_mmid_verify_fail;
+        return false;
+    }
+    ++g_mmid_verify_ok;
+    return true;
 }
 
 static void * sb_mmid_resident(const void * source_key, int expert,
@@ -126,7 +173,12 @@ static void * sb_mmid_resident(const void * source_key, int expert,
     for (auto & entry : g_mmid_entries) {
         if (entry.source_key == source_key && entry.expert == expert && entry.bytes == bytes) {
             entry.touch = ++g_mmid_tick;
+            entry.epoch = g_mmid_epoch;
             ++g_mmid_hits;
+            if (g_mmid_verify && !sb_mmid_verify(entry.device, source, bytes)) {
+                snprintf(g_err, sizeof(g_err), "Sabah resident expert %d differs from its GGUF bytes (hit)", expert);
+                return nullptr;
+            }
             return entry.device;
         }
     }
@@ -144,9 +196,13 @@ static void * sb_mmid_resident(const void * source_key, int expert,
         return nullptr;
     }
 
-    g_mmid_entries.push_back({ source_key, expert, device, bytes, ++g_mmid_tick });
+    g_mmid_entries.push_back({ source_key, expert, device, bytes, ++g_mmid_tick, g_mmid_epoch });
     g_mmid_bytes += bytes;
     g_mmid_bytes_fetched += bytes;
+    if (g_mmid_verify && !sb_mmid_verify(device, source, bytes)) {
+        snprintf(g_err, sizeof(g_err), "Sabah fetched expert %d differs from its GGUF bytes (miss)", expert);
+        return nullptr;
+    }
     return device;
 }
 
@@ -408,7 +464,8 @@ __global__ void k_mul_mat_id(const void * const * __restrict__ weights,
                              const float * __restrict__ x,
                              float * __restrict__ dst,
                              int rows, int k, int n_ids, int n_tokens,
-                             size_t row_stride, size_t x_token_stride,
+                             size_t row_stride,
+                             size_t x_id_stride, int x_rows, size_t x_token_stride,
                              size_t dst_id_stride, size_t dst_token_stride,
                              int qt) {
     __shared__ float sh[NWARP + 1];
@@ -422,7 +479,12 @@ __global__ void k_mul_mat_id(const void * const * __restrict__ weights,
 
     const void * expert = weights[(size_t) token * n_ids + id_i];
     const uint8_t * row_ptr = (const uint8_t *) expert + (size_t) row * row_stride;
-    const float * x_ptr = (const float *) ((const uint8_t *) x + (size_t) token * x_token_stride);
+    // ggml MUL_MAT_ID: selected slot id_i reads input row (id_i % ne11) of
+    // token `token`. gate/up broadcast one hidden state (ne11 == 1); the down
+    // projection has one SwiGLU activation PER slot (ne11 == n_used).
+    const float * x_ptr = (const float *) ((const uint8_t *) x
+                        + (size_t) (id_i % x_rows) * x_id_stride
+                        + (size_t) token * x_token_stride);
 
     const int nsub = k / 32;
     float partial = 0.0f;
@@ -473,11 +535,23 @@ extern "C" {
 
 SABAH_API const char * sabah_rt_last_error(void) { return g_err; }
 
+static void sb_report_diag() {
+    if (!std::getenv("SABAH_LLAMA_TRACE")) return;
+    std::fprintf(stderr,
+                 "SABAH_DIAG calls=%llu tokens=%llu lookups=%llu overflow=%llu verify_ok=%llu verify_fail=%llu\n",
+                 (unsigned long long) g_mmid_calls, (unsigned long long) g_mmid_tokens,
+                 (unsigned long long) (g_mmid_hits + g_mmid_misses),
+                 (unsigned long long) g_mmid_overflow,
+                 (unsigned long long) g_mmid_verify_ok, (unsigned long long) g_mmid_verify_fail);
+}
+
 SABAH_API int sabah_rt_init(int device) {
     if (!ck(cudaSetDevice(device), "cudaSetDevice")) return -1;
     if (!ck(cudaStreamCreate(&g_copy),    "create copy stream"))    return -1;
     if (!ck(cudaStreamCreate(&g_compute), "create compute stream")) return -1;
     sb_mmid_reset();
+    static bool registered = false;
+    if (!registered) { std::atexit(sb_report_diag); registered = true; }
     return 0;
 }
 
@@ -592,11 +666,41 @@ SABAH_API int sabah_moe_block(const float * d_x, float * d_out, float * d_h,
 // read-only GGUF tensor, not a compacted or rewritten expert bank.  `stream`
 // is llama.cpp's active CUDA compute stream; the copy stream is owned by
 // Sabah and joined with an event before the kernel launch.
-SABAH_API int sabah_rt_mul_mat_id(
+// Live counters for processes that are never shut down cleanly (servers).
+// With SABAH_LLAMA_STATUS_FILE set, the counters are rewritten at most every
+// 250 ms, so an operator can see that Sabah is really executing expert ops.
+static void sb_status_write(bool force) {
+    static const char * path = std::getenv("SABAH_LLAMA_STATUS_FILE");
+    if (!path || !*path) return;
+    static auto last = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && now - last < std::chrono::milliseconds(250)) return;
+    last = now;
+    unsigned long long v[11];
+    {
+        std::lock_guard<std::mutex> lock(g_mmid_mutex);
+        v[0] = g_mmid_calls; v[1] = g_mmid_tokens; v[2] = g_mmid_hits + g_mmid_misses;
+        v[3] = g_mmid_hits; v[4] = g_mmid_misses; v[5] = g_mmid_evictions;
+        v[6] = g_mmid_bytes_fetched; v[7] = g_mmid_bytes; v[8] = g_mmid_overflow;
+        v[9] = g_mmid_verify_ok; v[10] = g_mmid_verify_fail;
+    }
+    FILE * f = std::fopen(path, "wb");
+    if (!f) return;
+    std::fprintf(f,
+        "{\"calls\":%llu,\"tokens\":%llu,\"lookups\":%llu,\"hits\":%llu,\"misses\":%llu,"
+        "\"evictions\":%llu,\"bytes_fetched\":%llu,\"resident_bytes\":%llu,\"overflow\":%llu,"
+        "\"verify_ok\":%llu,\"verify_fail\":%llu}\n",
+        v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10]);
+    std::fclose(f);
+}
+
+SABAH_API int sabah_rt_mul_mat_id_v2(
         const void * source,
         size_t expert_stride,
         size_t row_stride,
         const void * d_x,
+        size_t x_id_stride,
+        int x_rows,
         size_t x_token_stride,
         const void * d_ids,
         size_t ids_id_stride,
@@ -618,6 +722,17 @@ SABAH_API int sabah_rt_mul_mat_id(
     if (k <= 0 || rows <= 0 || n_ids <= 0 || n_tokens <= 0 || n_experts <= 0 || (k % 32) != 0) {
         snprintf(g_err, sizeof(g_err), "invalid Sabah MUL_MAT_ID geometry");
         return -1;
+    }
+    if (x_rows <= 0 || (x_rows != 1 && x_rows != n_ids)) {
+        snprintf(g_err, sizeof(g_err),
+                 "Sabah MUL_MAT_ID input rows %d must be 1 (broadcast) or n_ids %d", x_rows, n_ids);
+        return -1;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_mmid_mutex);
+        ++g_mmid_epoch;
+        ++g_mmid_calls;
+        g_mmid_tokens += (uint64_t) n_tokens;
     }
     if (sb_block_bytes(qt) == 0 || row_stride < sb_row_bytes(qt, k)) {
         snprintf(g_err, sizeof(g_err), "unsupported Sabah MUL_MAT_ID quantized row");
@@ -652,6 +767,21 @@ SABAH_API int sabah_rt_mul_mat_id(
                 snprintf(g_err, sizeof(g_err), "Sabah expert id out of range");
                 return -1;
             }
+#ifdef SABAH_SENTINEL_WRONG_EXPERT
+            // TEST-ONLY BUILD. Never defined for a shipped library: it exists
+            // so the correctness gate can prove it rejects a wrong expert in
+            // the real graph. Slot 0 of every call runs the neighbouring expert.
+            if (id_i == 0) {
+                ids[(size_t) token * n_ids + id_i] = expert;
+                void * wrong = sb_mmid_resident(
+                    source, (expert + 1) % n_experts,
+                    (const uint8_t *) source + (size_t) ((expert + 1) % n_experts) * expert_stride,
+                    expert_stride, compute_stream);
+                if (!wrong) return -1;
+                ptrs[(size_t) token * n_ids + id_i] = wrong;
+                continue;
+            }
+#endif
             void * resident = sb_mmid_resident(
                 source, expert,
                 (const uint8_t *) source + (size_t) expert * expert_stride,
@@ -694,7 +824,8 @@ SABAH_API int sabah_rt_mul_mat_id(
         (const float *) d_x,
         d_dst,
         rows, k, n_ids, n_tokens,
-        row_stride, x_token_stride, dst_id_stride, dst_token_stride, qt);
+        row_stride, x_id_stride, x_rows, x_token_stride,
+        dst_id_stride, dst_token_stride, qt);
     if (!ck(cudaGetLastError(), "Sabah MUL_MAT_ID launch")) {
         cudaEventDestroy(ready);
         cudaFree(d_ptrs);
@@ -705,6 +836,22 @@ SABAH_API int sabah_rt_mul_mat_id(
     // permits deferred destruction while dependent work is in flight.
     cudaEventDestroy(ready);
     cudaFree(d_ptrs);
+    sb_status_write(false);
+    return 0;
+}
+
+SABAH_API int sabah_rt_get_diag(
+        unsigned long long * calls,
+        unsigned long long * tokens,
+        unsigned long long * overflow,
+        unsigned long long * verify_ok,
+        unsigned long long * verify_fail) {
+    std::lock_guard<std::mutex> lock(g_mmid_mutex);
+    if (calls)       *calls = g_mmid_calls;
+    if (tokens)      *tokens = g_mmid_tokens;
+    if (overflow)    *overflow = g_mmid_overflow;
+    if (verify_ok)   *verify_ok = g_mmid_verify_ok;
+    if (verify_fail) *verify_fail = g_mmid_verify_fail;
     return 0;
 }
 

@@ -33,13 +33,15 @@ verified against the real artifact in Sabah v3/v4.
 
 ---
 
-## Status — `v0.9.0-rc3`
+## Status — `v0.9.0-rc4`
 
 **This is not a "download it and your model gets faster" release.** It is a
-release candidate: the exact expert runtime and block-level correctness gate
-are working, while the full-model Sabah integration is still being completed.
-The local API can be used in explicitly labelled `REFERENCE` mode through the
-installed llama.cpp engine.
+release candidate. Every expert `MUL_MAT_ID` of the full model runs through
+Sabah inside a pinned, patched llama.cpp, and each one matches float64 math on
+its own inputs to fp32 precision. On the development machine that is measured
+**3.3× slower** than stock llama.cpp, and 64-token greedy output diverges from
+llama.cpp at a contested token. See
+[`docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md`](docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md).
 
 What you can do today: point Sabah at a GGUF and at your machine, and get an
 honest answer about whether this hardware could run it well, including the
@@ -56,13 +58,13 @@ This is **Phase A complete**, on a single-GPU development machine.
 | execution planner + estimator | **working**, validated by synthetic machine-class tests |
 | CLI (`inspect` / `qualify` / `plan` / `doctor` / `status`) | **working** |
 | GPU hot-tier runtime (expert/block path) | **working, CUDA-tested** |
-| full-model attention/KV integration | **not complete** |
-| OpenAI-compatible server | **working in REFERENCE mode** |
-| correctness harness vs reference | **native boundary PASS; multi-token numerical ladder BLOCKED** |
+| full-model integration (llama.cpp graph, native `MUL_MAT_ID`) | **working**; patches pinned to llama.cpp `96ffdc41c` |
+| OpenAI-compatible server | **working**, `--backend sabah` or `--backend reference` |
+| correctness harness vs reference | **structural PASS; op-level exact; 16-token greedy PASS; 64-token greedy FAIL at a contested token** |
 
-Nothing in this repository claims a measured speedup. The planner emits
-**projections**, always labelled, and they are replaced by measurements only
-when `sabah benchmark` exists and has run on the machine in question.
+The only measured full-model speedup is **0.30×** (Sabah slower), on a 6 GB
+laptop GPU the planner already rates "not recommended". The planner's
+**projections** stay labelled as such.
 
 ## Quick start
 
@@ -86,16 +88,17 @@ python -m sabah.tools.cli bench    <model>-00001-of-00004.gguf --bank-mode ram
 bit-exactly and reproduces a CPU reference block. Run it before trusting any
 speed number.
 
-The API command is intentionally explicit about its current limitation:
+The API serves one of two explicitly chosen backends:
 
 ```bash
-python -m sabah.tools.cli serve <model>-00001-of-00004.gguf --allow-reference
+python -m sabah.tools.cli serve <model>-00001-of-00004.gguf --backend sabah
+python -m sabah.tools.cli serve <model>-00001-of-00004.gguf --backend reference --allow-reference
 ```
 
-This starts a localhost-only OpenAI-compatible proxy backed by llama.cpp. It
-does not claim that the full model is using Sabah's hot tier. Without
-`--allow-reference`, `serve` refuses to start rather than silently falling
-back.
+Both use the same patched llama.cpp server, graph and placement; only the
+executor of expert `MUL_MAT_ID`s differs. `/health` reports which backend is
+running and, for `sabah`, the runtime's own call and lookup counters. With no
+backend chosen, `serve` refuses to start.
 
 Building the CUDA pieces (`<cc>` is the GPU's compute capability without the
 dot, from `nvidia-smi --query-gpu=compute_cap --format=csv,noheader`):

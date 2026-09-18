@@ -1,0 +1,71 @@
+{
+ "schema": 1,
+ "sabah_base_commit": "b988fd2b2c324dcf153db1b0bd46f7040a01f713",
+ "llama_cpp_base_commit": "96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b",
+ "llama_cpp_patches": [
+  "patches/llama.cpp/0001-sabah-native-mul-mat-id.patch",
+  "patches/llama.cpp/0002-sabah-diag-capture-tool.patch"
+ ],
+ "patch_sha256": {
+  "0001-sabah-native-mul-mat-id.patch": "50fbdd6ddc66b367b6015c32b0a564911a11423ac703f1eb7257ceb2a0932533",
+  "0002-sabah-diag-capture-tool.patch": "586a8dc2e237198110806742450af1ac109efab8d70c7f4e0b70f1599ec6a376"
+ },
+ "patches_verified_against_pristine_base": true,
+ "llama_build": "cmake -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=89",
+ "sabah_rt_build": "nvcc -O3 -arch=sm_89 -shared",
+ "sabah_rt_prefix_dll_sha256": "d80483e0a81285614dd118f0da9a37399fc800bc1b44fa044e715e67a6f928f0",
+ "model": {
+  "path": "D:/lmstudio/models/qwen/qwen3.8-Flash-Next-MoE/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+  "sha256_shard1": "4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082",
+  "sha256_source": "results/full_model_first_token.json (RC2), not recomputed",
+  "architecture": "qwen4exp",
+  "blocks": 48,
+  "experts": 512,
+  "top_k": 10,
+  "expert_qtypes": {
+   "gate_up": "Q4_K (47 blocks), Q5_K (1)",
+   "down": "Q5_1 (43 blocks), Q8_0 (5)"
+  }
+ },
+ "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU, 8.9, 581.86, 6141 MiB",
+ "cuda_toolkit": "Build cuda_13.3.r13.3/compiler.37862127_0",
+ "os": "Windows-11-10.0.26100-SP0",
+ "python": "3.14.2",
+ "run_settings": {
+  "prompt": "Reply with exactly: SABAH_OK (model chat template, thinking enabled by template)",
+  "prompt_tokens": 59,
+  "context": 512,
+  "batch": 512,
+  "ubatch": 512,
+  "threads": 8,
+  "n_gpu_layers": 99,
+  "cpu_moe": true,
+  "temperature": 0,
+  "sampling": "argmax over full logits",
+  "warmup": false
+ },
+ "paths": {
+  "A_cpu": {
+   "env": {
+    "GGML_OP_OFFLOAD_MIN_BATCH": "1000000000"
+   },
+   "meaning": "llama.cpp CPU MUL_MAT_ID for every token (experts never offloaded)"
+  },
+  "B_native_cuda": {
+   "env": {
+    "GGML_OP_OFFLOAD_MIN_BATCH": "1"
+   },
+   "meaning": "llama.cpp native CUDA MUL_MAT_ID for every token; scheduler copies only the routed experts"
+  },
+  "C_sabah": {
+   "env": {
+    "GGML_OP_OFFLOAD_MIN_BATCH": "1",
+    "SABAH_LLAMA": "1",
+    "SABAH_LLAMA_HOT_BYTES": "1073741824"
+   },
+   "meaning": "identical graph and placement to B; MUL_MAT_ID executed by sabah_rt_mul_mat_id_v2"
+  }
+ },
+ "op_placement_evidence": "captured tensor buffers: A=CUDA_Host (CPU backend), B and C=CUDA0; Sabah call counter = 144 ops x steps",
+ "rc3_confound": "RC3 used the default GGML_OP_OFFLOAD_MIN_BATCH=32: only prompts of >=32 tokens reached the Sabah bridge; all decode steps and the 21-token prompts ran on the CPU in the 'Sabah' run."
+}
