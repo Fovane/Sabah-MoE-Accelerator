@@ -27,6 +27,7 @@
 #include <string.h>
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 #include <vector>
 
 #if defined(_WIN32)
@@ -40,6 +41,18 @@
 #define SB_Q8_0  8
 #define SB_Q4_K 12
 #define SB_Q5_K 13
+
+// Test-only sentinel builds (never defined for a shipped library):
+//   1  slot 0 of every call executes the neighbouring expert
+//   2  expert slot i reads input row (i+1) mod n_used   (the RC3 bug class)
+//   3  token t reads input row of token (t+1) mod n_tokens  (cross-sequence)
+#ifndef SABAH_SENTINEL
+#define SABAH_SENTINEL 0
+#endif
+#ifdef SABAH_SENTINEL_WRONG_EXPERT
+#undef SABAH_SENTINEL
+#define SABAH_SENTINEL 1
+#endif
 
 static char g_err[512] = {0};
 static cudaStream_t g_copy    = 0;
@@ -77,7 +90,19 @@ static uint64_t g_mmid_tokens = 0;
 static uint64_t g_mmid_overflow = 0;       // allocations that exceeded capacity
 static uint64_t g_mmid_verify_ok = 0;
 static uint64_t g_mmid_verify_fail = 0;
-static bool     g_mmid_verify = false;     // SABAH_LLAMA_VERIFY_BYTES=1
+static bool     g_mmid_verify = false;     // SABAH_LLAMA_VERIFY_BYTES=1 | fetch
+static bool     g_mmid_verify_all_hits = false;
+static uint64_t g_mmid_verify_hit_every = 64; // "fetch" mode: every Nth hit, by counter
+static uint64_t g_mmid_empty_calls = 0;    // MUL_MAT_ID with zero token rows (no-op)
+// in-runtime float64 self-check (SABAH_LLAMA_SELFCHECK=K samples per call)
+static int      g_sc_k = 0;
+static double   g_sc_tol = 2e-6;
+static uint64_t g_sc_ok = 0;
+static uint64_t g_sc_fail = 0;
+static double   g_sc_max = 0.0;
+static uint64_t g_sc_slot[16] = {0};
+static uint64_t g_sc_multi_token = 0;      // samples taken from calls with >1 token row
+static std::vector<const void *> g_sc_tensors;   // distinct expert tensors checked
 
 static bool ck(cudaError_t e, const char * what);
 
@@ -114,8 +139,21 @@ static void sb_mmid_reset() {
     g_mmid_overflow = 0;
     g_mmid_verify_ok = 0;
     g_mmid_verify_fail = 0;
+    // "1": every fetch AND every hit (small tests only: a long prefill would
+    //      copy terabytes back); "fetch": every fetch (miss) plus every 64th
+    //      hit, chosen by the hit counter, never by an outcome.
     const char * v = std::getenv("SABAH_LLAMA_VERIFY_BYTES");
-    g_mmid_verify = v && std::strcmp(v, "1") == 0;
+    g_mmid_verify = v && (std::strcmp(v, "1") == 0 || std::strcmp(v, "fetch") == 0);
+    g_mmid_verify_all_hits = v && std::strcmp(v, "1") == 0;
+    g_mmid_empty_calls = 0;
+    const char * k = std::getenv("SABAH_LLAMA_SELFCHECK");
+    g_sc_k = k ? std::atoi(k) : 0;
+    const char * tol = std::getenv("SABAH_LLAMA_SELFCHECK_TOL");
+    g_sc_tol = tol ? std::atof(tol) : 2e-6;
+    g_sc_ok = g_sc_fail = g_sc_multi_token = 0;
+    g_sc_max = 0.0;
+    for (auto & c : g_sc_slot) c = 0;
+    g_sc_tensors.clear();
 }
 
 static void sb_mmid_evict_until(size_t needed, cudaStream_t compute_stream) {
@@ -175,7 +213,8 @@ static void * sb_mmid_resident(const void * source_key, int expert,
             entry.touch = ++g_mmid_tick;
             entry.epoch = g_mmid_epoch;
             ++g_mmid_hits;
-            if (g_mmid_verify && !sb_mmid_verify(entry.device, source, bytes)) {
+            if (g_mmid_verify && (g_mmid_verify_all_hits || g_mmid_hits % g_mmid_verify_hit_every == 0) &&
+                !sb_mmid_verify(entry.device, source, bytes)) {
                 snprintf(g_err, sizeof(g_err), "Sabah resident expert %d differs from its GGUF bytes (hit)", expert);
                 return nullptr;
             }
@@ -239,6 +278,117 @@ __host__ __device__ static inline size_t sb_row_bytes(int qt, int n) {
     const int be = sb_block_elems(qt);
     if (be == 0) return 0;
     return (size_t) (n / be) * sb_block_bytes(qt);
+}
+
+// ---------------------------------------------------------------------------
+// Host reference dequantizer for the self-check. A direct scalar port of
+// ggml's dequantize_row_{q4_K,q5_K,q5_1,q8_0}; it deliberately shares no code
+// with the device sub32_* path it is used to check.
+// ---------------------------------------------------------------------------
+static float sb_host_f16(const uint8_t * p) {
+    const uint16_t h = (uint16_t) (p[0] | (p[1] << 8));
+    const uint32_t sign = (uint32_t) (h & 0x8000u) << 16;
+    uint32_t exp = (h >> 10) & 0x1Fu;
+    uint32_t man = h & 0x3FFu;
+    uint32_t bits;
+    if (exp == 0) {
+        if (man == 0) {
+            bits = sign;
+        } else {                                   // subnormal
+            exp = 127 - 15 + 1;
+            while ((man & 0x400u) == 0) { man <<= 1; --exp; }
+            man &= 0x3FFu;
+            bits = sign | (exp << 23) | (man << 13);
+        }
+    } else if (exp == 0x1F) {
+        bits = sign | 0x7F800000u | (man << 13);
+    } else {
+        bits = sign | ((exp - 15 + 127) << 23) | (man << 13);
+    }
+    float f;
+    std::memcpy(&f, &bits, 4);
+    return f;
+}
+
+static void sb_host_scale_min_k4(int j, const uint8_t * q, uint8_t * d, uint8_t * m) {
+    if (j < 4) {
+        *d = q[j] & 63; *m = q[j + 4] & 63;
+    } else {
+        *d = (q[j + 4] & 0xF) | ((q[j - 4] >> 6) << 4);
+        *m = (q[j + 4] >> 4) | ((q[j - 0] >> 6) << 4);
+    }
+}
+
+// Dequantize n elements (a whole number of blocks) of type qt into y.
+static bool sb_host_dequant(const uint8_t * x, float * y, int qt, int n) {
+    switch (qt) {
+    case SB_Q8_0:
+        for (int b = 0; b < n / 32; ++b, x += 34) {
+            const float d = sb_host_f16(x);
+            for (int j = 0; j < 32; ++j) *y++ = (float) (int8_t) x[2 + j] * d;
+        }
+        return true;
+    case SB_Q5_1:
+        for (int b = 0; b < n / 32; ++b, x += 24) {
+            const float d = sb_host_f16(x), m = sb_host_f16(x + 2);
+            uint32_t qh;
+            std::memcpy(&qh, x + 4, 4);
+            const uint8_t * qs = x + 8;
+            for (int j = 0; j < 16; ++j) {
+                const uint8_t xh0 = ((qh >> (j + 0)) << 4) & 0x10;
+                const uint8_t xh1 = ((qh >> (j + 12))) & 0x10;
+                y[j]      = (float) ((qs[j] & 0x0F) | xh0) * d + m;
+                y[j + 16] = (float) ((qs[j] >> 4)   | xh1) * d + m;
+            }
+            y += 32;
+        }
+        return true;
+    case SB_Q4_K:
+        for (int b = 0; b < n / 256; ++b, x += 144) {
+            const float d = sb_host_f16(x), dmin = sb_host_f16(x + 2);
+            const uint8_t * sc = x + 4;
+            const uint8_t * q = x + 16;
+            int is = 0;
+            uint8_t s6, m6;
+            for (int j = 0; j < 256; j += 64) {
+                sb_host_scale_min_k4(is + 0, sc, &s6, &m6);
+                const float d1 = d * s6, m1 = dmin * m6;
+                sb_host_scale_min_k4(is + 1, sc, &s6, &m6);
+                const float d2 = d * s6, m2 = dmin * m6;
+                for (int l = 0; l < 32; ++l) *y++ = d1 * (q[l] & 0xF) - m1;
+                for (int l = 0; l < 32; ++l) *y++ = d2 * (q[l] >> 4) - m2;
+                q += 32; is += 2;
+            }
+        }
+        return true;
+    case SB_Q5_K:
+        for (int b = 0; b < n / 256; ++b, x += 176) {
+            const float d = sb_host_f16(x), dmin = sb_host_f16(x + 2);
+            const uint8_t * sc = x + 4;
+            const uint8_t * qh = x + 16;
+            const uint8_t * ql = x + 48;
+            int is = 0;
+            uint8_t s6, m6, u1 = 1, u2 = 2;
+            for (int j = 0; j < 256; j += 64) {
+                sb_host_scale_min_k4(is + 0, sc, &s6, &m6);
+                const float d1 = d * s6, m1 = dmin * m6;
+                sb_host_scale_min_k4(is + 1, sc, &s6, &m6);
+                const float d2 = d * s6, m2 = dmin * m6;
+                for (int l = 0; l < 32; ++l) *y++ = d1 * ((ql[l] & 0xF) + (qh[l] & u1 ? 16 : 0)) - m1;
+                for (int l = 0; l < 32; ++l) *y++ = d2 * ((ql[l] >> 4) + (qh[l] & u2 ? 16 : 0)) - m2;
+                ql += 32; is += 2; u1 <<= 2; u2 <<= 2;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+static uint64_t sb_mix64(uint64_t z) {          // splitmix64 finaliser
+    z += 0x9E3779B97F4A7C15ull;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
 }
 
 // K-quant 6-bit packed scale/min extraction (ggml get_scale_min_k4)
@@ -482,9 +632,19 @@ __global__ void k_mul_mat_id(const void * const * __restrict__ weights,
     // ggml MUL_MAT_ID: selected slot id_i reads input row (id_i % ne11) of
     // token `token`. gate/up broadcast one hidden state (ne11 == 1); the down
     // projection has one SwiGLU activation PER slot (ne11 == n_used).
+#if SABAH_SENTINEL == 2
+    const int x_row = x_rows > 1 ? (id_i + 1) % x_rows : 0;
+#else
+    const int x_row = id_i % x_rows;
+#endif
+#if SABAH_SENTINEL == 3
+    const int x_tok = (token + 1) % n_tokens;
+#else
+    const int x_tok = token;
+#endif
     const float * x_ptr = (const float *) ((const uint8_t *) x
-                        + (size_t) (id_i % x_rows) * x_id_stride
-                        + (size_t) token * x_token_stride);
+                        + (size_t) x_row * x_id_stride
+                        + (size_t) x_tok * x_token_stride);
 
     const int nsub = k / 32;
     float partial = 0.0f;
@@ -535,6 +695,8 @@ extern "C" {
 
 SABAH_API const char * sabah_rt_last_error(void) { return g_err; }
 
+static int sb_snapshot_json(char * buf, size_t n);
+
 static void sb_report_diag() {
     if (!std::getenv("SABAH_LLAMA_TRACE")) return;
     std::fprintf(stderr,
@@ -543,6 +705,9 @@ static void sb_report_diag() {
                  (unsigned long long) (g_mmid_hits + g_mmid_misses),
                  (unsigned long long) g_mmid_overflow,
                  (unsigned long long) g_mmid_verify_ok, (unsigned long long) g_mmid_verify_fail);
+    char buf[1024];
+    sb_snapshot_json(buf, sizeof(buf));
+    std::fprintf(stderr, "SABAH_SNAPSHOT %s\n", buf);
 }
 
 SABAH_API int sabah_rt_init(int device) {
@@ -669,29 +834,108 @@ SABAH_API int sabah_moe_block(const float * d_x, float * d_out, float * d_h,
 // Live counters for processes that are never shut down cleanly (servers).
 // With SABAH_LLAMA_STATUS_FILE set, the counters are rewritten at most every
 // 250 ms, so an operator can see that Sabah is really executing expert ops.
-static void sb_status_write(bool force) {
+// Counters as one JSON object. Every field is read under the residency lock,
+// so a snapshot taken after a call returns is exact, not sampled.
+static int sb_snapshot_json(char * buf, size_t n) {
+    std::lock_guard<std::mutex> lock(g_mmid_mutex);
+    char slots[256];
+    int o = 0;
+    for (int i = 0; i < 16 && o < (int) sizeof(slots) - 24; ++i) {
+        o += snprintf(slots + o, sizeof(slots) - o, "%s%llu", i ? "," : "",
+                      (unsigned long long) g_sc_slot[i]);
+    }
+    return snprintf(buf, n,
+        "{\"calls\":%llu,\"empty_calls\":%llu,\"tokens\":%llu,\"lookups\":%llu,\"hits\":%llu,"
+        "\"misses\":%llu,\"evictions\":%llu,\"bytes_fetched\":%llu,\"resident_bytes\":%llu,"
+        "\"overflow\":%llu,\"verify_ok\":%llu,\"verify_fail\":%llu,"
+        "\"selfcheck_k\":%d,\"selfcheck_ok\":%llu,\"selfcheck_fail\":%llu,\"selfcheck_max_rel_l2\":%.6e,"
+        "\"selfcheck_multi_token\":%llu,\"selfcheck_tensors\":%llu,\"selfcheck_slots\":[%s],"
+        "\"sentinel\":%d}",
+        (unsigned long long) g_mmid_calls, (unsigned long long) g_mmid_empty_calls,
+        (unsigned long long) g_mmid_tokens,
+        (unsigned long long) (g_mmid_hits + g_mmid_misses), (unsigned long long) g_mmid_hits,
+        (unsigned long long) g_mmid_misses, (unsigned long long) g_mmid_evictions,
+        (unsigned long long) g_mmid_bytes_fetched, (unsigned long long) g_mmid_bytes,
+        (unsigned long long) g_mmid_overflow, (unsigned long long) g_mmid_verify_ok,
+        (unsigned long long) g_mmid_verify_fail, g_sc_k, (unsigned long long) g_sc_ok,
+        (unsigned long long) g_sc_fail, g_sc_max, (unsigned long long) g_sc_multi_token,
+        (unsigned long long) g_sc_tensors.size(), slots, SABAH_SENTINEL);
+}
+
+// With SABAH_LLAMA_STATUS_FILE set, the counters are rewritten after EVERY
+// call, before the call returns, so a snapshot read after a request completes
+// is exact (evidence grade). Cost: one small file write per MUL_MAT_ID.
+static void sb_status_write(bool) {
     static const char * path = std::getenv("SABAH_LLAMA_STATUS_FILE");
     if (!path || !*path) return;
-    static auto last = std::chrono::steady_clock::time_point{};
-    const auto now = std::chrono::steady_clock::now();
-    if (!force && now - last < std::chrono::milliseconds(250)) return;
-    last = now;
-    unsigned long long v[11];
-    {
-        std::lock_guard<std::mutex> lock(g_mmid_mutex);
-        v[0] = g_mmid_calls; v[1] = g_mmid_tokens; v[2] = g_mmid_hits + g_mmid_misses;
-        v[3] = g_mmid_hits; v[4] = g_mmid_misses; v[5] = g_mmid_evictions;
-        v[6] = g_mmid_bytes_fetched; v[7] = g_mmid_bytes; v[8] = g_mmid_overflow;
-        v[9] = g_mmid_verify_ok; v[10] = g_mmid_verify_fail;
-    }
+    char buf[1024];
+    sb_snapshot_json(buf, sizeof(buf));
     FILE * f = std::fopen(path, "wb");
     if (!f) return;
-    std::fprintf(f,
-        "{\"calls\":%llu,\"tokens\":%llu,\"lookups\":%llu,\"hits\":%llu,\"misses\":%llu,"
-        "\"evictions\":%llu,\"bytes_fetched\":%llu,\"resident_bytes\":%llu,\"overflow\":%llu,"
-        "\"verify_ok\":%llu,\"verify_fail\":%llu}\n",
-        v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10]);
+    std::fputs(buf, f);
+    std::fputc('\n', f);
     std::fclose(f);
+}
+
+// Float64 recomputation of K sampled (token, slot) outputs of the call that
+// just ran, from the ORIGINAL host GGUF bytes and the exact device input row.
+// It checks the mapping the kernel must honour: output (t, i) must equal
+// W[ids(t,i)] . x(t, i mod x_rows). Samples are chosen by a hash of the call
+// counter only, never by observed error.
+static void sb_selfcheck(const void * source, size_t expert_stride, size_t row_stride,
+                         const void * d_x, size_t x_id_stride, int x_rows, size_t x_token_stride,
+                         const std::vector<int32_t> & ids, int n_ids, int n_tokens,
+                         const float * d_dst, size_t dst_id_stride, size_t dst_token_stride,
+                         int rows, int k, int qt, cudaStream_t stream, uint64_t call_no) {
+    if (g_sc_k <= 0) return;
+    cudaStreamSynchronize(stream);
+    std::vector<float> x(k), out(rows), w(k);
+    const int n_pairs = n_ids * n_tokens;
+    const int samples = g_sc_k < n_pairs ? g_sc_k : n_pairs;
+    const uint64_t h0 = sb_mix64(call_no * 0x100000001B3ull + 0x5AB4ull);
+    for (int s = 0; s < samples; ++s) {
+        const uint64_t h = sb_mix64(h0 + (uint64_t) s);
+        const int t = (int) (h % (uint64_t) n_tokens);
+        const int slot = (int) ((sb_mix64(h) + (uint64_t) s) % (uint64_t) n_ids);
+        const int expert = ids[(size_t) t * n_ids + slot];
+        const uint8_t * xp = (const uint8_t *) d_x + (size_t) (slot % x_rows) * x_id_stride
+                           + (size_t) t * x_token_stride;
+        const uint8_t * op = (const uint8_t *) d_dst + (size_t) t * dst_token_stride
+                           + (size_t) slot * dst_id_stride;
+        if (cudaMemcpy(x.data(), xp, (size_t) k * 4, cudaMemcpyDeviceToHost) != cudaSuccess ||
+            cudaMemcpy(out.data(), op, (size_t) rows * 4, cudaMemcpyDeviceToHost) != cudaSuccess) {
+            std::lock_guard<std::mutex> lock(g_mmid_mutex);
+            ++g_sc_fail;
+            continue;
+        }
+        const uint8_t * wexp = (const uint8_t *) source + (size_t) expert * expert_stride;
+        double num = 0.0, den = 0.0;
+        for (int r = 0; r < rows; ++r) {
+            sb_host_dequant(wexp + (size_t) r * row_stride, w.data(), qt, k);
+            double acc = 0.0;
+            for (int c = 0; c < k; ++c) acc += (double) w[c] * (double) x[c];
+            const double e = (double) out[r] - acc;
+            num += e * e;
+            den += acc * acc;
+        }
+        const double rel = den > 0 ? std::sqrt(num / den) : std::sqrt(num);
+        std::lock_guard<std::mutex> lock(g_mmid_mutex);
+        if (rel <= g_sc_tol) {
+            ++g_sc_ok;
+        } else {
+            if (g_sc_fail == 0) {
+                std::fprintf(stderr, "SABAH_SELFCHECK_FAIL call=%llu token=%d/%d slot=%d expert=%d rel_l2=%.3e\n",
+                             (unsigned long long) call_no, t, n_tokens, slot, expert, rel);
+            }
+            ++g_sc_fail;
+        }
+        if (rel > g_sc_max) g_sc_max = rel;
+        if (slot < 16) ++g_sc_slot[slot];
+        if (n_tokens > 1) ++g_sc_multi_token;
+        if (std::find(g_sc_tensors.begin(), g_sc_tensors.end(), source) == g_sc_tensors.end()) {
+            g_sc_tensors.push_back(source);
+        }
+    }
 }
 
 SABAH_API int sabah_rt_mul_mat_id_v2(
@@ -719,7 +963,15 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
         snprintf(g_err, sizeof(g_err), "invalid Sabah MUL_MAT_ID arguments");
         return -1;
     }
-    if (k <= 0 || rows <= 0 || n_ids <= 0 || n_tokens <= 0 || n_experts <= 0 || (k % 32) != 0) {
+    if (n_tokens == 0) {
+        // A graph may legitimately route zero token rows through an expert op
+        // (e.g. the last block of an ubatch that produces no outputs). There
+        // is nothing to compute; count it and return.
+        std::lock_guard<std::mutex> lock(g_mmid_mutex);
+        ++g_mmid_empty_calls;
+        return 0;
+    }
+    if (k <= 0 || rows <= 0 || n_ids <= 0 || n_tokens < 0 || n_experts <= 0 || (k % 32) != 0) {
         snprintf(g_err, sizeof(g_err), "invalid Sabah MUL_MAT_ID geometry");
         return -1;
     }
@@ -728,10 +980,11 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
                  "Sabah MUL_MAT_ID input rows %d must be 1 (broadcast) or n_ids %d", x_rows, n_ids);
         return -1;
     }
+    uint64_t call_no;
     {
         std::lock_guard<std::mutex> lock(g_mmid_mutex);
         ++g_mmid_epoch;
-        ++g_mmid_calls;
+        call_no = ++g_mmid_calls;
         g_mmid_tokens += (uint64_t) n_tokens;
     }
     if (sb_block_bytes(qt) == 0 || row_stride < sb_row_bytes(qt, k)) {
@@ -767,7 +1020,7 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
                 snprintf(g_err, sizeof(g_err), "Sabah expert id out of range");
                 return -1;
             }
-#ifdef SABAH_SENTINEL_WRONG_EXPERT
+#if SABAH_SENTINEL == 1
             // TEST-ONLY BUILD. Never defined for a shipped library: it exists
             // so the correctness gate can prove it rejects a wrong expert in
             // the real graph. Slot 0 of every call runs the neighbouring expert.
@@ -836,8 +1089,25 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
     // permits deferred destruction while dependent work is in flight.
     cudaEventDestroy(ready);
     cudaFree(d_ptrs);
+    sb_selfcheck(source, expert_stride, row_stride, d_x, x_id_stride, x_rows, x_token_stride,
+                 ids, n_ids, n_tokens, d_dst, dst_id_stride, dst_token_stride,
+                 rows, k, qt, compute_stream, call_no);
     sb_status_write(false);
     return 0;
+}
+
+SABAH_API int sabah_rt_snapshot(char * buf, size_t n) {
+    return sb_snapshot_json(buf, n);
+}
+
+SABAH_API const char * sabah_rt_build_info(void) {
+    static char info[128];
+    snprintf(info, sizeof(info), "sabah_rt abi=v2 sentinel=%d", SABAH_SENTINEL);
+    return info;
+}
+
+SABAH_API int sabah_rt_host_dequant(const void * src, float * dst, int qt, int n) {
+    return sb_host_dequant((const uint8_t *) src, dst, qt, n) ? 0 : -1;
 }
 
 SABAH_API int sabah_rt_get_diag(

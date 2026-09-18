@@ -43,8 +43,14 @@ def _available():
     return rt.available() and rt.device_count() > 0 and os.path.exists(MODEL)
 
 
-def _child(case: str, hot_bytes: int) -> dict:
-    env = dict(os.environ, SABAH_LLAMA_HOT_BYTES=str(hot_bytes), SABAH_LLAMA_VERIFY_BYTES="1")
+SENTINEL_DIR = os.environ.get("SABAH_SENTINEL_DIR", "D:/sabah_rc4/sentinels")
+
+
+def _child(case: str, hot_bytes: int, lib: str | None = None, selfcheck: int = 0) -> dict:
+    env = dict(os.environ, SABAH_LLAMA_HOT_BYTES=str(hot_bytes), SABAH_LLAMA_VERIFY_BYTES="1",
+               SABAH_LLAMA_SELFCHECK=str(selfcheck))
+    if lib:
+        env["SABAH_RT_LIB"] = lib
     out = subprocess.run([sys.executable, __file__, case], env=env, cwd=ROOT,
                          capture_output=True, text=True, timeout=900)
     assert out.returncode == 0, out.stderr[-3000:]
@@ -86,6 +92,39 @@ def test_tiny_hot_tier_is_exact_and_never_evicts_a_live_slot():
     assert tiny["verify_fail"] == 0 and tiny["verify_ok"] > 0, tiny
 
 
+@needs_gpu
+def test_product_build_has_no_sentinel():
+    r = _child("down", 1 << 30)
+    assert r["build_info"].endswith("sentinel=0"), r["build_info"]
+
+
+@needs_gpu
+def test_host_dequant_matches_gguf_py_bit_exactly():
+    r = _child("dequant", 1 << 30)
+    assert r["types_checked"] == 4 and r["max_abs_diff"] == 0.0, r
+
+
+@needs_gpu
+def test_selfcheck_passes_on_product():
+    for case in ("down", "gate"):
+        r = _child(case, 1 << 30, selfcheck=60)       # every (token, slot) pair
+        assert r["snapshot"]["selfcheck_ok"] == 60 and r["snapshot"]["selfcheck_fail"] == 0, r
+        assert r["snapshot"]["selfcheck_max_rel_l2"] < TOL, r
+
+
+@needs_gpu
+@pytest.mark.parametrize("sentinel,case", [(1, "down"), (1, "gate"), (2, "down"), (3, "down"), (3, "gate")])
+def test_selfcheck_detects_each_sentinel(sentinel, case):
+    lib = os.path.join(SENTINEL_DIR, "sabah_rt_sentinel%d.dll" % sentinel)
+    if not os.path.exists(lib):
+        pytest.skip("sentinel build not present: %s" % lib)
+    r = _child(case, 1 << 30, lib=lib, selfcheck=60)
+    assert r["build_info"].endswith("sentinel=%d" % sentinel), r["build_info"]
+    assert r["rel_vs_exact"] > 1e3 * TOL, r               # the output really is wrong
+    assert r["snapshot"]["selfcheck_fail"] > 0, r         # and the in-runtime oracle says so
+    assert r["snapshot"]["selfcheck_max_rel_l2"] > 1e3 * TOL, r
+
+
 # ---------------------------------------------------------------------------
 # child process: one MUL_MAT_ID call through the native ABI
 # ---------------------------------------------------------------------------
@@ -99,6 +138,11 @@ def _run_case(case: str) -> dict:
     from sabah.runtime.expert_bank import shard_paths
 
     L = rt.lib()
+    L.sabah_rt_build_info.restype = ctypes.c_char_p
+    L.sabah_rt_snapshot.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
+    L.sabah_rt_host_dequant.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    if case == "dequant":
+        return _dequant_case(L)
     fn = L.sabah_rt_mul_mat_id_v2
     c_vp, c_sz, c_i = ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int
     fn.argtypes = [c_vp, c_sz, c_sz, c_vp, c_sz, c_i, c_sz, c_vp, c_sz, c_sz, c_i, c_i,
@@ -160,12 +204,43 @@ def _run_case(case: str) -> dict:
     rel = lambda a, b: float(np.linalg.norm(a - b) / np.linalg.norm(b))
     v = [ctypes.c_ulonglong() for _ in range(5)]
     diag(*[ctypes.byref(z) for z in v])
+    buf = ctypes.create_string_buffer(2048)
+    L.sabah_rt_snapshot(buf, 2048)
     return dict(case=case, rel_vs_exact=rel(out, exact),
+                build_info=L.sabah_rt_build_info().decode(),
+                snapshot=json.loads(buf.value.decode()),
                 exact_vs_row0=rel(row0, exact) if x_rows > 1 else 0.0,
                 rel_wrong_expert=rel(wrong, exact),
                 out_sha=hashlib.sha256(out.tobytes()).hexdigest(),
                 calls=v[0].value, tokens=v[1].value, overflow=v[2].value,
                 verify_ok=v[3].value, verify_fail=v[4].value)
+
+
+def _dequant_case(L) -> dict:
+    """Host reference dequantizer vs gguf-py, on real bytes of every expert type."""
+    sys.path.insert(0, GGUF_PY)
+    from gguf import quants
+    from gguf.constants import GGMLQuantizationType as Q
+    from sabah.core.model_inspector import inspect_model
+    from sabah.runtime import rt
+    from sabah.runtime.expert_bank import shard_paths
+    prof = inspect_model(MODEL)
+    seen, worst = {}, 0.0
+    for t in prof.expert_tensors:
+        if t["qtype"] in seen:
+            continue
+        mm = np.memmap(shard_paths(prof.path)[t["shard"]], dtype=np.uint8, mode="r")
+        k, rows = t["shape"][0], t["shape"][1]
+        rb = rt.row_bytes(rt.QTYPE[t["qtype"]], k)
+        e = 137 % t["shape"][2]
+        raw = np.array(mm[t["offset"] + e * t["per_expert_bytes"]:
+                          t["offset"] + e * t["per_expert_bytes"] + 16 * rb])
+        ref = np.asarray(quants.dequantize(raw.reshape(16, rb), getattr(Q, t["qtype"])), np.float32).reshape(-1)
+        got = np.empty(16 * k, np.float32)
+        assert L.sabah_rt_host_dequant(raw.ctypes.data, got.ctypes.data, rt.QTYPE[t["qtype"]], 16 * k) == 0
+        seen[t["qtype"]] = float(np.abs(got - ref).max())
+        worst = max(worst, seen[t["qtype"]])
+    return dict(case="dequant", types_checked=len(seen), per_type=seen, max_abs_diff=worst)
 
 
 if __name__ == "__main__":
