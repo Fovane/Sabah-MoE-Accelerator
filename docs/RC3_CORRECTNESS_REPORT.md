@@ -1,5 +1,10 @@
 # v0.9.0-rc3 correctness gate
 
+> **Superseded by RC4.** The drift reported here had a structural cause: a
+> down-projection input-row bug in the native `MUL_MAT_ID` path. In addition,
+> the RC3 "Sabah" run executed Sabah only for the one prompt of 32 or more
+> tokens. See `RC4_NUMERICAL_EQUIVALENCE_REPORT.md`.
+
 ## Verdict
 
 `v1.0.0` remains blocked. `v0.9.0-rc3` is the honest release candidate.

@@ -47,3 +47,22 @@ def test_server_health_and_models_proxy():
 def test_reference_parser_accepts_llama_simple_io_line():
     assert _parse_tok_s("[ Prompt: 2.0 t/s | Generation: 7.5 t/s ]") == 7.5
 
+
+
+def test_backends_share_placement_and_differ_only_in_executor(monkeypatch, tmp_path):
+    from sabah.server import openai_proxy
+    lib = tmp_path / "sabah_rt.dll"
+    lib.write_bytes(b"")
+    monkeypatch.setattr(openai_proxy, "RUNTIME_LIB", str(lib))
+    monkeypatch.setenv("SABAH_LLAMA", "stale")            # must not leak into reference
+    monkeypatch.setenv("GGML_OP_OFFLOAD_MIN_BATCH", "32")  # must be overridden
+    args = ("llama-server", "m.gguf", 18080, 1024, 99, 1 << 30)
+    ref_cmd, ref_env = openai_proxy.backend_launch("reference", *args)
+    sab_cmd, sab_env = openai_proxy.backend_launch("sabah", *args)
+    assert ref_cmd == sab_cmd and "--cpu-moe" in ref_cmd
+    # every expert MUL_MAT_ID must reach the GPU path, or Sabah is bypassed
+    assert ref_env["GGML_OP_OFFLOAD_MIN_BATCH"] == sab_env["GGML_OP_OFFLOAD_MIN_BATCH"] == "1"
+    assert "SABAH_LLAMA" not in ref_env
+    assert sab_env["SABAH_LLAMA"] == "1" and sab_env["SABAH_RT_LIB"] == str(lib)
+    diff = {k for k in set(ref_env) | set(sab_env) if ref_env.get(k) != sab_env.get(k)}
+    assert diff == {"SABAH_LLAMA", "SABAH_RT_LIB", "SABAH_LLAMA_HOT_BYTES", "SABAH_LLAMA_STATUS_FILE"}

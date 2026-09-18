@@ -12,8 +12,8 @@ Sabah Accelerator — command line.
     sabah bench    [model.gguf]     MEASURED per-block throughput and the
                                    forced-resident vs streamed A/B
     sabah benchmark <model.gguf>   full-model reference provenance benchmark
-    sabah serve    <model.gguf>    local OpenAI-compatible API (reference mode
-                                   until full-model Sabah integration lands)
+    sabah serve    <model.gguf>    local OpenAI-compatible API; choose
+                                   --backend sabah or --backend reference
     sabah calibrate                 re-measure the planner hit curve from a
                                     routing trace
 
@@ -204,11 +204,17 @@ def cmd_benchmark(args):
 
 def cmd_serve(args):
     from sabah.server import openai_proxy
+    backend = args.backend or ("reference" if args.allow_reference else None)
+    if backend is None:
+        print("serve: choose --backend sabah (Sabah executes every expert MUL_MAT_ID) "
+              "or --backend reference --allow-reference (stock llama.cpp)")
+        return 2
     try:
         return openai_proxy.main([
             args.model, "--host", args.host, "--port", str(args.port),
             "--backend-port", str(args.backend_port), "--context", str(args.context),
             "--n-gpu-layers", str(args.n_gpu_layers),
+            "--backend", backend, "--hot-bytes", str(args.hot_bytes),
             *( ["--llama-server", args.llama_server] if args.llama_server else [] ),
             *( ["--allow-reference"] if args.allow_reference else [] ),
             *( ["--quiet"] if args.quiet else [] ),
@@ -337,10 +343,13 @@ def main(argv=None):
     a.add_argument("--port", type=int, default=8080)
     a.add_argument("--backend-port", type=int, default=18080)
     a.add_argument("--context", type=int, default=4096)
-    a.add_argument("--n-gpu-layers", type=int, default=0)
+    a.add_argument("--n-gpu-layers", type=int, default=99)
+    a.add_argument("--backend", choices=["sabah", "reference"], default=None)
+    a.add_argument("--hot-bytes", type=int, default=1 << 30,
+                   help="VRAM budget for Sabah's expert hot tier")
     a.add_argument("--llama-server", default="")
     a.add_argument("--allow-reference", action="store_true",
-                   help="serve through llama.cpp reference mode; not Sabah hot-tier mode")
+                   help="required with --backend reference: stock llama.cpp expert execution")
     a.add_argument("--quiet", action="store_true")
     a.set_defaults(fn=cmd_serve)
 

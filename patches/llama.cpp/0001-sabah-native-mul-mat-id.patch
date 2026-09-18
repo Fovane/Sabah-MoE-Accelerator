@@ -38,7 +38,7 @@ index 6faa68047..2a4822864 100644
                      if (tensor_id_copy(src_id, cur_backend_id, 0) == NULL) {
                          ggml_backend_t backend = sched->backends[cur_backend_id];
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 790553888..043b28953 100644
+index 790553888..64f723fd6 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -91,6 +91,12 @@
@@ -54,7 +54,7 @@ index 790553888..043b28953 100644
  static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
  
  #define GGML_LOG_WARN_ONCE(str) \
-@@ -137,6 +143,131 @@ int ggml_cuda_get_device() {
+@@ -137,6 +143,143 @@ int ggml_cuda_get_device() {
      return id;
  }
  
@@ -70,9 +70,12 @@ index 790553888..043b28953 100644
 +#endif
 +    bool ready = false;
 +    using init_fn = int (*)(int);
++    // v2: the input row stride and row count (src1->nb[1], src1->ne[1]) are
++    // part of the MUL_MAT_ID contract. The down projection has one input row
++    // per selected expert; v1 omitted them and fed every slot row 0.
 +    using mul_mat_id_fn = int (*) (
 +        const void *, size_t, size_t,
-+        const void *, size_t,
++        const void *, size_t, int, size_t,
 +        const void *, size_t, size_t, int, int,
 +        float *, size_t, size_t,
 +        int, int, int, int, void *);
@@ -135,7 +138,7 @@ index 790553888..043b28953 100644
 +            return;
 +        }
 +        bridge.init = (sabah_llama_bridge::init_fn) sabah_bridge_symbol(bridge, "sabah_rt_init");
-+        bridge.mul_mat_id = (sabah_llama_bridge::mul_mat_id_fn) sabah_bridge_symbol(bridge, "sabah_rt_mul_mat_id");
++        bridge.mul_mat_id = (sabah_llama_bridge::mul_mat_id_fn) sabah_bridge_symbol(bridge, "sabah_rt_mul_mat_id_v2");
 +        bridge.last_error = (sabah_llama_bridge::last_error_fn) sabah_bridge_symbol(bridge, "sabah_rt_last_error");
 +        bridge.get_metrics = (sabah_llama_bridge::get_metrics_fn) sabah_bridge_symbol(bridge, "sabah_rt_get_metrics");
 +        if (!bridge.init || !bridge.mul_mat_id || !bridge.last_error || !bridge.get_metrics) {
@@ -162,6 +165,7 @@ index 790553888..043b28953 100644
 +    }
 +    if (!ggml_backend_buffer_is_host(src0->buffer) ||
 +        src1->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32 ||
++        src1->nb[0] != sizeof(float) || src1->ne[1] > INT_MAX ||
 +        ids->type != GGML_TYPE_I32 || src0->ne[0] > INT_MAX ||
 +        src0->ne[1] > INT_MAX || src0->ne[2] > INT_MAX ||
 +        ids->ne[0] > INT_MAX || ids->ne[1] > INT_MAX) {
@@ -170,7 +174,7 @@ index 790553888..043b28953 100644
 +    }
 +    const int rc = g_sabah_llama_bridge.mul_mat_id(
 +        src0->data, src0->nb[2], src0->nb[1],
-+        src1->data, src1->nb[2],
++        src1->data, src1->nb[1], (int) src1->ne[1], src1->nb[2],
 +        ids->data, ids->nb[0], ids->nb[1],
 +        (int) ids->ne[0], (int) ids->ne[1],
 +        (float *) dst->data, dst->nb[1], dst->nb[2],
@@ -183,10 +187,18 @@ index 790553888..043b28953 100644
 +    return true;
 +}
 +
++// A MUL_MAT_ID whose expert tensor stayed in host memory for the Sabah bridge.
++// Its src[0] is not device memory: no fused kernel may consume it directly.
++static bool ggml_cuda_sabah_owns_node(const ggml_tensor * node) {
++    return node->op == GGML_OP_MUL_MAT_ID && std::getenv("SABAH_LLAMA") != nullptr &&
++           node->src[0] != nullptr && node->src[0]->buffer != nullptr &&
++           ggml_backend_buffer_is_host(node->src[0]->buffer);
++}
++
  static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
      ggml_cuda_set_device(device);
      cudaError_t err;
-@@ -1912,6 +2043,14 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor *
+@@ -1912,6 +2055,14 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor *
      const ggml_tensor * src1 = dst->src[1];
      const ggml_tensor * ids  = dst->src[2];
  
@@ -200,3 +212,34 @@ index 790553888..043b28953 100644
 +
      GGML_ASSERT(src1->type == GGML_TYPE_F32);
      GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+ 
+@@ -2568,6 +2719,13 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
+         }
+ 
+         // [TAG_MUL_MAT_ID_CUDA_GRAPHS]
++        // The Sabah bridge reads the routed ids on the host and may fetch
++        // experts, so like the synchronizing fallback it cannot be captured.
++        if (node->op == GGML_OP_MUL_MAT_ID && std::getenv("SABAH_LLAMA") != nullptr &&
++            node->src[0] != nullptr && node->src[0]->buffer != nullptr &&
++            ggml_backend_buffer_is_host(node->src[0]->buffer)) {
++            use_cuda_graph = false;
++        }
+         if (node->op == GGML_OP_MUL_MAT_ID) {
+             const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+             if (ggml_cuda_mul_mat_id_needs_sync(node, cc)) {
+@@ -3436,6 +3594,15 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         return 0;
+     }
+ 
++    // Every Sabah-routed MUL_MAT_ID must reach ggml_cuda_mul_mat_id, where the
++    // bridge executes it. A fused kernel would read the host expert tensor as
++    // device memory. No fusion pattern spans more than 8 nodes.
++    for (int j = i; j < cgraph->n_nodes && j < i + 8; ++j) {
++        if (ggml_cuda_sabah_owns_node(cgraph->nodes[j])) {
++            return 0;
++        }
++    }
++
+     ggml_tensor * node = cgraph->nodes[i];
+ 
+     if (node->op == GGML_OP_MUL) {

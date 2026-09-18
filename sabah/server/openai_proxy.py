@@ -1,11 +1,15 @@
 """Local OpenAI-compatible server for Sabah.
 
-The full-model Sabah backend is deliberately not faked here.  Until the
-attention/KV integration is available, the server runs the installed
-llama.cpp reference engine and exposes its mode as ``REFERENCE`` in health and
-logs.  This makes the user flow usable while keeping the exact-routing claim
-honest.  The proxy boundary is also the integration seam for the future
-residency backend.
+Two backends, both a patched llama.cpp server behind this proxy:
+
+``reference``  stock llama.cpp expert execution. The graph, weights and
+               placement are the same as ``sabah``'s; only who executes the
+               expert ``MUL_MAT_ID`` differs.
+``sabah``      the same graph with every expert ``MUL_MAT_ID`` executed by
+               Sabah's native runtime (exact routed experts, VRAM hot tier).
+
+The backend actually running is reported by ``/health`` and is never inferred
+from the planner's projection.
 """
 from __future__ import annotations
 
@@ -28,12 +32,23 @@ from sabah.planner.planner import ExecClass, plan as build_plan
 from sabah.tools.cli import HW_PATH, _load_or_qualify
 
 
+# The pinned, patched llama.cpp build (see patches/llama.cpp/README.md). An
+# unpinned development checkout is deliberately not a default candidate.
+PINNED_LLAMA_BIN = os.environ.get(
+    "SABAH_LLAMA_BIN", r"D:\sabah_scaling\llama-sabah-clean\build\bin\Release")
+RUNTIME_LIB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "runtime", "cuda", "sabah_rt.dll" if os.name == "nt" else "libsabah_rt.so")
+CORRECTNESS = ("RC4: structural PASS, MUL_MAT_ID op-exact vs float64 PASS; "
+               "see docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md")
+VERSION = "0.9.0-rc4"
+
+
 def find_llama_server(explicit: str = "") -> str:
     candidates = [
         explicit,
         os.environ.get("SABAH_LLAMA_SERVER", ""),
+        os.path.join(PINNED_LLAMA_BIN, "llama-server.exe" if os.name == "nt" else "llama-server"),
         shutil.which("llama-server") or "",
-        r"D:\llama-glm53\build\bin\Release\llama-server.exe",
     ]
     for path in candidates:
         if path and os.path.isfile(path):
@@ -44,8 +59,8 @@ def find_llama_server(explicit: str = "") -> str:
 
 def find_llama_cli(explicit: str = "") -> str:
     candidates = [explicit, os.environ.get("SABAH_LLAMA_CLI", ""),
-                  shutil.which("llama-cli") or "",
-                  r"D:\llama-glm53\build\bin\Release\llama-cli.exe"]
+                  os.path.join(PINNED_LLAMA_BIN, "llama-cli.exe" if os.name == "nt" else "llama-cli"),
+                  shutil.which("llama-cli") or ""]
     for path in candidates:
         if path and os.path.isfile(path):
             return os.path.abspath(path)
@@ -53,9 +68,22 @@ def find_llama_cli(explicit: str = "") -> str:
         "llama-cli not found; pass --llama-cli or set SABAH_LLAMA_CLI")
 
 
+def read_runtime_status(path: str | None):
+    """Live Sabah runtime counters written by sabah_rt (SABAH_LLAMA_STATUS_FILE)."""
+    if not path or not os.path.exists(path):
+        return None
+    for _ in range(3):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            time.sleep(0.05)       # the runtime rewrites the file; retry a torn read
+    return None
+
+
 class _State:
     def __init__(self, model: str, profile, hw, execution: str, backend: str,
-                 server_process: subprocess.Popen | None = None):
+                 server_process: subprocess.Popen | None = None, status_file: str | None = None):
         self.model = os.path.abspath(model)
         self.model_name = os.path.basename(model)
         self.profile = profile
@@ -63,26 +91,30 @@ class _State:
         self.execution = execution
         self.backend = backend
         self.process = server_process
+        self.status_file = status_file
         self.started_at = time.time()
 
     def health(self) -> dict:
         return {
             "status": "ok" if self.process is None or self.process.poll() is None else "failed",
             "service": "sabah",
-            "version": "0.9.0-rc2",
+            "version": VERSION,
             "execution": self.execution,
             "backend": self.backend,
             "architecture": self.profile.architecture,
             "model": self.model_name,
             "model_path": self.model,
-            "correctness": "BLOCK_PASS_FULL_MODEL_UNVALIDATED",
-            "measured_acceleration": "unavailable",
+            "correctness": CORRECTNESS,
+            "measured_acceleration": "see docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md",
+            # counters from the runtime itself: proof that Sabah, not stock
+            # llama.cpp, is executing expert MUL_MAT_IDs (null for reference)
+            "sabah_runtime": read_runtime_status(getattr(self, "status_file", None)),
         }
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "Sabah/0.9.0-rc2"
+    server_version = "Sabah/" + VERSION
 
     @property
     def state(self) -> _State:
@@ -173,22 +205,54 @@ class SabahHTTPServer(ThreadingHTTPServer):
         self.quiet = quiet
 
 
-def _wait_backend(port: int, process: subprocess.Popen, timeout: float = 120.0):
+def _wait_backend(port: int, process: subprocess.Popen, timeout: float = 900.0):
+    """Wait until llama-server has LOADED the model: it listens early and
+    answers /health with 503 while loading."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if process.poll() is not None:
             raise RuntimeError("llama-server exited during startup (%s)" % process.returncode)
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=1):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+            conn.request("GET", "/health")
+            if conn.getresponse().status == 200:
                 return
         except OSError:
-            time.sleep(0.5)
+            pass
+        time.sleep(1.0)
     raise TimeoutError("timed out waiting for llama-server on port %d" % port)
+
+
+def backend_launch(backend: str, exe: str, model: str, backend_port: int, context: int,
+                   n_gpu_layers: int, hot_bytes: int) -> tuple:
+    """Command and environment for a backend. Both backends get identical
+    graphs and op placement: experts stay in host memory (--cpu-moe) and every
+    expert MUL_MAT_ID is sent to the GPU (GGML_OP_OFFLOAD_MIN_BATCH=1), so the
+    only difference is who executes it."""
+    cmd = [exe, "-m", model, "--host", "127.0.0.1", "--port", str(backend_port),
+           "--ctx-size", str(context), "--n-gpu-layers", str(n_gpu_layers),
+           "--cpu-moe", "--no-webui"]
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("SABAH_LLAMA", "SABAH_RT_LIB", "GGML_OP_OFFLOAD"))}
+    env["GGML_OP_OFFLOAD_MIN_BATCH"] = "1"
+    if backend == "sabah":
+        if not os.path.exists(RUNTIME_LIB):
+            raise FileNotFoundError("Sabah runtime not built: %s" % RUNTIME_LIB)
+        import tempfile
+        status = os.path.join(tempfile.gettempdir(), "sabah_runtime_status_%d.json" % backend_port)
+        if os.path.exists(status):
+            os.remove(status)
+        env.update(SABAH_LLAMA="1", SABAH_RT_LIB=RUNTIME_LIB,
+                   SABAH_LLAMA_HOT_BYTES=str(hot_bytes), SABAH_LLAMA_STATUS_FILE=status)
+    elif backend != "reference":
+        raise ValueError("backend must be 'sabah' or 'reference'")
+    return cmd, env
 
 
 def serve(model: str, host: str = "127.0.0.1", port: int = 8080,
           backend_port: int = 18080, context: int = 4096,
-          llama_server: str = "", n_gpu_layers: int = 0,
+          llama_server: str = "", n_gpu_layers: int = 99,
+          backend: str = "sabah", hot_bytes: int = 1 << 30,
           allow_reference: bool = False, quiet: bool = False) -> int:
     profile = inspect_model(model)
     if not profile.supported:
@@ -197,29 +261,26 @@ def serve(model: str, host: str = "127.0.0.1", port: int = 8080,
     if fresh:
         hw.save(HW_PATH())
     projection = build_plan(profile, hw, context=context, concurrency=1)
-
-    # The full-model residency integration is not complete.  Never label a
-    # llama.cpp process as GPU_HOT_TIER just because the planner projected it.
-    if not allow_reference:
-        raise RuntimeError(
-            "full-model Sabah backend is not ready; use --allow-reference to "
-            "serve through the exact llama.cpp reference engine")
+    if backend == "reference" and not allow_reference:
+        raise RuntimeError("backend=reference serves stock llama.cpp expert execution; "
+                           "pass --allow-reference to confirm that is intended")
     exe = find_llama_server(llama_server)
-    cmd = [exe, "-m", model, "--host", "127.0.0.1", "--port", str(backend_port),
-           "--ctx-size", str(context), "--n-gpu-layers", str(n_gpu_layers),
-           "--cpu-moe", "--no-webui"]
+    cmd, env = backend_launch(backend, exe, model, backend_port, context, n_gpu_layers, hot_bytes)
+    execution = "SABAH_NATIVE_MUL_MAT_ID" if backend == "sabah" else "REFERENCE"
     if not quiet:
-        print("execution  : REFERENCE")
+        print("execution  : %s" % execution)
         print("planner    : %s (%s)" % (projection.exec_class.value,
                                       "PROJECTED" if projection.recommended else "fallback"))
         print("backend    : %s" % exe)
         print("API        : http://%s:%d/v1" % (host, port))
-    proc = subprocess.Popen(cmd, cwd=os.path.dirname(exe),
+    proc = subprocess.Popen(cmd, cwd=os.path.dirname(exe), env=env,
                             stdout=subprocess.DEVNULL if quiet else None,
                             stderr=subprocess.STDOUT if quiet else None)
     try:
         _wait_backend(backend_port, proc)
-        state = _State(model, profile, hw, "REFERENCE", "llama.cpp", proc)
+        state = _State(model, profile, hw, execution,
+                       "llama.cpp+sabah" if backend == "sabah" else "llama.cpp", proc,
+                       status_file=env.get("SABAH_LLAMA_STATUS_FILE"))
         httpd = SabahHTTPServer((host, port), state, backend_port, quiet)
         try:
             httpd.serve_forever()
@@ -243,7 +304,9 @@ def main(argv=None):
     ap.add_argument("--backend-port", type=int, default=18080)
     ap.add_argument("--context", type=int, default=4096)
     ap.add_argument("--llama-server", default="")
-    ap.add_argument("--n-gpu-layers", type=int, default=0)
+    ap.add_argument("--n-gpu-layers", type=int, default=99)
+    ap.add_argument("--backend", choices=["sabah", "reference"], default="sabah")
+    ap.add_argument("--hot-bytes", type=int, default=1 << 30)
     ap.add_argument("--allow-reference", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)

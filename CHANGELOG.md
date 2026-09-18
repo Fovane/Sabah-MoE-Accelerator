@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.0-rc4
+
+Root cause of the RC3 drift found and fixed. Details and evidence:
+`docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md`, `results/rc4_numerical/`.
+
+- **Fixed a structural bug:** the native `MUL_MAT_ID` path fed every selected
+  expert's down projection with expert slot 0's activation. Runtime ABI is now
+  `sabah_rt_mul_mat_id_v2` (per-slot input rows); v1 is removed so a mismatched
+  patch and library cannot load together.
+- **Fixed:** decode crashed under CUDA-graph capture; CUDA graphs are now
+  disabled for Sabah-routed `MUL_MAT_ID`.
+- **Fixed:** ggml-cuda operator fusion could consume the host expert tensor
+  directly (illegal memory access); fusion now never spans a Sabah-routed op.
+- **Fixed:** a slot fetched earlier in a call could be evicted before that
+  call's kernel ran when the tier was smaller than the call's working set.
+- Found that RC3's "Sabah" run executed Sabah only for prompts of 32 or more
+  tokens; decode ran on the CPU. `GGML_OP_OFFLOAD_MIN_BATCH=1` is now required
+  and set by `sabah serve`.
+- Added byte verification, coverage counters and a live status file; `/health`
+  reports the runtime's own counters.
+- Added `llama-sabah-diag` (patch 0002) and the `tools/rc4/` harness.
+- Measured: Sabah's `MUL_MAT_ID` matches float64 math to 7.8e-7 (worst of 144
+  ops); llama.cpp's CPU and CUDA backends are at 5e-3 to 3e-2 because they
+  quantize activations to 8 bits. 16-token greedy equivalence with native CUDA
+  passes; 64-token diverges at token 38, a contested step whose flip rate
+  matches llama.cpp's own CPU-vs-CUDA variation.
+- Measured speedup on the development machine: **0.30× vs stock llama.cpp**
+  (Sabah is slower). v1.0.0 is not released.
+
 ## 0.9.0-rc3
 
 - Added a reproducible llama.cpp integration patch pinned to upstream commit
