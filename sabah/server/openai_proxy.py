@@ -69,7 +69,7 @@ class _State:
         return {
             "status": "ok" if self.process is None or self.process.poll() is None else "failed",
             "service": "sabah",
-            "version": "0.9.0-rc1",
+            "version": "0.9.0-rc2",
             "execution": self.execution,
             "backend": self.backend,
             "architecture": self.profile.architecture,
@@ -82,7 +82,7 @@ class _State:
 
 class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "Sabah/0.9.0-rc1"
+    server_version = "Sabah/0.9.0-rc2"
 
     @property
     def state(self) -> _State:
@@ -252,4 +252,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

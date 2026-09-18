@@ -4,23 +4,25 @@
 
 ```text
 v1.0.0 NOT READY
-Release candidate produced instead: v0.9.0-rc1
+Release candidate produced instead: v0.9.0-rc2
 ```
 
-The exact expert/block runtime is real and tested. The full-model Sabah path
-is not yet complete, so shipping `v1.0.0` would overstate the result.
+The exact expert/block runtime is real and tested. Gate F's first real
+full-model Sabah token now passes through the native `MUL_MAT_ID` boundary,
+but the independent numerical ladder and sequential/API gates are not yet
+complete, so shipping `v1.0.0` would overstate the result.
 
-The llama.cpp archaeology is now recorded in
+The llama.cpp archaeology and implemented native seam are recorded in
 [`LLAMA_CPP_INTEGRATION_MAP.md`](LLAMA_CPP_INTEGRATION_MAP.md). The selected
-seam is the existing `GGML_OP_MUL_MAT_ID` backend/scheduler boundary. The
-current llama.cpp host-MoE copy path does use the authoritative IDs, but it is
-an ephemeral full-shaped copy and does not call `sabah_rt.dll` or the Sabah
-LRU. It is therefore a reference/offload path, not a Sabah backend.
+seam is the existing `GGML_OP_MUL_MAT_ID` backend/scheduler boundary. Sabah
+now receives the real host GGUF tensor, authoritative IDs and device hidden
+states there, uses a native LRU and exact quantized expert execution, then
+returns to the normal graph.
 
 Starting repository commit: `425a944f8478ce030f575b537677a19e2e7a0173`.
 
-RC package: `dist/sabah_moe_accelerator-0.9.0rc1-py3-none-any.whl`.
-SHA-256: `73c6db7c09d9778ef02f6a6f551790f3be3217b9c6aa16ce5bb02aa28cb23b2e`.
+RC package: `dist/sabah_moe_accelerator-0.9.0rc2-py3-none-any.whl`.
+SHA-256: `3f63746abb02e483730f51ba05aa7b49757c7e858334979111f51e88f24df69e`.
 
 ## Gates
 
@@ -31,7 +33,7 @@ SHA-256: `73c6db7c09d9778ef02f6a6f551790f3be3217b9c6aa16ce5bb02aa28cb23b2e`.
 | C — real expert runtime | PASS | Real GGUF expert bytes loaded and executed on RTX 4050 |
 | D — hot-tier cache | PASS | Hit/miss, LRU eviction, reload and residency independence exercised |
 | E — expert/MoE correctness | PASS | Four qtypes `max|diff|=0`; block relative L2 `6.03e-7` / `6.02e-7`; wrong-expert discrimination PASS |
-| F — end-to-end model | NOT READY | Full attention/PLE/KV/tokenizer/sampling Sabah path is not integrated |
+| F — end-to-end model | FIRST TOKEN PASS / OPEN | One real full-model token passed through native Sabah; independent ladder and sequential tests remain |
 | G — server | PARTIAL | OpenAI-compatible localhost proxy works in explicitly labelled reference mode |
 | H — user flow | PARTIAL | inspect/qualify/plan/selftest/benchmark/serve reference flow documented |
 | I — claim hygiene | PASS | measured/projected/speedup-unavailable states are separated |
@@ -69,8 +71,12 @@ The CUDA self-test used real expert bytes from blocks 0 and 2:
   proving the test detects a wrong expert.
 - Forced eviction/refetch returned bit-identical output.
 
-Logit and greedy-token equivalence are not yet available because the Sabah
-expert path is not connected to the full model graph.
+The first-token result is recorded in
+[`results/full_model_first_token.json`](../results/full_model_first_token.json):
+reference and Sabah both sampled token ID `1596` (`We`). The result also
+records native cache counters. Router-weight, intermediate-state, MoE
+aggregate and logit error dumps are explicitly marked unavailable rather than
+being inferred from final text.
 
 ## Projection and unvalidated work
 
@@ -92,10 +98,7 @@ storage-backed path is primarily for correctness and runtime validation.
 
 ## Next work
 
-1. Implement the native `GGML_OP_MUL_MAT_ID` adapter described in
-   [`LLAMA_CPP_INTEGRATION_MAP.md`](LLAMA_CPP_INTEGRATION_MAP.md), with a
-   persistent resident representation that does not alter authoritative IDs.
-2. Add router, intermediate-state, logits, and deterministic greedy-token
+1. Add router, intermediate-state, logits, and deterministic greedy-token
    comparisons against the same GGUF in llama.cpp.
 3. Replace the reference-mode API backend with the integrated Sabah backend.
 4. Re-run identical full-model reference/Sabah benchmarks before considering
