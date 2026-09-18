@@ -1,0 +1,132 @@
+{
+  "status": "FIRST_TOKEN_PASS_RC_REQUIRED",
+  "sabah_commit": "79f9ed2f0f6ff8c4fb78e3d5dfdfef00c7192198",
+  "llama_cpp_commit": "96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b",
+  "llama_cpp_version": "b10969-2-g96ffdc41c",
+  "model": {
+    "path": "D:/lmstudio/models/qwen/qwen3.8-Flash-Next-MoE/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+    "sha256": "4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082",
+    "architecture": "qwen4exp",
+    "blocks": 48,
+    "experts": 512,
+    "top_k": 10
+  },
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU",
+    "compute_capability": "8.9",
+    "vram_nominal_mib": 6141,
+    "vram_usable_mib": 4864,
+    "ram_total_gib": 29.8,
+    "ram_usable_gib": 25.5,
+    "gpu_count": 1
+  },
+  "prompt": "Reply with exactly: SABAH_OK",
+  "runtime": {
+    "n_gpu_layers": "all",
+    "cpu_moe": true,
+    "temperature": 0.0,
+    "n_predict": 1,
+    "context": 256,
+    "hot_tier_bytes": 1073741824,
+    "backend_env": "SABAH_LLAMA=1",
+    "native_library": "sabah_rt.dll",
+    "execution_boundary": "GGML_OP_MUL_MAT_ID",
+    "routing_authority": "llama.cpp qwen4exp graph"
+  },
+  "reference": {
+    "backend": "llama.cpp qwen4exp reference path",
+    "token_id": 1596,
+    "token_piece": "We"
+  },
+  "sabah": {
+    "backend": "llama.cpp full graph + native Sabah exact expert MUL_MAT_ID",
+    "token_id": 1596,
+    "token_piece": "We",
+    "native_bridge_observed": true,
+    "exact_original_gguf_expert_bytes": true,
+    "expert_substitution": false
+  },
+  "correctness": {
+    "router_mismatch_count": {
+      "value": 0,
+      "classification": "STRUCTURAL_NATIVE_BOUNDARY",
+      "basis": "The authoritative qwen4exp selected-expert tensor is passed directly to sabah_rt_mul_mat_id; the Sabah bridge does not rewrite IDs. An independent reference ID dump is not yet implemented."
+    },
+    "router_weight_error": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "selected_intermediate_state_error": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "moe_aggregate_error": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "logit_relative_l2": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "logit_max_abs_diff": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "reference_top10_logit_token_ids": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "sabah_top10_logit_token_ids": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "greedy_token": "PASS"
+  },
+  "cache": {
+    "hits": 42477,
+    "misses": 16743,
+    "evictions": 15771,
+    "bytes_fetched": 17460633600,
+    "resident_bytes": 1072947200,
+    "classification": "MEASURED_NATIVE_RUNTIME_COUNTERS"
+  },
+  "performance": {
+    "host_staging_ms": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "h2d_ms": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "gpu_wait_expert_ms": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "expert_compute_ms": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    },
+    "total_first_token_wall_ms": {
+      "value": null,
+      "classification": "UNAVAILABLE_NOT_INSTRUMENTED"
+    }
+  },
+  "sequential_greedy": {
+    "status": "NOT_RUN",
+    "tokens_compared": 0,
+    "first_divergence": null
+  },
+  "benchmark": {
+    "status": "NOT_RUN",
+    "reference_generation_tok_s": null,
+    "sabah_generation_tok_s": null,
+    "measured_speedup": null,
+    "classification": "NOT_RUN_BEFORE_SEQUENTIAL_GATE"
+  },
+  "notes": [
+    "This is the first real full-model token through the Sabah expert backend, not a callback-only or synthetic routing test.",
+    "The native bridge was exercised repeatedly by the real graph: 59220 exact MUL_MAT_ID calls were accounted for by the cache counters.",
+    "v1.0.0 is not released: independent router/weight/state/logit dumps, sequential 16/64-token equivalence, API Sabah backend and benchmark gates remain open."
+  ]
+}
