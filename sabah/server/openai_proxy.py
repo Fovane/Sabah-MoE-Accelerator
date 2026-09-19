@@ -38,9 +38,29 @@ PINNED_LLAMA_BIN = os.environ.get(
     "SABAH_LLAMA_BIN", r"D:\sabah_scaling\llama-sabah-clean\build\bin\Release")
 RUNTIME_LIB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "runtime", "cuda", "sabah_rt.dll" if os.name == "nt" else "libsabah_rt.so")
-CORRECTNESS = ("RC4: structural PASS, MUL_MAT_ID op-exact vs float64 PASS; "
-               "see docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md")
-VERSION = "0.9.0-rc4"
+CORRECTNESS = "see docs/V1_VALIDATION_REPORT.md (preregistered: docs/V1_CORRECTNESS_CONTRACT.md)"
+
+
+def _version() -> str:
+    """Single source of truth: the pyproject.toml next to this source tree;
+    installed package metadata only when running from an installed wheel."""
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        text = open(os.path.join(root, "pyproject.toml"), encoding="utf-8").read()
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    try:
+        from importlib.metadata import version
+        return version("sabah-moe-accelerator")
+    except Exception:
+        return "unknown"
+
+
+VERSION = _version()
 
 
 def find_llama_server(explicit: str = "") -> str:
@@ -105,7 +125,7 @@ class _State:
             "model": self.model_name,
             "model_path": self.model,
             "correctness": CORRECTNESS,
-            "measured_acceleration": "see docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md",
+            "measured_acceleration": "see docs/V1_VALIDATION_REPORT.md",
             # counters from the runtime itself: proof that Sabah, not stock
             # llama.cpp, is executing expert MUL_MAT_IDs (null for reference)
             "sabah_runtime": read_runtime_status(getattr(self, "status_file", None)),
@@ -155,7 +175,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def _proxy(self, method: str):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if method == "POST" else None
-        conn = http.client.HTTPConnection("127.0.0.1", self.backend_port, timeout=600)
+        # No fixed read limit by default: on a slow machine a correct
+        # generation can outlast any constant, and a proxy-side timeout turns
+        # it into a 502 while the backend keeps working (v1 validation found
+        # exactly that at 600 s). The client decides when to give up.
+        conn = http.client.HTTPConnection("127.0.0.1", self.backend_port,
+                                          timeout=getattr(self.server, "backend_timeout", None))
         headers = {"Accept": self.headers.get("Accept", "application/json")}
         if body is not None:
             headers["Content-Type"] = self.headers.get("Content-Type", "application/json")
@@ -198,11 +223,12 @@ class SabahHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, state, backend_port, quiet=False):
+    def __init__(self, address, state, backend_port, quiet=False, backend_timeout=None):
         super().__init__(address, ProxyHandler)
         self.sabah_state = state
         self.backend_port = backend_port
         self.quiet = quiet
+        self.backend_timeout = backend_timeout or None      # 0 / None: no read timeout
 
 
 def _wait_backend(port: int, process: subprocess.Popen, timeout: float = 900.0):
@@ -255,7 +281,7 @@ def backend_launch(backend: str, exe: str, model: str, backend_port: int, contex
 
 
 def serve(model: str, host: str = "127.0.0.1", port: int = 8080,
-          backend_port: int = 18080, context: int = 4096,
+          backend_port: int = 18080, context: int = 4096, backend_timeout: float = 0,
           llama_server: str = "", n_gpu_layers: int = 99,
           backend: str = "sabah", hot_bytes: int = 1 << 30, parallel: int = 4,
           validate: bool = False, allow_reference: bool = False, quiet: bool = False) -> int:
@@ -287,7 +313,7 @@ def serve(model: str, host: str = "127.0.0.1", port: int = 8080,
         state = _State(model, profile, hw, execution,
                        "llama.cpp+sabah" if backend == "sabah" else "llama.cpp", proc,
                        status_file=env.get("SABAH_LLAMA_STATUS_FILE"))
-        httpd = SabahHTTPServer((host, port), state, backend_port, quiet)
+        httpd = SabahHTTPServer((host, port), state, backend_port, quiet, backend_timeout)
         try:
             httpd.serve_forever()
         finally:
@@ -308,6 +334,8 @@ def main(argv=None):
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--backend-port", type=int, default=18080)
+    ap.add_argument("--backend-timeout", type=float, default=0,
+                    help="seconds to wait for the backend; 0 (default) = no limit")
     ap.add_argument("--context", type=int, default=4096)
     ap.add_argument("--llama-server", default="")
     ap.add_argument("--n-gpu-layers", type=int, default=99)
