@@ -312,7 +312,7 @@ def gates_h_i():
     H = dict(statistic="R = sum_p mean_s e_C / sum_p mean_s e_A", R=float(R), upper_95=ubR, margin=X_MARGIN,
              clusters=n, observations_per_path=n * TF_STEPS, bootstrap=dict(n=BOOT_N, seed=BOOT_SEED, percentile=BOOT_Q),
              ok=ubR <= X_MARGIN)
-    I = dict(statistic="D = (sum flips_C - sum flips_A) / (n*64)", D=float(D), upper_95=ubD, margin=DELTA_MARGIN,
+    I = dict(statistic="D = (sum flips_C - sum flips_A) / (n*TF_STEPS)", D=float(D), upper_95=ubD, margin=DELTA_MARGIN,
              flips_A=int(fA.sum()), flips_C=int(fC.sum()), clusters=n, observations_per_path=n * TF_STEPS,
              bootstrap=dict(n=BOOT_N, seed=BOOT_SEED, percentile=BOOT_Q), ok=ubD <= DELTA_MARGIN)
     return H, I, per

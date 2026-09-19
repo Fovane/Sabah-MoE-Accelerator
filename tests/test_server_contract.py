@@ -66,3 +66,48 @@ def test_backends_share_placement_and_differ_only_in_executor(monkeypatch, tmp_p
     assert sab_env["SABAH_LLAMA"] == "1" and sab_env["SABAH_RT_LIB"] == str(lib)
     diff = {k for k in set(ref_env) | set(sab_env) if ref_env.get(k) != sab_env.get(k)}
     assert diff == {"SABAH_LLAMA", "SABAH_RT_LIB", "SABAH_LLAMA_HOT_BYTES", "SABAH_LLAMA_STATUS_FILE"}
+
+
+class _SlowBackend(BaseHTTPRequestHandler):
+    def do_POST(self):  # noqa: N802
+        import time
+        self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        time.sleep(1.5)
+        body = json.dumps({"ok": True}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
+
+
+def _post_through_proxy(backend_timeout):
+    backend = ThreadingHTTPServer(("127.0.0.1", 0), _SlowBackend)
+    threading.Thread(target=backend.serve_forever, daemon=True).start()
+    state = type("State", (), {"health": lambda self: {"status": "ok"}})()
+    server = SabahHTTPServer(("127.0.0.1", 0), state, backend.server_address[1], quiet=True,
+                             backend_timeout=backend_timeout)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        req = Request("http://127.0.0.1:%d/v1/chat/completions" % server.server_address[1],
+                      data=b"{}", headers={"Content-Type": "application/json"})
+        try:
+            with urlopen(req, timeout=30) as r:
+                return r.status
+        except Exception as e:  # HTTPError carries the status
+            return getattr(e, "code", None)
+    finally:
+        server.shutdown(); server.server_close(); backend.shutdown(); backend.server_close()
+
+
+def test_proxy_waits_for_a_slow_backend_by_default():
+    # v1 validation: a fixed 600 s proxy timeout turned slow-but-correct
+    # generations into 502s while the backend kept working
+    assert _post_through_proxy(None) == 200
+
+
+def test_proxy_timeout_is_explicit_opt_in():
+    assert _post_through_proxy(0.5) == 502
