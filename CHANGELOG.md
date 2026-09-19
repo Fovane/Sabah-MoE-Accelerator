@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.0
+
+First release validated against a preregistered correctness contract
+(`docs/V1_CORRECTNESS_CONTRACT.md`, frozen at `ca0a222` before any
+validation prompt was run). Results: `docs/V1_VALIDATION_REPORT.md`,
+`results/v1_validation/`.
+
+- All hard gates pass: reproducible build; structural exactness (coverage,
+  ids, bytes); float64 op-level ≤ 2e-6 (max 9.25e-7 over 27,972 samples);
+  wrong-expert sentinels 12/12; residency invariance; 1/2/4-way concurrency;
+  prompts across the ubatch boundary; full-graph non-inferiority (UB95
+  R = 1.033 ≤ 1.25); greedy-flip non-inferiority (UB95 D = 0.0089 ≤ 0.03).
+- **Slower than stock llama.cpp on the validation machine: 0.254× decode
+  throughput (MEASURED).** v1.0 validates correctness, not speed.
+- Runtime: in-runtime float64 self-check, exact status counters, byte
+  verification, test-only sentinel builds, zero-row expert ops handled.
+- Server: `--validate`, `--parallel`; no fixed backend timeout. Validation
+  attempt 1 failed three API gates on a 600 s proxy timeout; fixed and rerun
+  as the contract requires.
+- Tooling: `tools/v1/` (driver, float64 oracle, API harness, evaluator,
+  build check); `llama-sabah-diag` multi-prompt / multi-sequence modes.
+
 ## 0.9.0-rc4
 
 Root cause of the RC3 drift found and fixed. Details and evidence:
