@@ -1,0 +1,34 @@
+{
+ "base": "96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b",
+ "fresh_tree": "D:/sabah_v1build/llama",
+ "steps": {
+  "checkout": true,
+  "apply_0001-sabah-native-mul-mat-id.patch": true,
+  "apply_0002-sabah-diag-capture-tool.patch": true,
+  "configure": true,
+  "build": true
+ },
+ "identical_sources": {
+  "ggml/src/ggml-backend.cpp": true,
+  "ggml/src/ggml-cuda/ggml-cuda.cu": true,
+  "tools/CMakeLists.txt": true,
+  "tools/sabah-diag/sabah-diag.cpp": true,
+  "tools/sabah-diag/CMakeLists.txt": true
+ },
+ "smoke": {
+  "tested": {
+   "rc": 0,
+   "argmax": [
+    1596
+   ]
+  },
+  "fresh": {
+   "rc": 0,
+   "argmax": [
+    1596
+   ]
+  }
+ },
+ "ok": true,
+ "summary": "sources identical 5/5; build True; smoke argmax equal True"
+}

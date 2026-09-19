@@ -1,0 +1,63 @@
+{
+ "V1_CONTRACT_COMMIT": "ca0a222777d1bff1461d079826b0043a67848b5d",
+ "implementation_commit": "3395267e9f40c7d8cca6de95a04b1719daf012d8",
+ "worktree_clean": false,
+ "llama_cpp_base": "96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b",
+ "patches": {
+  "0001-sabah-native-mul-mat-id.patch": "86ccd1075b41dbcfa84fd3ab8baca5bebdaec3975d8426412b4322b86408a39b",
+  "0002-sabah-diag-capture-tool.patch": "496e2d4ab1acc2ad419976583fe44ba95bdd4b29804f771ff7c6564130cd5f33"
+ },
+ "binaries": {
+  "sabah_rt.dll": "0c8c7e92fcb27871578222bb38ed04aedb49e491f81af354b5efa252c93be0e3",
+  "llama-sabah-diag.exe": "a289a7b3dc7c7499b5d9fe8ca0aabc80505a1be78be4fcae1e8f1476444ad85f",
+  "llama-server.exe": "a1ee91d3645a7c36279e6f0fd766b45c68a2fac07f9325572be95389ab8916b3",
+  "ggml-cuda.dll": "26281c1b6da5c0ebb8a10dac15f16398c13d118fa1851361bae9ee43d53ad0db",
+  "ggml-base.dll": "fea9efc756afa7da84d3ba094b7d1609cc07603b81b84f018a5864c313fb3775",
+  "llama.dll": "16dbe3d8e1842affac1025db38d6874fa7a1476b9e2a8669969262e8b964cf11",
+  "ggml-cpu.dll": "13af978eab17d9471a2f7f1c32ab83cc7e3f285e785d1f8fa1d96bd25833bde1"
+ },
+ "sentinel_binaries": {
+  "sabah_rt_sentinel1.dll": "349c5a9e27906f386220c766b3c19f12c694b1a621041e70bb2648e8a4c2460c",
+  "sabah_rt_sentinel2.dll": "1f85802005492e00d10e50e9599db726e1554d2bff9194152997a07343a3e034",
+  "sabah_rt_sentinel3.dll": "b2850195fa157f9e557c2b5fbbeb42e1abfe097f3be6fb185a0ef991777803d1"
+ },
+ "model": {
+  "path": "D:/lmstudio/models/qwen/qwen3.8-Flash-Next-MoE/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+  "sha256_shard1": "4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082",
+  "sha256_source": "RC2 record; see results/full_model_first_token.json"
+ },
+ "corpus": {
+  "prompts.jsonl": "79207e79f3e75cdd1c203f7a231a00798b56c426703d95820594a7a87a986f24",
+  "ubatch.jsonl": "7d96b240543983e31449f5f9c29284f1aaa462103bcec481f512df08fd858b84",
+  "manifest.json": "6c84cac1a202e458f0d574d4a4ead770d5dbbfe43c6109e4f338a6c6f6ff4c1c"
+ },
+ "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU, 8.9, 581.86, 6141 MiB",
+ "gpu_processes_before": "2032, [Insufficient Permissions]\n6248, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe\n3260, C:\\Windows\\explorer.exe\n10024, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe\n10048, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe\n12032, C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe\n12224, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\152.0.4191.66\\msedgewebview2.exe\n9924, C:\\Program Files\\Cloudflare\\Cloudflare WARP\\Cloudflare WARP.exe\n6820, C:\\Program Files (x86)\\GameforgeClient\\SparkWebHelper.exe\n22480, C:\\Program Files\\WindowsApps\\Microsoft.Edge.GameAssist_1.0.4019.0_x64__8wekyb3d8bbwe\\EdgeGameAssist.exe\n13004, C:\\Windows\\SystemApps\\Microsoft.LockApp_cw5n1h2txyewy\\LockApp.exe\n16124, C:\\Windows\\System32\\ShellHost.exe\n13840, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe\n16356, C:\\Windows\\SystemApps\\Microsoft.Windows.AppRep.ChxApp_cw5n1h2txyewy\\CHXSmartScreen.exe\n16444, C:\\Windows\\System32\\ApplicationFrameHost.exe\n23460, C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe\n15476, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe\n11860, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe\n5616, C:\\Program Files\\WindowsApps\\Microsoft.WindowsCalculator_11.2607.0.0_x64__8wekyb3d8bbwe\\CalculatorApp.exe\n10380, C:\\Program Files\\WindowsApps\\Claude_2.2553.1.0_x64__pzs8sxrjxfjjc\\app\\claude.exe\n18204, C:\\Program Files\\WindowsApps\\Claude_2.2553.1.0_x64__pzs8sxrjxfjjc\\app\\claude.exe",
+ "cuda": [
+  "Build cuda_13.3.r13.3/compiler.37862127_0"
+ ],
+ "os": "Windows-11-10.0.26100-SP0",
+ "python": "3.14.2",
+ "settings": {
+  "common_args": [
+   "-c",
+   "4096",
+   "-b",
+   "2048",
+   "-ub",
+   "512",
+   "-ngl",
+   "99",
+   "--cpu-moe",
+   "-t",
+   "8",
+   "--temp",
+   "0",
+   "--seed",
+   "1"
+  ],
+  "hot_bytes": 1073741824,
+  "selfcheck_k": 2,
+  "verify_bytes": "fetch"
+ }
+}

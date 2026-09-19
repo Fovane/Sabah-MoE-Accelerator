@@ -1,0 +1,190 @@
+{
+ "attempt": 1,
+ "contract_commit": "ca0a222777d1bff1461d079826b0043a67848b5d",
+ "failed_gates": [
+  "F (F2)",
+  "J",
+  "K"
+ ],
+ "cause": "proxy fixed 600 s backend timeout -> HTTP 502 under --validate at concurrency 4; backend work spilled into the next counter window",
+ "fix_commit": "3395267e9f40c7d8cca6de95a04b1719daf012d8",
+ "runs_rerun": [
+  "R15_api",
+  "R16_api_ab_sabah",
+  "R16_api_ab_reference"
+ ],
+ "evidence": {
+  "R15_api.json": {
+   "groups": [
+    {
+     "name": "c1",
+     "accounting": {
+      "new_prompt_tokens": 81,
+      "decoded_tokens": 7,
+      "expected_tokens": 12432,
+      "observed_tokens": 12432,
+      "exact": true,
+      "lookups_is_10x": true,
+      "selfcheck_ok": 2868,
+      "selfcheck_fail": 0,
+      "verify_fail": 0
+     },
+     "responses": [
+      {
+       "id": "math_2",
+       "ok": true,
+       "wall_s": 188,
+       "error": null
+      }
+     ]
+    },
+    {
+     "name": "c2",
+     "accounting": {
+      "new_prompt_tokens": 111,
+      "decoded_tokens": 14,
+      "expected_tokens": 17673,
+      "observed_tokens": 17673,
+      "exact": true,
+      "lookups_is_10x": true,
+      "selfcheck_ok": 3726,
+      "selfcheck_fail": 0,
+      "verify_fail": 0
+     },
+     "responses": [
+      {
+       "id": "instruction_2",
+       "ok": true,
+       "wall_s": 254,
+       "error": null
+      },
+      {
+       "id": "turkish_prose_2",
+       "ok": true,
+       "wall_s": 258,
+       "error": null
+      }
+     ]
+    },
+    {
+     "name": "c4",
+     "accounting": {
+      "new_prompt_tokens": 0,
+      "decoded_tokens": 0,
+      "expected_tokens": 12,
+      "observed_tokens": 61918,
+      "exact": false,
+      "lookups_is_10x": true,
+      "selfcheck_ok": 3542,
+      "selfcheck_fail": 0,
+      "verify_fail": 0
+     },
+     "responses": [
+      {
+       "id": "english_prose_1",
+       "ok": false,
+       "wall_s": 600,
+       "error": "<HTTPError 502: 'Bad Gateway'>"
+      },
+      {
+       "id": "python_code_1",
+       "ok": false,
+       "wall_s": 600,
+       "error": "<HTTPError 502: 'Bad Gateway'>"
+      },
+      {
+       "id": "json_1",
+       "ok": false,
+       "wall_s": 600,
+       "error": "<HTTPError 502: 'Bad Gateway'>"
+      },
+      {
+       "id": "long_context_2",
+       "ok": false,
+       "wall_s": 600,
+       "error": "<HTTPError 502: 'Bad Gateway'>"
+      }
+     ]
+    },
+    {
+     "name": "stream_twin",
+     "accounting": {
+      "new_prompt_tokens": 49,
+      "decoded_tokens": 7,
+      "expected_tokens": 7920,
+      "observed_tokens": 8276,
+      "exact": false,
+      "lookups_is_10x": true,
+      "selfcheck_ok": 2764,
+      "selfcheck_fail": 0,
+      "verify_fail": 0
+     },
+     "responses": [
+      {
+       "id": "math_1",
+       "ok": true,
+       "wall_s": 132,
+       "error": null
+      }
+     ]
+    }
+   ],
+   "stream": {
+    "new_prompt_tokens": 4,
+    "decoded_tokens": 7,
+    "expected_tokens": 1575,
+    "observed_tokens": 1575,
+    "exact": true,
+    "lookups_is_10x": true,
+    "selfcheck_ok": 2304,
+    "selfcheck_fail": 0,
+    "verify_fail": 0
+   }
+  },
+  "R16_api_ab_sabah.json": {
+   "groups": [
+    {
+     "name": "ab",
+     "accounting": {
+      "new_prompt_tokens": 0,
+      "decoded_tokens": 0,
+      "expected_tokens": 12,
+      "observed_tokens": 62769,
+      "exact": false,
+      "lookups_is_10x": true,
+      "selfcheck_ok": 1554,
+      "selfcheck_fail": 0,
+      "verify_fail": 0
+     },
+     "responses": [
+      {
+       "id": "math_2",
+       "ok": false,
+       "wall_s": 600,
+       "error": "<HTTPError 502: 'Bad Gateway'>"
+      },
+      {
+       "id": "instruction_2",
+       "ok": false,
+       "wall_s": 600,
+       "error": "<HTTPError 502: 'Bad Gateway'>"
+      },
+      {
+       "id": "long_context_1",
+       "ok": false,
+       "wall_s": 600,
+       "error": "<HTTPError 502: 'Bad Gateway'>"
+      },
+      {
+       "id": "english_prose_1",
+       "ok": false,
+       "wall_s": 600,
+       "error": "<HTTPError 502: 'Bad Gateway'>"
+      }
+     ]
+    }
+   ],
+   "stream": null
+  }
+ }
+}

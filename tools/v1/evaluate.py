@@ -428,22 +428,27 @@ def benchmark():
 
 
 def main():
-    gb = gate_b()
-    dump("structural_coverage.json", gb)
-    gc = gate_c()
-    dump("op_level.json", gc)
-    gd = gate_d()
-    dump("sentinel.json", gd)
-    ge = gate_e()
-    dump("cache_determinism.json", ge)
-    gf1 = gate_f1()
-    dump("multiseq.json", gf1)
-    gg = gate_g()
-    dump("ubatch.json", gg)
-    H, I, per = gates_h_i()
-    dump("full_graph_statistics.json", dict(H=H, I=I, per_prompt=per))
-    fr = free_running()
-    dump("greedy_free_running.json", fr)
+    # --reuse: gates whose runs did not change are read from their existing
+    # evidence files (same rules, same data); API, benchmark and claims are
+    # always recomputed.
+    reuse = "--reuse" in sys.argv
+
+    def computed(fname, fn):
+        if reuse and os.path.exists(os.path.join(OUT, fname)):
+            return jload(os.path.join(OUT, fname))
+        v = fn()
+        dump(fname, v)
+        return v
+
+    gb = computed("structural_coverage.json", gate_b)
+    gc = computed("op_level.json", gate_c)
+    gd = computed("sentinel.json", gate_d)
+    ge = computed("cache_determinism.json", gate_e)
+    gf1 = computed("multiseq.json", gate_f1)
+    gg = computed("ubatch.json", gate_g)
+    st = computed("full_graph_statistics.json", lambda: dict(zip(("H", "I", "per_prompt"), gates_h_i())))
+    H, I = st["H"], st["I"]
+    fr = computed("greedy_free_running.json", free_running)
     api = gate_api()
     dump("api.json", api)
     ab = api_ab()

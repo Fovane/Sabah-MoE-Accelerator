@@ -5,7 +5,12 @@
 ![format: GGUF / qwen4exp](https://img.shields.io/badge/format-GGUF%20%2F%20qwen4exp-blue)
 ![backend: CUDA](https://img.shields.io/badge/backend-CUDA%20%2F%20NVIDIA%20(currently)-76b900)
 
-**Sabah accelerates routed-MoE inference without changing routing semantics.**
+**Sabah Accelerator** is a runtime for routed-MoE inference that never changes
+routing semantics. **Sabah Scaling** is the hardware-adaptive execution method
+behind it: keep the expert bank in the memory tier that fits, hold the hottest
+experts in VRAM, and move exact expert bytes on demand. The runtime is designed
+to accelerate suitable deployments this way; whether it does depends on the
+hardware, placement, memory capacity, bandwidth, workload and runtime maturity.
 
 If the router selects expert *E*, expert *E* executes — not an approximation of
 it, not a substitute, not a predicted stand-in. Everything Sabah optimises lives
@@ -28,43 +33,76 @@ is the byte-weighted hit rate of a hot tier of capacity `C`, measured from real
 routing traces. Sabah's job is to raise `H(C)` and hide what is left of
 `T_unhidden_transfer`; it is never to reduce `W` by skipping an expert.
 
-Currently supported architecture: `qwen4exp` (Qwen3.8-Flash-Next family),
-verified against the real artifact in Sabah v3/v4.
+Currently supported architecture: `qwen4exp` (Qwen3.8-Flash-Next family).
 
 ---
 
-## Status — `v0.9.0-rc4`
+## Measured performance — read this first
 
-**This is not a "download it and your model gets faster" release.** It is a
-release candidate. Every expert `MUL_MAT_ID` of the full model runs through
-Sabah inside a pinned, patched llama.cpp, and each one matches float64 math on
-its own inputs to fp32 precision. On the development machine that is measured
-**3.3× slower** than stock llama.cpp, and 64-token greedy output diverges from
-llama.cpp at a contested token. See
-[`docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md`](docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md).
+**The current tested configuration is slower than stock llama.cpp.**
 
-What you can do today: point Sabah at a GGUF and at your machine, and get an
-honest answer about whether this hardware could run it well, including the
-answer "no".
+On the validation machine (RTX 4050 Laptop 6 GB, ~30 GB RAM), v1.0 measured
+**0.25× stock llama.cpp decode throughput**: Sabah 0.411 tok/s against stock
+llama.cpp 1.619 tok/s, about **3.9× slower** (MEASURED, 2 runs each,
+`results/v1_validation/benchmark.json`). The reasons are measured too:
 
-This is **Phase A complete**, on a single-GPU development machine.
+- the 77.018 GB expert bank does not fit in this machine's RAM, so the path is
+  storage-backed;
+- the fixed path takes most of the 6 GB GPU, leaving a 1 GiB expert tier with a
+  46% hit rate, and 122.5 GB crossed PCIe in the benchmark;
+- every expert miss is a synchronous allocate/copy, and every eviction
+  synchronizes the device.
+
+This machine is used to validate correctness, not to demonstrate speed. None
+of this implies acceleration on other hardware either: the multi-GPU figures in
+this repository are **PROJECTED / UNVALIDATED**, and no multi-GPU machine has
+been measured.
+
+## What v1.0 means
+
+v1.0 is the first **reproducible, structurally exact, numerically validated
+routed-MoE residency runtime with a user-accessible local API**. Established by
+a preregistered validation (`docs/V1_CORRECTNESS_CONTRACT.md`, results in
+`docs/V1_VALIDATION_REPORT.md`):
+
+- reproducible integration: pinned llama.cpp `96ffdc41c` plus two patches,
+  rebuilt from scratch and checked;
+- structural exactness: every expert op reaches Sabah, ids equal the router's
+  choice, and the expert bytes equal the GGUF's;
+- numerical validation: every sampled expert op matches float64 math to
+  ≤ 2e-6, and full-graph deviation is non-inferior to llama.cpp's own
+  CPU-vs-CUDA variation;
+- an expert residency runtime (VRAM hot tier over a RAM/storage bank),
+  hardware qualification and an execution planner;
+- an OpenAI-compatible local API (`sabah serve --backend sabah`);
+- an evidence-backed correctness methodology, including test-only
+  wrong-expert sentinels that the checks must catch.
+
+It does **not** establish:
+
+- universal acceleration, or acceleration on the validation machine;
+- any 3× speedup;
+- multi-GPU validation;
+- production maturity on all systems;
+- end-to-end equality with llama.cpp: bit-exact equality is not claimed.
+  Sabah's expert arithmetic is closer to float64 than llama.cpp's, so greedy
+  outputs can differ at near-tied tokens. That is measured statistically, not
+  hidden.
+
+## Status — `v1.0.0`
+
+Validated against a preregistered contract: all hard gates pass
+(`docs/V1_VALIDATION_REPORT.md`). The measured performance above still
+applies.
 
 | component | state |
 |---|---|
-| model inspector + expert-layout verification | **working, tested on the real 111 GB artifact** |
-| hardware qualification (GPU/CPU/RAM/storage/H2D) | **working, measured on this machine** |
-| multi-GPU H2D qualifier (`mgpu_qualify.cu`) | **built and running**; multi-device path untested (one GPU here) |
-| expert pipeline micro-benchmark (`expert_pipe_bench.cu`) | **built, measured** |
-| execution planner + estimator | **working**, validated by synthetic machine-class tests |
-| CLI (`inspect` / `qualify` / `plan` / `doctor` / `status`) | **working** |
-| GPU hot-tier runtime (expert/block path) | **working, CUDA-tested** |
-| full-model integration (llama.cpp graph, native `MUL_MAT_ID`) | **working**; patches pinned to llama.cpp `96ffdc41c` |
-| OpenAI-compatible server | **working**, `--backend sabah` or `--backend reference` |
-| correctness harness vs reference | **structural PASS; op-level exact; 16-token greedy PASS; 64-token greedy FAIL at a contested token** |
-
-The only measured full-model speedup is **0.30×** (Sabah slower), on a 6 GB
-laptop GPU the planner already rates "not recommended". The planner's
-**projections** stay labelled as such.
+| model inspector + expert-layout verification | working |
+| hardware qualification and execution planner | working; multi-GPU paths UNVALIDATED |
+| expert residency runtime (VRAM hot tier, native `MUL_MAT_ID`) | working; structurally exact; float64-validated (≤ 2e-6) |
+| llama.cpp integration | pinned `96ffdc41c` + patches 0001/0002, reproducible from scratch |
+| OpenAI-compatible local API | working; `--backend sabah`, `--validate` for self-checking runs |
+| correctness methodology | contract, sentinels, evaluator in `tools/v1/` |
 
 ## Quick start
 
@@ -84,8 +122,8 @@ python -m sabah.tools.cli selftest <model>-00001-of-00004.gguf
 python -m sabah.tools.cli bench    <model>-00001-of-00004.gguf --bank-mode ram
 ```
 
-`selftest` refuses to pass unless the GPU decodes every expert quant type
-bit-exactly and reproduces a CPU reference block. Run it before trusting any
+`selftest` refuses to pass unless every expert quant type dequantizes bit-exactly
+on the GPU and a CPU reference block is reproduced. Run it before trusting any
 speed number.
 
 The API serves one of two explicitly chosen backends:

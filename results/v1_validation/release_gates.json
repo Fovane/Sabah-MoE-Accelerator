@@ -1,0 +1,86 @@
+{
+ "gates": [
+  {
+   "gate": "A",
+   "name": "Build / reproducibility",
+   "result": "PASS",
+   "evidence": "sources identical 5/5; build True; smoke argmax equal True"
+  },
+  {
+   "gate": "B",
+   "name": "Structural exactness",
+   "result": "PASS",
+   "evidence": "13 runs; captured ids/weights"
+  },
+  {
+   "gate": "C",
+   "name": "Float64 op-level <= 2e-6",
+   "result": "PASS",
+   "evidence": "max 9.248e-07 over 27972 samples"
+  },
+  {
+   "gate": "D",
+   "name": "Wrong-expert discrimination",
+   "result": "PASS",
+   "evidence": "12/12 trials both detectors; multiseq S3 True"
+  },
+  {
+   "gate": "E",
+   "name": "Cache / residency invariance + determinism",
+   "result": "PASS",
+   "evidence": ""
+  },
+  {
+   "gate": "F",
+   "name": "Multi-sequence / concurrency",
+   "result": "PASS",
+   "evidence": ""
+  },
+  {
+   "gate": "G",
+   "name": ">512 / ubatch boundary",
+   "result": "PASS",
+   "evidence": ""
+  },
+  {
+   "gate": "H",
+   "name": "Full-graph non-inferiority",
+   "result": "PASS",
+   "evidence": "R=0.9808 UB95=1.0326 <= 1.25"
+  },
+  {
+   "gate": "I",
+   "name": "Greedy flip non-inferiority",
+   "result": "PASS",
+   "evidence": "D=0.0022 UB95=0.0089 <= 0.03"
+  },
+  {
+   "gate": "J",
+   "name": "Real Sabah API backend",
+   "result": "PASS",
+   "evidence": ""
+  },
+  {
+   "gate": "K",
+   "name": "Evidence-grade counters",
+   "result": "PASS",
+   "evidence": ""
+  },
+  {
+   "gate": "L",
+   "name": "Measured benchmark",
+   "result": "AVAILABLE",
+   "evidence": "speedup 0.2540"
+  },
+  {
+   "gate": "M",
+   "name": "Claim hygiene",
+   "result": "PASS",
+   "evidence": "6/6 checks"
+  }
+ ],
+ "all_pass": true,
+ "rehearsal": false,
+ "corpus": "D:\\sabah_scaling\\v5\\tests\\v1_validation",
+ "raw": "D:/sabah_v1val"
+}
