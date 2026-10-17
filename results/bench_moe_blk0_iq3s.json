@@ -1,0 +1,23 @@
+{
+ "schema": 1,
+ "model": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+ "model_sha_shard1": "not recorded (artifact >50 GB; sha not recomputed here)",
+ "block": 0,
+ "quant": "IQ3_XXS/IQ3_XXS/IQ4_NL (gate/up/down)",
+ "expert_bytes_per_expert": 2176000,
+ "n_experts": 512,
+ "topk": 10,
+ "tokens": 1000,
+ "trace": "tests/data/bench_trace (ffn_moe_topk_L0.i32, sha256 407deced0eabfe2c96cf98deefc334c4fb6a8222eaf9fa402ae04ef50154bfeea)",
+ "gpu": "RTX 5060 Ti sm_120 (index 0), 16 GB VRAM",
+ "bank_mode": "ram (pinned, DMA in place, piece B)",
+ "rows": [
+  { "capacity_slots": 64,  "vram_bytes": 139264000,  "hit_rate": 0.1117, "ms_per_token": 1.3775, "gpu_wait_expert_ms_per_tok": 0.7315, "host_stage_ms_per_tok": 0.0,  "fetch_MB_per_tok": 19.17,  "blk_tok_s": 725.9 },
+  { "capacity_slots": 128, "vram_bytes": 278528000,  "hit_rate": 0.2313, "ms_per_token": 1.2859, "gpu_wait_expert_ms_per_tok": 0.6417, "host_stage_ms_per_tok": 0.0,  "fetch_MB_per_tok": 16.59,  "blk_tok_s": 777.7 },
+  { "capacity_slots": 256, "vram_bytes": 557056000,  "hit_rate": 0.4734, "ms_per_token": 1.1134, "gpu_wait_expert_ms_per_tok": 0.4401, "host_stage_ms_per_tok": 0.0,  "fetch_MB_per_tok": 11.36,  "blk_tok_s": 898.2 },
+  { "capacity_slots": 512, "vram_bytes": 1114112000,  "hit_rate": 0.9806, "ms_per_token": 0.6465, "gpu_wait_expert_ms_per_tok": 0.0188, "host_stage_ms_per_tok": 0.0,  "fetch_MB_per_tok": 0.42,   "blk_tok_s": 1546.9 }
+ ],
+ "m1_ab": "fully resident (512 slots): 0.646 ms/token; 256 slots (50%): 1.113 ms/token (+0.467 ms penalty); 64 slots (12%): 1.378 ms/token (+0.731 ms penalty)",
+ "scope": "ONE block only. Not model-level tokens/s. Attention, fixed path (4.18 GB/token), sampling absent.",
+ "storage_ceiling_note": "disk sequential read 1.56-2.01 GB/s; expert bank 50.29 GB; 0.982 GB expert bytes/token must move unless resident. 10 tok/s needs ~80% bank resident (~40 GB) at 2 GB/s; this box holds ~21.8 GB (~43%) across VRAM + page cache, so end-to-end 10-15 tok/s is storage-capacity limited on this box, not a Sabah defect."
+}

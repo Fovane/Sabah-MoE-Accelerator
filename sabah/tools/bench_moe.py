@@ -61,15 +61,27 @@ def popularity(ids: np.ndarray, n_experts: int) -> np.ndarray:
 
 
 def run_one(bank, block, ids, capacity_slots, warm_order, x,
-            max_used, repeat_sync=True):
-    """Replay `ids` through a tier of `capacity_slots` and time it."""
+            max_used, prefetch_slots=0):
+    """Replay `ids` through a tier of `capacity_slots` and time it.
+
+    With `prefetch_slots > 0` the tier keeps that many slots free per block and
+    a `FrequencyPredictor` warms them behind each block's own compute. Prefetch
+    is advice: the same experts still run, so the hit rate may rise but the
+    output must not change (that is what test_prefetch_equivalence asserts).
+    """
     slot_bytes = bank.block_expert_bytes(block)
-    tier = HotTier(bank, capacity_slots * slot_bytes, blocks=[block])
+    tier = HotTier(bank, capacity_slots * slot_bytes, blocks=[block],
+                   prefetch_slots=prefetch_slots)
     if tier.slots_per_block != capacity_slots:
         tier.free()
         raise RuntimeError("asked for %d slots, tier built %d"
                            % (capacity_slots, tier.slots_per_block))
     ex = MoEExecutor(bank, tier, max_used=max_used)
+    pf = None
+    if prefetch_slots > 0:
+        from sabah.runtime.mtp_prefetch import ExpertPrefetcher, FrequencyPredictor
+        pf = ExpertPrefetcher(tier, FrequencyPredictor(top_k=max_used,
+                                                       blocks=[block]))
     try:
         tier.preload(block, warm_order[:capacity_slots].tolist())
         ex.upload_x(x)
@@ -84,6 +96,9 @@ def run_one(bank, block, ids, capacity_slots, warm_order, x,
         t0 = time.perf_counter()
         for t in range(ids.shape[0]):
             ex.run_block(block, ids[t].tolist(), w)
+            if pf is not None:
+                pf.observe(block, ids[t])
+                pf.warm_ahead(block)
         ex.sync()
         dt = time.perf_counter() - t0
         tier.drain_stalls()
@@ -93,7 +108,12 @@ def run_one(bank, block, ids, capacity_slots, warm_order, x,
         res.update(capacity_slots=capacity_slots,
                    vram_bytes=tier.capacity_bytes,
                    wall_s=dt,
-                   ms_per_token=1000.0 * dt / ids.shape[0])
+                   ms_per_token=1000.0 * dt / ids.shape[0],
+                   # effective, not requested: the tier clamps the reserve so the
+                   # live top-k working set always fits in the pool.
+                   prefetch_slots=tier.prefetch_slots,
+                   prefetch_requested=prefetch_slots,
+                   prefetch_enabled=pf is not None)
         return res
     finally:
         ex.free()
@@ -108,10 +128,16 @@ def main(argv=None):
     ap.add_argument("--tokens", type=int, default=2000)
     ap.add_argument("--warm-frac", type=float, default=0.2)
     ap.add_argument("--slots", default="16,32,64,128,256,512")
+    ap.add_argument("--prefetch-slots", type=int, default=0,
+                    help="slots kept free per block for speculative expert "
+                         "prefetch (0 = off). Try n_experts_used (e.g. 10) or "
+                         "a multiple of it.")
     ap.add_argument("--bank-mode", default="mmap", choices=["mmap", "ram"],
                     help="mmap: page-cache backed. ram: copy the block's experts "
                          "into pinned RAM first, so the DMA engine reads in place.")
     ap.add_argument("--json-out", default="")
+    ap.add_argument("--pin-fixed-path", action="store_true",
+                    help="pin fixed path tensors into VRAM (needs ~4.2 GB VRAM)")
     args = ap.parse_args(argv)
 
     print("=" * 84)
@@ -122,9 +148,25 @@ def main(argv=None):
         print("CUDA runtime unavailable."); return 2
     rt.check(rt.lib().sabah_rt_init(0), "rt_init")
 
+    from sabah.runtime.residency import FixedPathResident
+
     prof = inspect_model(args.model)
     if not prof.supported:
         print("unsupported model"); return 2
+
+    fpr = None
+    if args.pin_fixed_path:
+        from sabah.runtime.residency import FixedPathResident
+        # ---- pin fixed path into VRAM (piece C) -------------------------------
+        # Attention, router, embedding, output head: read every token. Without this
+        # they are re-read from storage on every token (~4.18 GB/token for IQ3_S),
+        # which dominates the latency and makes acceleration impossible.
+        fpr = FixedPathResident(prof)
+        fpr.load()
+        print("fixed path: %.3f GB pinned in VRAM (%d tensors)"
+              % (fpr.resident_bytes / 1e9, len(fpr._ptrs)))
+    else:
+        print("fixed path: NOT pinned (will be read from storage each token)")
 
     need = sum(t["per_expert_bytes"] for t in prof.expert_tensors
                if t["block"] == args.block) * prof.n_experts
@@ -161,28 +203,36 @@ def main(argv=None):
 
     sweep = [int(s) for s in args.slots.split(",") if s.strip()]
     rows = []
-    print("%8s %8s %8s %10s %11s %11s %11s %10s"
+    if args.prefetch_slots:
+        print("prefetch   : %d slot(s)/block reserved, FrequencyPredictor "
+              "warming behind compute" % args.prefetch_slots)
+        print()
+    print("%8s %8s %8s %10s %11s %11s %11s %10s %8s %8s"
           % ("slots", "VRAM GB", "hit", "ms/token", "gpu stall", "host stage",
-             "fetch MB", "blk tok/s"))
-    print("%8s %8s %8s %10s %11s %11s %11s %10s"
-          % ("", "", "", "", "ms/tok", "ms/tok", "per tok", ""))
-    print("-" * 84)
+             "fetch MB", "blk tok/s", "pf iss", "pf hit"))
+    print("%8s %8s %8s %10s %11s %11s %11s %10s %8s %8s"
+          % ("", "", "", "", "ms/tok", "ms/tok", "per tok", "", "per tok",
+             "per tok"))
+    print("-" * 100)
     for C in sweep:
         if C > prof.n_experts:
             continue
         try:
             r = run_one(bank, args.block, ids, C, warm_order, x,
-                        max_used=prof.n_experts_used)
+                        max_used=prof.n_experts_used,
+                        prefetch_slots=min(args.prefetch_slots, C))
         except rt.SabahCudaError as e:
             print("%8d  skipped: %s" % (C, e))
             continue
         rows.append(r)
-        print("%8d %8.3f %8.4f %10.3f %11.3f %11.3f %11.2f %10.1f"
+        print("%8d %8.3f %8.4f %10.3f %11.3f %11.3f %11.2f %10.1f %8.2f %8.2f"
               % (C, r["vram_bytes"] / 1e9, r["hit_rate"], r["ms_per_token"],
                  r["gpu_wait_expert_ms"] / r["tokens"],
                  r["host_stage_ms"] / r["tokens"],
                  r["bytes_fetched"] / r["tokens"] / 1e6,
-                 1000.0 / r["ms_per_token"]))
+                 1000.0 / r["ms_per_token"],
+                 r.get("prefetch_issued", 0) / r["tokens"],
+                 r.get("prefetch_hits", 0) / r["tokens"]))
 
     print()
     # ---- M1 A/B ---------------------------------------------------------
@@ -222,6 +272,8 @@ def main(argv=None):
                            n_experts=prof.n_experts,
                            topk=prof.n_experts_used, rows=rows), f, indent=1)
         print("\nwrote %s" % args.json_out)
+    if fpr:
+        fpr.free()
     bank.close()
     return 0
 

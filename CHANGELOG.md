@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased — acceleration layers
+
+Four runtime changes for the 24 GB VRAM / 16 GB RAM class, plus three bug fixes.
+See `docs/ACCEL_LAYERS.md` for what each one is and how to test it. Not yet
+benchmarked; the CUDA runtime must be rebuilt for any of it to take effect.
+
+- **N-gram prefetch** (`sabah/runtime/ngram_prefetch.py`): the n-gram table is
+  mmap'd read-only and its rows are hinted into the working set ahead of the
+  gather, then advised away. It never occupies RAM the experts could use. The
+  index function is injected; the built-in one is a labelled placeholder.
+- **Warm RAM tier** (`ExpertBank.load_warm`, planner `warm_bytes` /
+  `warm_blocks`): leftover usable RAM pins whole blocks, chosen smallest-first.
+  A warm block is DMA'd straight from pinned RAM, removing both the SSD read and
+  the host staging hop. `residency.apply_plan(plan, bank)` wires it in.
+- **Fixed-path residency** (`sabah/runtime/residency.py`, planner
+  `fixed_bytes` / `fixed_resident`): the fixed path is charged to VRAM before
+  experts and is explicitly marked resident; expert capacity is now capped at
+  the bank.
+- **MTP expert prefetch** (`sabah/runtime/mtp_prefetch.py`, `HotTier.prefetch`):
+  speculative cross-token prefetch, fenced as advice — it fills only reserved
+  free slots, never evicts live work, and never changes which experts run. A
+  prefetched expert the router asks for is used only after its copy is awaited
+  on the compute stream.
+- **Fixed: a reused slot could be overwritten while a submitted kernel still
+  read it.** Added `sabah_copy_wait_event` plus a per-block `mark_submitted`
+  event, so a copy waits for its reader precisely instead of draining the
+  compute stream. The llama.cpp bridge keeps its conservative
+  `cudaStreamSynchronize`, because it does not launch the kernel itself.
+- **Fixed: the router-id download was made "async" while the host read it
+  immediately.** Reverted to a synchronizing download; overlapping it is the
+  prefetcher's job, not the download's.
+- **Fixed the device slab allocator**, which could hand the same base pointer to
+  every expert. It is now a best-fit free list with coalescing, and shuts down
+  cleanly.
+- **Fixed `rt.slab_free`**, which passed a `void` C function's result to
+  `check()` and therefore raised on every successful free. `rt.slab_destroy` was
+  added alongside it. (Found by the new GPU smoke test.)
+- **Build fix**: `sabah/runtime/cuda/build_dll.bat` sources `vcvars64.bat` before
+  `nvcc` and pins MSVC 14.44 when only VS 18 (MSVC 14.51) is installed, which
+  CUDA 12.8 rejects.
+- **New tests**: `tests/test_accel_layer.py` (24, no GPU) and
+  `tests/test_gpu_smoke.py` (9, GPU but no model — slab, `copy_wait_event`,
+  direct-DMA slot exactness, prefetch reserve, eviction exactness).
+
 ## 1.0.0
 
 First release validated against a preregistered correctness contract

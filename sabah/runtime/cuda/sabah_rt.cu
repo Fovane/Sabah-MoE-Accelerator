@@ -28,7 +28,14 @@
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include <map>
 #include <vector>
+
+// The IQ-family expert quants need ggml's grid/sign lookup tables. They are
+// extracted verbatim from ggml-common.h by tools/gen_iq_tables.py; plain
+// `static const`, so both the host reference dequantizer and the device
+// sub-block kernels can read the same arrays (exactly as ggml does).
+#include "sabah_iq_tables.h"
 
 #if defined(_WIN32)
   #define SABAH_API __declspec(dllexport)
@@ -37,10 +44,18 @@
 #endif
 
 // ---- quant type codes (ggml enum values, so traces stay comparable) --------
-#define SB_Q5_1  7
-#define SB_Q8_0  8
-#define SB_Q4_K 12
-#define SB_Q5_K 13
+// The four the UD-Q4_K_XL artifact uses...
+#define SB_Q5_1      7
+#define SB_Q8_0      8
+#define SB_Q4_K     12
+#define SB_Q5_K     13
+// ...and the six the GSQ-RCO IQ3_S artifact uses.
+#define SB_IQ3_XXS  18
+#define SB_IQ4_NL   20
+#define SB_IQ3_S    21
+#define SB_IQ2_S    22
+#define SB_IQ4_XS   23
+#define SB_Q2_0     42
 
 // Test-only sentinel builds (never defined for a shipped library):
 //   1  slot 0 of every call executes the neighbouring expert
@@ -70,6 +85,7 @@ struct sb_mmid_entry {
     size_t bytes;
     uint64_t touch;
     uint64_t epoch;     // last MUL_MAT_ID call that referenced this slot
+    bool slab;          // true: came from the hot-tier slab; false: over-budget
 };
 
 static std::mutex g_mmid_mutex;
@@ -118,10 +134,109 @@ static size_t sb_mmid_capacity_bytes() {
     return (size_t) 2ull * 1024ull * 1024ull * 1024ull;
 }
 
+// ---------------- Device slab allocator -------------------------------------
+//
+// One cudaMalloc for the whole hot tier, subdivided on demand. The point is to
+// remove cudaMalloc/cudaFree from the per-miss path: a miss turns into a
+// best-fit search over a free list and a pointer offset, not an allocator call
+// (and, more importantly, no free/malloc churn that can serialise the device).
+//
+// Every allocation is a sub-range [base+offset, base+offset+bytes). `free`
+// returns the range and coalesces it with any adjacent free range, so the pool
+// does not fragment under the miss/evict steady state.
+static void * g_slab_base = nullptr;
+static size_t g_slab_size = 0;
+static std::vector<std::pair<size_t, size_t>> g_slab_free;   // (offset, bytes)
+static std::map<void *, size_t> g_slab_alloc;                // ptr -> bytes
+static std::mutex g_slab_mutex;
+
+static void sb_slab_destroy() {
+    std::lock_guard<std::mutex> lock(g_slab_mutex);
+    if (g_slab_base) {
+        cudaFree(g_slab_base);
+        g_slab_base = nullptr;
+    }
+    g_slab_size = 0;
+    g_slab_free.clear();
+    g_slab_alloc.clear();
+}
+
+static void sb_slab_init(size_t capacity_bytes) {
+    std::lock_guard<std::mutex> lock(g_slab_mutex);
+    if (g_slab_base) return;
+    void * p = nullptr;
+    if (!ck(cudaMalloc(&p, capacity_bytes), "sabah slab alloc")) return;
+    g_slab_base = p;
+    g_slab_size = capacity_bytes;
+    g_slab_free.clear();
+    g_slab_free.push_back({ 0, capacity_bytes });
+    g_slab_alloc.clear();
+}
+
+static void * sb_slab_alloc(size_t bytes) {
+    std::lock_guard<std::mutex> lock(g_slab_mutex);
+    if (!g_slab_base) {
+        // lazy init without re-locking
+        size_t cap = sb_mmid_capacity_bytes();
+        void * p = nullptr;
+        if (!ck(cudaMalloc(&p, cap), "sabah slab alloc")) return nullptr;
+        g_slab_base = p;
+        g_slab_size = cap;
+        g_slab_free.clear();
+        g_slab_free.push_back({ 0, cap });
+        g_slab_alloc.clear();
+    }
+    // best fit: smallest free range that still holds the request
+    size_t best_i = g_slab_free.size(), best_sz = 0;
+    for (size_t i = 0; i < g_slab_free.size(); ++i) {
+        const size_t sz = g_slab_free[i].second;
+        if (sz >= bytes && (best_i == g_slab_free.size() || sz < best_sz)) {
+            best_i = i; best_sz = sz;
+        }
+    }
+    if (best_i == g_slab_free.size()) return nullptr;   // pool exhausted
+    const size_t off = g_slab_free[best_i].first;
+    if (best_sz == bytes) {
+        g_slab_free.erase(g_slab_free.begin() + (long) best_i);
+    } else {
+        g_slab_free[best_i] = { off + bytes, best_sz - bytes };
+    }
+    void * ptr = (char *) g_slab_base + off;
+    g_slab_alloc[ptr] = bytes;
+    return ptr;
+}
+
+static void sb_slab_free(void * ptr) {
+    if (!ptr) return;
+    std::lock_guard<std::mutex> lock(g_slab_mutex);
+    if (!g_slab_base) return;
+    auto it = g_slab_alloc.find(ptr);
+    if (it == g_slab_alloc.end()) return;         // not a slab pointer
+    const size_t off = (size_t) ((char *) ptr - (char *) g_slab_base);
+    const size_t sz = it->second;
+    g_slab_alloc.erase(it);
+    g_slab_free.push_back({ off, sz });
+    std::sort(g_slab_free.begin(), g_slab_free.end());
+    std::vector<std::pair<size_t, size_t>> merged;
+    for (const auto & r : g_slab_free) {
+        if (!merged.empty() && merged.back().first + merged.back().second == r.first) {
+            merged.back().second += r.second;
+        } else {
+            merged.push_back(r);
+        }
+    }
+    g_slab_free.swap(merged);
+}
+
 static void sb_mmid_reset() {
     std::lock_guard<std::mutex> lock(g_mmid_mutex);
+    // Entries are slab sub-ranges (or, if the slab never initialised, plain
+    // cudaMalloc'd blocks). Return each to whichever allocator produced it.
     for (const auto & entry : g_mmid_entries) {
-        if (entry.device) {
+        if (!entry.device) continue;
+        if (entry.slab) {
+            if (g_slab_base) sb_slab_free(entry.device);
+        } else {
             cudaFree(entry.device);
         }
     }
@@ -157,9 +272,12 @@ static void sb_mmid_reset() {
 }
 
 static void sb_mmid_evict_until(size_t needed, cudaStream_t compute_stream) {
-    // A slot can still be read by a previously submitted compute kernel.  The
-    // conservative synchronization is only taken on an actual eviction and
-    // preserves the exact-output invariant.
+    // A slot can still be read by a previously submitted compute kernel, and
+    // this entry point does NOT launch that kernel (llama.cpp does), so there is
+    // no point at which we can record "the kernel that reads this slot has
+    // finished". The only safe ordering is therefore to drain the compute stream
+    // before the freed slot is reused. This is taken ONLY on an actual eviction
+    // and preserves the exact-output invariant.
     //
     // Slots already handed to the call in progress are never victims: their
     // device pointers sit in that call's pointer table and the kernel has not
@@ -177,7 +295,11 @@ static void sb_mmid_evict_until(size_t needed, cudaStream_t compute_stream) {
         }
         cudaStreamSynchronize(compute_stream);
         cudaStreamSynchronize(g_copy);
-        cudaFree(victim->device);
+        if (victim->slab) {
+            if (g_slab_base) sb_slab_free(victim->device);
+        } else {
+            cudaFree(victim->device);
+        }
         g_mmid_bytes -= victim->bytes;
         g_mmid_entries.erase(victim);
         ++g_mmid_evictions;
@@ -225,17 +347,24 @@ static void * sb_mmid_resident(const void * source_key, int expert,
     ++g_mmid_misses;
     sb_mmid_evict_until(bytes, compute_stream);
 
-    void * device = nullptr;
-    if (!ck(cudaMalloc(&device, bytes), "Sabah expert slot allocation")) {
-        return nullptr;
+    void * device = sb_slab_alloc(bytes);
+    bool from_slab = device != nullptr;
+    if (!device) {
+        // The pool is smaller than this working set and nothing else can be
+        // evicted. Documented behaviour is to EXCEED the budget for this fetch
+        // (a plain device allocation) rather than fail the call: the slot is
+        // still freed normally when it is later evicted, and the routed result
+        // stays exact. Overflow counts these over-budget allocations.
+        ++g_mmid_overflow;
+        if (!ck(cudaMalloc(&device, bytes), "Sabah over-budget expert")) return nullptr;
     }
     if (!ck(cudaMemcpyAsync(device, source, bytes, cudaMemcpyHostToDevice, g_copy),
             "Sabah expert H2D")) {
-        cudaFree(device);
+        if (from_slab) sb_slab_free(device); else cudaFree(device);
         return nullptr;
     }
 
-    g_mmid_entries.push_back({ source_key, expert, device, bytes, ++g_mmid_tick, g_mmid_epoch });
+    g_mmid_entries.push_back({ source_key, expert, device, bytes, ++g_mmid_tick, g_mmid_epoch, from_slab });
     g_mmid_bytes += bytes;
     g_mmid_bytes_fetched += bytes;
     if (g_mmid_verify && !sb_mmid_verify(device, source, bytes)) {
@@ -256,19 +385,31 @@ static bool ck(cudaError_t e, const char * what) {
 // ---------------------------------------------------------------------------
 __host__ __device__ static inline int sb_block_bytes(int qt) {
     switch (qt) {
-        case SB_Q4_K: return 144;
-        case SB_Q5_K: return 176;
-        case SB_Q5_1: return  24;
-        case SB_Q8_0: return  34;
+        case SB_Q4_K:    return 144;
+        case SB_Q5_K:    return 176;
+        case SB_Q5_1:    return  24;
+        case SB_Q8_0:    return  34;
+        case SB_IQ3_XXS: return  98;   // d + 3*QK_K/8
+        case SB_IQ4_NL:  return  18;   // d + QK4_NL/2
+        case SB_IQ3_S:   return 110;   // d + 13*(QK_K/32) + IQ3S_N_SCALE
+        case SB_IQ2_S:   return  82;   // d + QK_K/4 + QK_K/16
+        case SB_IQ4_XS:  return 136;   // d + scales_h + QK_K/64 + QK_K/2
+        case SB_Q2_0:    return  18;   // d + QK2_0/4
     }
     return 0;
 }
 __host__ __device__ static inline int sb_block_elems(int qt) {
     switch (qt) {
-        case SB_Q4_K: return 256;
-        case SB_Q5_K: return 256;
-        case SB_Q5_1: return  32;
-        case SB_Q8_0: return  32;
+        case SB_Q4_K:    return 256;
+        case SB_Q5_K:    return 256;
+        case SB_Q5_1:    return  32;
+        case SB_Q8_0:    return  32;
+        case SB_IQ3_XXS: return 256;
+        case SB_IQ4_NL:  return  32;
+        case SB_IQ3_S:   return 256;
+        case SB_IQ2_S:   return 256;
+        case SB_IQ4_XS:  return 256;
+        case SB_Q2_0:    return  64;
     }
     return 0;
 }
@@ -377,6 +518,134 @@ static bool sb_host_dequant(const uint8_t * x, float * y, int qt, int n) {
                 for (int l = 0; l < 32; ++l) *y++ = d1 * ((ql[l] & 0xF) + (qh[l] & u1 ? 16 : 0)) - m1;
                 for (int l = 0; l < 32; ++l) *y++ = d2 * ((ql[l] >> 4) + (qh[l] & u2 ? 16 : 0)) - m2;
                 ql += 32; is += 2; u1 <<= 2; u2 <<= 2;
+            }
+        }
+        return true;
+    case SB_IQ2_S:
+        // d | qs[64] (32 grid bytes, then 32 sign bytes) | qh[8] | scales[8]
+        for (int b = 0; b < n / 256; ++b, x += 82) {
+            const float d = sb_host_f16(x);
+            const uint8_t * qs    = x + 2;
+            const uint8_t * qh    = x + 66;
+            const uint8_t * signs = qs + 32;
+            const uint8_t * sc    = x + 74;
+            int qo = 0, so = 0;
+            for (int ib32 = 0; ib32 < 8; ++ib32) {
+                const float db0 = d * (0.5f + (sc[ib32] & 0xf)) * 0.25f;
+                const float db1 = d * (0.5f + (sc[ib32] >>  4)) * 0.25f;
+                for (int l = 0; l < 4; ++l) {
+                    const float dl = (l < 2) ? db0 : db1;
+                    const uint32_t gi = (uint32_t) qs[qo + l]
+                                      | (((uint32_t) qh[ib32] << (8 - 2 * l)) & 0x300u);
+                    const uint64_t g  = iq2s_grid[gi];
+                    const uint8_t  sg = signs[so + l];
+                    for (int j = 0; j < 8; ++j) {
+                        const uint8_t gv = (uint8_t) (g >> (8 * j));
+                        *y++ = dl * gv * ((sg & kmask_iq2xs[j]) ? -1.f : 1.f);
+                    }
+                }
+                qo += 4; so += 4;
+            }
+        }
+        return true;
+    case SB_IQ3_XXS:
+        // d | qs[96]: 64 grid bytes, then 32 scale/sign bytes (4 per ib32)
+        for (int b = 0; b < n / 256; ++b, x += 98) {
+            const float d = sb_host_f16(x);
+            const uint8_t * qs = x + 2;
+            const uint8_t * ss = qs + 64;
+            for (int ib32 = 0; ib32 < 8; ++ib32) {
+                uint32_t aux32;
+                std::memcpy(&aux32, ss + 4 * ib32, 4);
+                const float db = d * (0.5f + (float) (aux32 >> 28)) * 0.5f;
+                for (int l = 0; l < 4; ++l) {
+                    const uint8_t  sg = ksigns_iq2xs[(aux32 >> (7 * l)) & 127];
+                    const uint32_t g1 = iq3xxs_grid[qs[8 * ib32 + 2 * l + 0]];
+                    const uint32_t g2 = iq3xxs_grid[qs[8 * ib32 + 2 * l + 1]];
+                    for (int j = 0; j < 4; ++j) {
+                        y[j + 0] = db * (float) ((g1 >> (8 * j)) & 0xff)
+                                 * ((sg & kmask_iq2xs[j + 0]) ? -1.f : 1.f);
+                        y[j + 4] = db * (float) ((g2 >> (8 * j)) & 0xff)
+                                 * ((sg & kmask_iq2xs[j + 4]) ? -1.f : 1.f);
+                    }
+                    y += 8;
+                }
+            }
+        }
+        return true;
+    case SB_IQ3_S:
+        // d | qs[64] | qh[8] | signs[32] | scales[4]
+        for (int b = 0; b < n / 256; ++b, x += 110) {
+            const float d = sb_host_f16(x);
+            const uint8_t * qs    = x + 2;
+            const uint8_t * qh    = x + 66;
+            const uint8_t * signs = x + 74;
+            const uint8_t * sc    = x + 106;
+            for (int ib32 = 0; ib32 < 8; ib32 += 2) {
+                const float db1 = d * (1 + 2 * (float) (sc[ib32 / 2] & 0xf));
+                const float db2 = d * (1 + 2 * (float) (sc[ib32 / 2] >>  4));
+                for (int h = 0; h < 2; ++h) {
+                    const float db = h ? db2 : db1;
+                    for (int l = 0; l < 4; ++l) {
+                        const uint32_t i1 = (uint32_t) qs[2 * l + 0]
+                                          | (((uint32_t) qh[h] << (8 - 2 * l)) & 256u);
+                        const uint32_t i2 = (uint32_t) qs[2 * l + 1]
+                                          | (((uint32_t) qh[h] << (7 - 2 * l)) & 256u);
+                        const uint32_t g1 = iq3s_grid[i1];
+                        const uint32_t g2 = iq3s_grid[i2];
+                        const uint8_t  sg = signs[l];
+                        for (int j = 0; j < 4; ++j) {
+                            y[j + 0] = db * (float) ((g1 >> (8 * j)) & 0xff)
+                                     * ((sg & kmask_iq2xs[j + 0]) ? -1.f : 1.f);
+                            y[j + 4] = db * (float) ((g2 >> (8 * j)) & 0xff)
+                                     * ((sg & kmask_iq2xs[j + 4]) ? -1.f : 1.f);
+                        }
+                        y += 8;
+                    }
+                    qs += 8; signs += 4;
+                }
+                qh += 2;
+            }
+        }
+        return true;
+    case SB_IQ4_NL:
+        for (int b = 0; b < n / 32; ++b, x += 18) {
+            const float d = sb_host_f16(x);
+            const uint8_t * qs = x + 2;
+            for (int j = 0; j < 16; ++j) {
+                y[j +  0] = d * (float) kvalues_iq4nl[qs[j] & 0xf];
+                y[j + 16] = d * (float) kvalues_iq4nl[qs[j] >>  4];
+            }
+            y += 32;
+        }
+        return true;
+    case SB_IQ4_XS:
+        // d | scales_h | scales_l[4] | qs[128]
+        for (int b = 0; b < n / 256; ++b, x += 136) {
+            const float d = sb_host_f16(x);
+            const uint16_t scales_h = (uint16_t) (x[2] | (x[3] << 8));
+            const uint8_t * scales_l = x + 4;
+            const uint8_t * qs = x + 8;
+            for (int ib = 0; ib < 8; ++ib) {
+                const int ls = ((scales_l[ib / 2] >> (4 * (ib % 2))) & 0xf)
+                             | (((scales_h >> (2 * ib)) & 3) << 4);
+                const float dl = d * (float) (ls - 32);
+                for (int j = 0; j < 16; ++j) {
+                    y[j +  0] = dl * (float) kvalues_iq4nl[qs[j] & 0xf];
+                    y[j + 16] = dl * (float) kvalues_iq4nl[qs[j] >>  4];
+                }
+                y += 32;
+                qs += 16;
+            }
+        }
+        return true;
+    case SB_Q2_0:
+        for (int b = 0; b < n / 64; ++b, x += 18) {
+            const float d = sb_host_f16(x);
+            const uint8_t * qs = x + 2;
+            for (int j = 0; j < 64; ++j) {
+                const uint8_t q = (qs[j >> 2] >> ((j & 3) * 2)) & 3;
+                *y++ = ((float) q - 1.0f) * d;
             }
         }
         return true;
@@ -506,12 +775,152 @@ __device__ static inline float sub32_q8_0(const uint8_t * row, int s, const floa
     return d * sxq;
 }
 
+__device__ static inline float sub32_q2_0(const uint8_t * row, int s, const float * x) {
+    // 64 elements per block, so one block covers two sub-blocks.
+    const uint8_t * b = row + (size_t) (s >> 1) * 18;
+    const uint8_t * qs = b + 2 + (s & 1) * 8;
+    float sxq = 0.f;
+    #pragma unroll
+    for (int l = 0; l < 32; ++l) {
+        const uint8_t q = (qs[l >> 2] >> ((l & 3) * 2)) & 3;
+        sxq += x[l] * ((float) q - 1.0f);
+    }
+    return h2f(b) * sxq;
+}
+
+// The IQ-family super-blocks are 256 elements = eight "ib32" groups, so sub-block
+// s is decoded on its own; the index arithmetic below mirrors sb_host_dequant and
+// is what the kernel test (unit-vector dot) diffs against ggml/gguf-py.
+
+__device__ static inline float sub32_iq2_s(const uint8_t * row, int s, const float * x) {
+    const uint8_t * b = row + (size_t) (s >> 3) * 82;
+    const int j = s & 7;
+    const float d = h2f(b);
+    const uint8_t * qs    = b + 2;
+    const uint8_t * qh    = b + 66;
+    const uint8_t * signs = qs + 32;
+    const uint8_t sc = b[74 + j];
+    const float db0 = d * (0.5f + (sc & 0xf)) * 0.25f;
+    const float db1 = d * (0.5f + (sc >>  4)) * 0.25f;
+    float sxq = 0.f;
+    #pragma unroll
+    for (int l = 0; l < 4; ++l) {
+        const float dl = (l < 2) ? db0 : db1;
+        const uint32_t gi = (uint32_t) qs[j * 4 + l]
+                          | (((uint32_t) qh[j] << (8 - 2 * l)) & 0x300u);
+        const uint64_t g  = iq2s_grid_dev[gi];
+        const uint8_t  sg = signs[j * 4 + l];
+        #pragma unroll
+        for (int m = 0; m < 8; ++m) {
+            const float gv  = (float) (uint8_t) (g >> (8 * m));
+            const float sgn = (sg & kmask_iq2xs_dev[m]) ? -1.f : 1.f;
+            sxq += (dl * gv * sgn) * x[l * 8 + m];
+        }
+    }
+    return sxq;
+}
+
+__device__ static inline float sub32_iq3_xxs(const uint8_t * row, int s, const float * x) {
+    const uint8_t * b = row + (size_t) (s >> 3) * 98;
+    const int j = s & 7;
+    const float d = h2f(b);
+    const uint8_t * qs = b + 2;
+    const uint8_t * ss = qs + 64;
+    uint32_t aux32;
+    memcpy(&aux32, ss + 4 * j, 4);
+    const float db = d * (0.5f + (float) (aux32 >> 28)) * 0.5f;
+    float sxq = 0.f;
+    #pragma unroll
+    for (int l = 0; l < 4; ++l) {
+        const uint8_t  sg = ksigns_iq2xs_dev[(aux32 >> (7 * l)) & 127];
+        const uint32_t g1 = iq3xxs_grid_dev[qs[8 * j + 2 * l + 0]];
+        const uint32_t g2 = iq3xxs_grid_dev[qs[8 * j + 2 * l + 1]];
+        #pragma unroll
+        for (int m = 0; m < 4; ++m) {
+            const float s1 = (sg & kmask_iq2xs_dev[m + 0]) ? -1.f : 1.f;
+            const float s2 = (sg & kmask_iq2xs_dev[m + 4]) ? -1.f : 1.f;
+            sxq += (db * (float) ((g1 >> (8 * m)) & 0xff) * s1) * x[l * 8 + m + 0];
+            sxq += (db * (float) ((g2 >> (8 * m)) & 0xff) * s2) * x[l * 8 + m + 4];
+        }
+    }
+    return sxq;
+}
+
+__device__ static inline float sub32_iq3_s(const uint8_t * row, int s, const float * x) {
+    const uint8_t * b = row + (size_t) (s >> 3) * 110;
+    const int j = s & 7;
+    const float d = h2f(b);
+    const uint8_t * qs    = b + 2;
+    const uint8_t * qh    = b + 66;
+    const uint8_t * signs = b + 74;
+    const uint8_t * sc    = b + 106;
+    const int p = j >> 1, h = j & 1;
+    const float db = d * (1 + 2 * (float) ((sc[p] >> (4 * h)) & 0xf));
+    float sxq = 0.f;
+    #pragma unroll
+    for (int l = 0; l < 4; ++l) {
+        const uint32_t i1 = (uint32_t) qs[j * 8 + 2 * l + 0]
+                          | (((uint32_t) qh[j] << (8 - 2 * l)) & 256u);
+        const uint32_t i2 = (uint32_t) qs[j * 8 + 2 * l + 1]
+                          | (((uint32_t) qh[j] << (7 - 2 * l)) & 256u);
+        const uint32_t g1 = iq3s_grid_dev[i1];
+        const uint32_t g2 = iq3s_grid_dev[i2];
+        const uint8_t  sg = signs[j * 4 + l];
+        #pragma unroll
+        for (int m = 0; m < 4; ++m) {
+            const float s1 = (sg & kmask_iq2xs_dev[m + 0]) ? -1.f : 1.f;
+            const float s2 = (sg & kmask_iq2xs_dev[m + 4]) ? -1.f : 1.f;
+            sxq += (db * (float) ((g1 >> (8 * m)) & 0xff) * s1) * x[l * 8 + m + 0];
+            sxq += (db * (float) ((g2 >> (8 * m)) & 0xff) * s2) * x[l * 8 + m + 4];
+        }
+    }
+    return sxq;
+}
+
+__device__ static inline float sub32_iq4_nl(const uint8_t * row, int s, const float * x) {
+    const uint8_t * b = row + (size_t) s * 18;
+    const float d = h2f(b);
+    const uint8_t * qs = b + 2;
+    float sxq = 0.f;
+    #pragma unroll
+    for (int j = 0; j < 16; ++j) {
+        sxq += (d * (float) kvalues_iq4nl_dev[qs[j] & 0xf]) * x[j +  0];
+        sxq += (d * (float) kvalues_iq4nl_dev[qs[j] >>  4]) * x[j + 16];
+    }
+    return sxq;
+}
+
+__device__ static inline float sub32_iq4_xs(const uint8_t * row, int s, const float * x) {
+    const uint8_t * b = row + (size_t) (s >> 3) * 136;
+    const int j = s & 7;
+    const float d = h2f(b);
+    const uint16_t scales_h = (uint16_t) (b[2] | (b[3] << 8));
+    const uint8_t * scales_l = b + 4;
+    const uint8_t * qs = b + 8;
+    const int ls = ((scales_l[j / 2] >> (4 * (j % 2))) & 0xf)
+                 | (((scales_h >> (2 * j)) & 3) << 4);
+    const float dl = d * (float) (ls - 32);
+    float sxq = 0.f;
+    #pragma unroll
+    for (int m = 0; m < 16; ++m) {
+        sxq += (dl * (float) kvalues_iq4nl_dev[qs[j * 16 + m] & 0xf]) * x[m +  0];
+        sxq += (dl * (float) kvalues_iq4nl_dev[qs[j * 16 + m] >>  4]) * x[m + 16];
+    }
+    return sxq;
+}
+
 __device__ static inline float sub32(int qt, const uint8_t * row, int s, const float * x) {
     switch (qt) {
-        case SB_Q4_K: return sub32_q4_K(row, s, x);
-        case SB_Q5_K: return sub32_q5_K(row, s, x);
-        case SB_Q5_1: return sub32_q5_1(row, s, x);
-        case SB_Q8_0: return sub32_q8_0(row, s, x);
+        case SB_Q4_K:    return sub32_q4_K(row, s, x);
+        case SB_Q5_K:    return sub32_q5_K(row, s, x);
+        case SB_Q5_1:    return sub32_q5_1(row, s, x);
+        case SB_Q8_0:    return sub32_q8_0(row, s, x);
+        case SB_IQ3_XXS: return sub32_iq3_xxs(row, s, x);
+        case SB_IQ4_NL:  return sub32_iq4_nl(row, s, x);
+        case SB_IQ3_S:   return sub32_iq3_s(row, s, x);
+        case SB_IQ2_S:   return sub32_iq2_s(row, s, x);
+        case SB_IQ4_XS:  return sub32_iq4_xs(row, s, x);
+        case SB_Q2_0:    return sub32_q2_0(row, s, x);
     }
     return 0.f;
 }
@@ -715,13 +1124,36 @@ SABAH_API int sabah_rt_init(int device) {
     if (!ck(cudaStreamCreate(&g_copy),    "create copy stream"))    return -1;
     if (!ck(cudaStreamCreate(&g_compute), "create compute stream")) return -1;
     sb_mmid_reset();
+    sb_slab_init(sb_mmid_capacity_bytes());
     static bool registered = false;
     if (!registered) { std::atexit(sb_report_diag); registered = true; }
     return 0;
 }
 
+// --- Pinned host memory pool globals (must precede sb_pinned_pool_destroy) ---
+struct PinnedBlock {
+    void * ptr = nullptr;
+    size_t bytes = 0;
+    int refcount = 0;
+};
+
+static std::mutex g_pinned_mutex;
+static std::vector<PinnedBlock> g_pinned_pool;
+
+
+static void sb_pinned_pool_destroy() {
+    std::lock_guard<std::mutex> lock(g_pinned_mutex);
+    for (auto & blk : g_pinned_pool) {
+        if (blk.ptr) cudaFreeHost(blk.ptr);
+    }
+    g_pinned_pool.clear();
+}
+
+
 SABAH_API int sabah_rt_shutdown(void) {
     sb_mmid_reset();
+    sb_slab_destroy();
+    sb_pinned_pool_destroy();
     if (g_copy)    { cudaStreamDestroy(g_copy);    g_copy = 0; }
     if (g_compute) { cudaStreamDestroy(g_compute); g_compute = 0; }
     return 0;
@@ -740,12 +1172,51 @@ SABAH_API void * sabah_dev_alloc(size_t bytes) {
 }
 SABAH_API void sabah_dev_free(void * p) { if (p) cudaFree(p); }
 
+// --- Pinned host memory pool with reference counting -------------------------
+// Avoids "resource already mapped" by reusing allocations and only freeing
+// when the last reference is released.
 SABAH_API void * sabah_host_alloc(size_t bytes) {
+    std::lock_guard<std::mutex> lock(g_pinned_mutex);
+    // Find a free block of sufficient size
+    for (auto & blk : g_pinned_pool) {
+        if (blk.refcount == 0 && blk.bytes >= bytes) {
+            blk.refcount = 1;
+            return blk.ptr;
+        }
+    }
+    // Allocate new
     void * p = 0;
     if (!ck(cudaHostAlloc(&p, bytes, cudaHostAllocDefault), "cudaHostAlloc")) return 0;
+    g_pinned_pool.push_back({ p, bytes, 1 });
     return p;
 }
-SABAH_API void sabah_host_free(void * p) { if (p) cudaFreeHost(p); }
+
+SABAH_API void sabah_host_free(void * p) {
+    if (!p) return;
+    std::lock_guard<std::mutex> lock(g_pinned_mutex);
+    for (auto & blk : g_pinned_pool) {
+        if (blk.ptr == p) {
+            if (blk.refcount > 0) blk.refcount--;
+            // Note: we keep the allocation in the pool for reuse.
+            // Actual cudaFreeHost happens at shutdown.
+            return;
+        }
+    }
+    // Not from pool — fall back to direct free (should not happen in normal use)
+    cudaFreeHost(p);
+}
+
+// Register already-allocated host memory as pinned (for async DMA)
+// The pointer must be aligned to 256 bytes and size multiple of 256 for best perf.
+// We use cudaHostRegisterDefault which allows the memory to be used with any stream.
+SABAH_API int sabah_host_register(void * ptr, size_t bytes) {
+    return ck(cudaHostRegister(ptr, bytes, cudaHostRegisterDefault),
+              "cudaHostRegister") ? 0 : -1;
+}
+
+SABAH_API int sabah_host_unregister(void * ptr) {
+    return ck(cudaHostUnregister(ptr), "cudaHostUnregister") ? 0 : -1;
+}
 
 SABAH_API int sabah_dev_mem(size_t * freeb, size_t * totalb) {
     return ck(cudaMemGetInfo(freeb, totalb), "cudaMemGetInfo") ? 0 : -1;
@@ -781,6 +1252,13 @@ SABAH_API int  sabah_event_record_compute(void * ev) {
 }
 SABAH_API int  sabah_compute_wait_event(void * ev) {
     return ck(cudaStreamWaitEvent(g_compute, (cudaEvent_t) ev, 0), "streamWaitEvent") ? 0 : -1;
+}
+// The mirror of the above: make the COPY stream wait for a compute-stream
+// event. Needed when a VRAM slot is about to be overwritten and a kernel that
+// still reads it has been submitted but not necessarily executed. This is the
+// precise alternative to draining the whole compute stream on every eviction.
+SABAH_API int  sabah_copy_wait_event(void * ev) {
+    return ck(cudaStreamWaitEvent(g_copy, (cudaEvent_t) ev, 0), "copyStreamWaitEvent") ? 0 : -1;
 }
 SABAH_API float sabah_event_elapsed_ms(void * a, void * b) {
     float ms = -1.f;
@@ -1003,7 +1481,13 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
             "Sabah router id download")) {
         return -1;
     }
-    if (!ck(cudaStreamSynchronize(compute_stream), "Sabah router id synchronize")) {
+    // The host MUST wait: the residency decision below reads `ids_raw` on the
+    // CPU and chooses which experts to fetch. There is no way to overlap this
+    // with the same call's own work, because that work depends on the answer.
+    // (Overlapping it across tokens is the job of the MTP prefetcher, which
+    // predicts ids instead of waiting for them.)
+    if (!ck(cudaStreamSynchronize(compute_stream),
+            "Sabah router id synchronize")) {
         return -1;
     }
 
@@ -1149,5 +1633,19 @@ SABAH_API int sabah_dequant(const void * d_src, float * d_dst,
 }
 
 SABAH_API size_t sabah_row_bytes(int qt, int n) { return sb_row_bytes(qt, n); }
+
+SABAH_API int sabah_slab_init(size_t capacity_bytes) {
+    sb_slab_init(capacity_bytes);
+    return g_slab_base ? 0 : -1;
+}
+SABAH_API void * sabah_slab_alloc(size_t bytes) {
+    return sb_slab_alloc(bytes);
+}
+SABAH_API void sabah_slab_free(void *ptr) {
+    sb_slab_free(ptr);
+}
+SABAH_API void sabah_slab_destroy(void) {
+    sb_slab_destroy();
+}
 
 } // extern "C"

@@ -47,7 +47,7 @@ class ExpertBank:
     ROLES = ("gate", "up", "down")
 
     def __init__(self, model_profile, mode: str = "mmap", blocks=None,
-                 pinned: bool = False):
+                 pinned: bool = False, warm_blocks=None):
         if not model_profile.supported:
             raise ValueError("model is not supported; refusing to build a bank")
         if not model_profile.experts_contiguous:
@@ -59,6 +59,12 @@ class ExpertBank:
         self.mode = mode
         self.pinned = pinned
         self.n_experts = model_profile.n_experts
+        # top-k, i.e. how many experts one token can route to. The hot tier needs
+        # it to guarantee the live working set always fits: reserving prefetch
+        # slots beyond (slots - top-k) would leave a step unable to place the
+        # experts it is about to execute.
+        self.n_experts_used = int(getattr(model_profile, "n_experts_used", 0) or 0)
+        self.warm_blocks = set(warm_blocks or [])
 
         # index: (block, role) -> descriptor
         self.desc = {}
@@ -74,15 +80,21 @@ class ExpertBank:
 
         self._maps = {}
         self._ram = {}
+        self._warm = {}           # (block, role) -> pinned RAM buffer
+        self.warm_loaded_bytes = 0
         self._pinned_ptrs = []
         self._lock = threading.RLock()
         self._ranges = {}
 
         paths = shard_paths(model_profile.path)
+        self._file_handles = {}
         for t in self.desc.values():
             si = t["shard"]
-            if si not in self._maps and si < len(paths):
-                self._maps[si] = np.memmap(paths[si], dtype=np.uint8, mode="r")
+            if si not in self._file_handles and si < len(paths):
+                # Use file handles instead of memmap to avoid committing
+                # the entire multi-GB shard into the pagefile. Read specific
+                # ranges on demand in slice().
+                self._file_handles[si] = open(paths[si], "rb")
 
         for b in self.blocks:
             for e in range(self.n_experts):
@@ -98,6 +110,12 @@ class ExpertBank:
             self._load_ram()
         elif mode != "mmap":
             raise ValueError("mode must be 'mmap' or 'ram'")
+        # A warm tier is opt-in: naming blocks here (or calling load_warm)
+        # pins them, and dot product reads then come from pinned RAM instead of
+        # the page cache or the SSD. `mode="ram"` is the degenerate case where
+        # every block is warm.
+        if self.warm_blocks:
+            self.load_warm()
 
     # ------------------------------------------------------------------
     def qtype(self, block: int, role: str) -> int:
@@ -114,6 +132,17 @@ class ExpertBank:
         bs = self.blocks if blocks is None else blocks
         return sum(self.block_expert_bytes(b) * self.n_experts for b in bs)
 
+    def pinned_block(self, block: int) -> bool:
+        """True if a whole block's experts are readable from PINNED RAM.
+
+        Two ways that happens: the bank was opened with `mode="ram"`, or the
+        block is in the warm tier set by `load_warm`. When it is true a copy can
+        DMA straight out of the bank with no staging hop on the host.
+        """
+        if self.mode == "ram":
+            return all((block, r) in self._ram for r in self.ROLES)
+        return all((block, r) in self._warm for r in self.ROLES)
+
     # ------------------------------------------------------------------
     def slice(self, block: int, expert: int, role: str) -> np.ndarray:
         """A read-only uint8 view of exactly one expert's weight slice."""
@@ -123,16 +152,20 @@ class ExpertBank:
             raise KeyError("unknown expert range block=%s role=%s" % (block, role))
         with self._lock:
             key = (block, role)
-            if self.mode == "ram":
+            if key in self._warm:
+                bufs = self._warm[key]
+                out = bufs[expert]
+            elif self.mode == "ram":
                 buf = self._ram[key]
                 n = self.expert_bytes(block, role)
                 out = buf[expert * n:(expert + 1) * n]
             else:
                 rng = self._ranges[(ExpertId(block, expert), role)]
-                file_map = self._maps[rng.shard]
-                if rng.end > file_map.size:
-                    raise IOError("expert range exceeds shard: %s" % rng)
-                out = file_map[rng.offset:rng.end]
+                fh = self._file_handles[rng.shard]
+                fh.seek(rng.offset)
+                out = np.frombuffer(fh.read(rng.size), dtype=np.uint8)
+                if out.size != rng.size:
+                    raise IOError("short read for expert range: %s" % rng)
             out.setflags(write=False)
             return out
 
@@ -161,19 +194,62 @@ class ExpertBank:
             for r in self.ROLES:
                 t = self.desc[(b, r)]
                 n = int(t["per_expert_bytes"]) * self.n_experts
-                src = self._maps[t["shard"]]
-                off = int(t["offset"])
-                if self.pinned:
-                    p = rt.check_ptr(rt.lib().sabah_host_alloc(n),
-                                     "pinned host alloc %d B" % n)
-                    self._pinned_ptrs.append(p)
-                    buf = np.ctypeslib.as_array(
-                        ctypes.cast(p, ctypes.POINTER(ctypes.c_uint8)), (n,))
-                else:
-                    buf = np.empty(n, dtype=np.uint8)
-                buf[:] = src[off:off + n]
+                fh = self._file_handles[t["shard"]]
+                fh.seek(int(t["offset"]))
+                # Use regular heap memory (not pinned) to avoid CUDA pinned
+                # memory limits on large allocations. Pinned staging happens
+                # per-expert in the hot tier when needed.
+                buf = np.empty(n, dtype=np.uint8)
+                per = int(t["per_expert_bytes"])
+                for e in range(self.n_experts):
+                    chunk = fh.read(per)
+                    if len(chunk) != per:
+                        raise IOError("short read block=%d role=%d expert=%d" % (b, r, e))
+                    buf[e * per:(e + 1) * per] = np.frombuffer(chunk, dtype=np.uint8)
                 self._ram[(b, r)] = buf
         self.loaded_bytes = total
+
+    def load_warm(self, blocks=None) -> int:
+        """Load selected blocks into pinned RAM (the warm tier).
+
+        These blocks are not in VRAM; they exist so a VRAM refill reads pinned
+        RAM instead of the SSD or a page-cache miss. Blocks already pinned are
+        skipped. Returns the number of bytes pinned by THIS call.
+
+        The planner chooses which blocks (`ExecutionPlan.warm_blocks`, smallest
+        blocks first, so the budget covers as many whole blocks as possible).
+        """
+        bs = sorted(blocks or self.warm_blocks or self.blocks)
+        pinned = 0
+        for b in bs:
+            if b not in self.blocks:
+                continue
+            for r in self.ROLES:
+                key = (b, r)
+                if key in self._warm or key in self._ram:
+                    continue
+                t = self.desc[key]
+                per = int(t["per_expert_bytes"])
+                fh = self._file_handles[t["shard"]]
+                fh.seek(int(t["offset"]))
+                # Allocate pinned memory per-expert (2 MB chunks) to stay
+                # within CUDA pinned memory limits instead of one big block.
+                bufs = []
+                for e in range(self.n_experts):
+                    chunk = fh.read(per)
+                    if len(chunk) != per:
+                        raise IOError("short read warm block=%d role=%d expert=%d" % (b, r, e))
+                    p = rt.check_ptr(rt.lib().sabah_host_alloc(per),
+                                     "pinned warm alloc %d B" % per)
+                    self._pinned_ptrs.append(p)
+                    buf = np.ctypeslib.as_array(
+                        ctypes.cast(p, ctypes.POINTER(ctypes.c_uint8)), (per,))
+                    buf[:] = np.frombuffer(chunk, dtype=np.uint8)
+                    bufs.append(buf)
+                    pinned += per
+                self._warm[key] = bufs  # list of per-expert pinned arrays
+        self.warm_loaded_bytes = getattr(self, "warm_loaded_bytes", 0) + pinned
+        return pinned
 
     def close(self):
         with self._lock:
@@ -183,6 +259,12 @@ class ExpertBank:
             self._ram.clear()
             self._maps.clear()
             self._ranges.clear()
+            for fh in self._file_handles.values():
+                try:
+                    fh.close()
+                except OSError:
+                    pass
+            self._file_handles.clear()
 
     def __enter__(self):
         return self

@@ -92,7 +92,31 @@ class MoEExecutor:
             self.bank.qtype(block, "gate"), self.bank.qtype(block, "up"),
             self.bank.qtype(block, "down"), 1 if accumulate else 0),
             "moe_block")
+        # Anchor the "readers of this block's slots" event on the compute
+        # stream, so a later copy into an evicted slot knows exactly what to
+        # wait for (see HotTier.mark_submitted).
+        self.tier.mark_submitted(block)
         self.tier.tel.blocks_executed += 1
+
+    def run_model(self, x, block_plan):
+        """Run all MoE blocks in sequence.
+
+        `block_plan` is a list of (block, ids, weights) tuples. `x` is the
+        d_model input vector; it is updated in place on the device between
+        blocks so no host round-trip occurs between blocks.
+        """
+        self.upload_x(x)
+        for block, ids, weights in block_plan:
+            self.run_block(block, ids, weights, accumulate=False)
+        return self.download_out()
+
+    def prefetch(self, block: int, experts) -> int:
+        """Queue speculative expert copies for `block` (see HotTier.prefetch).
+
+        Pure advice: it never changes which experts run. `run_block` still
+        admits exactly the router's ids.
+        """
+        return self.tier.prefetch(block, experts)
 
     def sync(self):
         rt.check(rt.lib().sabah_sync_compute(), "sync compute")

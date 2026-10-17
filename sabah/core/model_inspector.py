@@ -32,6 +32,18 @@ QUANT_BLOCK = {
     "Q8_0": (32, 34), "IQ4_NL": (32, 18),
     "Q2_K": (256, 84), "Q3_K": (256, 110), "Q4_K": (256, 144),
     "Q5_K": (256, 176), "Q6_K": (256, 210), "Q8_K": (256, 292),
+    "IQ3_XXS": (256, 98), "IQ3_S": (256, 110), "IQ2_S": (256, 82),
+    "IQ4_XS": (256, 136), "Q2_0": (64, 18),
+}
+
+# The expert quant types the CUDA runtime can actually DECODE. QUANT_BLOCK above
+# is a geometry table and is deliberately wider than this; `supported` is gated
+# on this set so a model is never reported runnable when the kernels would
+# silently return zeros. Keep in sync with sb_block_bytes/sub32 in sabah_rt.cu
+# and with rt.QTYPE.
+RUNTIME_QUANTS = {
+    "Q5_1", "Q8_0", "Q4_K", "Q5_K",
+    "IQ3_XXS", "IQ4_NL", "IQ3_S", "IQ2_S", "IQ4_XS", "Q2_0",
 }
 
 
@@ -79,6 +91,14 @@ class ModelProfile:
     per_block_expert_bytes: dict = field(default_factory=dict)
     per_token_expert_bytes: int = 0
     role_bytes: dict = field(default_factory=dict)
+
+    # Per-tensor detail for the two non-expert classes, so the runtime can act
+    # on them without re-walking the GGUF:
+    #   lookup_tensors - row-gathered tables (n-gram / embedding). Never
+    #                    streamed; read one row at a time, stay on disk.
+    #   fixed_tensors  - read every token; the part that must be RESIDENT.
+    fixed_tensors: list = field(default_factory=list)
+    lookup_tensors: list = field(default_factory=list)
 
     experts_contiguous: bool = False
     expert_tensors: list = field(default_factory=list)
@@ -234,6 +254,12 @@ def inspect_model(path: str, verbose: bool = False) -> ModelProfile:
                 all_contig = False
                 prof.notes.append("%s: unknown quant type %s" % (name, t["qtype"]))
                 continue
+            if t["qtype"] not in RUNTIME_QUANTS:
+                all_contig = False
+                prof.notes.append(
+                    "%s: quant type %s is not decodable by Sabah's CUDA runtime"
+                    % (name, t["qtype"]))
+                continue
             elems, blkbytes = shp[0] * shp[1], ebk[1]
             per_expert = elems // ebk[0] * blkbytes
             ok = (elems % ebk[0] == 0 and shp[0] % ebk[0] == 0
@@ -263,10 +289,15 @@ def inspect_model(path: str, verbose: bool = False) -> ModelProfile:
         if name in exp_names:
             roles["routed_experts"] += t["bytes"]
             continue
+        info = dict(name=name, shard=int(t["shard"]), offset=int(t["offset"]),
+                    bytes=int(t["bytes"]), qtype=str(t["qtype"]),
+                    shape=[int(x) for x in t["shape"]])
         if name.startswith("token_embd") or "per_layer_token_embd" in name:
             roles["lookup"] += t["bytes"]; lookup += t["bytes"]
+            prof.lookup_tensors.append(info)
         else:
             roles["fixed"] += t["bytes"]; fixed += t["bytes"]
+            prof.fixed_tensors.append(info)
     prof.fixed_bytes = fixed
     prof.lookup_bytes = lookup
     prof.role_bytes = dict(roles)
@@ -303,6 +334,19 @@ def summarize(prof: ModelProfile) -> str:
           % (prof.per_token_expert_bytes / 1e9))
         a("fixed path : %.4f GB (read every token)" % (prof.fixed_bytes / 1e9))
         a("lookup     : %.4f GB (row gathers, not streamed)" % (prof.lookup_bytes / 1e9))
+        ng = [t for t in prof.lookup_tensors if "per_layer_token_embd" in t["name"]]
+        if ng:
+            rows = []
+            for t in ng:
+                shp = t["shape"]
+                n_rows = shp[1] if len(shp) > 1 else 1
+                rows.append("%s: %d rows x %d B (%.3f GB)"
+                            % (t["name"], n_rows,
+                               t["bytes"] // n_rows if n_rows else t["bytes"],
+                               t["bytes"] / 1e9))
+            a("n-gram tab : %s" % "; ".join(rows))
+        a("fixed tens : %d tensors, resident set"
+          % len(prof.fixed_tensors))
         a("contiguous : %s" % ("YES" if prof.experts_contiguous else "NO"))
     for n in prof.notes:
         a("note       : %s" % n)
