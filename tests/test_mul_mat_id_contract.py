@@ -101,7 +101,12 @@ def test_product_build_has_no_sentinel():
 @needs_gpu
 def test_host_dequant_matches_gguf_py_bit_exactly():
     r = _child("dequant", 1 << 30)
-    assert r["types_checked"] == 4 and r["max_abs_diff"] == 0.0, r
+    # The number of types is a property of the artifact, not of Sabah: 4 for
+    # UD-Q4_K_XL (Q4_K/Q5_K/Q5_1/Q8_0), 6 for GSQ-RCO-IQ3_S (IQ2_S/IQ3_XXS/
+    # IQ3_S/IQ4_XS/IQ4_NL/Q2_0). The invariant is that every type the artifact
+    # exposes dequantizes bit-exactly against gguf-py.
+    assert r["types_checked"] > 0 and r["max_abs_diff"] == 0.0, r
+    assert all(d == 0.0 for d in r["per_type"].values()), r
 
 
 @needs_gpu

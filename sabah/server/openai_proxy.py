@@ -292,6 +292,16 @@ def serve(model: str, host: str = "127.0.0.1", port: int = 8080,
     if fresh:
         hw.save(HW_PATH())
     projection = build_plan(profile, hw, context=context, concurrency=1)
+    # --- apply residency plan: pin fixed path into VRAM + warm tier into RAM ---
+    from sabah.runtime.expert_bank import ExpertBank
+    from sabah.runtime.residency import apply_plan
+    _bank = ExpertBank(profile, mode="mmap", warm_blocks=list(projection.warm_blocks or []))
+    _res = apply_plan(projection, _bank)
+    print("residency : fixed %.3f GB VRAM | warm %d blocks %.3f GB RAM" % (
+        _res["fixed_resident_bytes"] / 1e9,
+        len(_res["warm_blocks"]),
+        _res["warm_bytes"] / 1e9,
+    ))
     if backend == "reference" and not allow_reference:
         raise RuntimeError("backend=reference serves stock llama.cpp expert execution; "
                            "pass --allow-reference to confirm that is intended")

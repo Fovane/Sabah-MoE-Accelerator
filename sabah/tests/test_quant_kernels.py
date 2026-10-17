@@ -22,13 +22,20 @@ import sys
 import ctypes
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-sys.path.insert(0, r"D:/llama-glm53/gguf-py")
+# A gguf-py that knows the newer quant type codes (Q2_0 = 42, ...). The stock
+# pip `gguf` raises on those artifacts, so honour the same override the model
+# inspector uses instead of hard-coding one machine's layout.
+_gguf_py = os.environ.get("SABAH_GGUF_PY") or r"D:/llama-glm53/gguf-py"
+if os.path.isdir(_gguf_py):
+    sys.path.insert(0, _gguf_py)
 
 import numpy as np
 from sabah.runtime import rt
 
-DEFAULT_MODEL = (r"D:/lmstudio/models/qwen/qwen3.8-Flash-Next-MoE/"
-                 r"Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf")
+DEFAULT_MODEL = os.environ.get(
+    "SABAH_TEST_MODEL",
+    r"D:/lmstudio/models/qwen/qwen3.8-Flash-Next-MoE/"
+    r"Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf")
 
 # rows to check per quant type; each row is a full matvec row of the real model
 N_ROWS = 64

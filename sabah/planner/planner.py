@@ -131,6 +131,11 @@ class ExecutionPlan:
 
     ram_bank_resident: bool = False
     ram_bank_bytes: int = 0
+    warm_bytes: int = 0
+    warm_blocks: list = field(default_factory=list)
+
+    fixed_bytes: int = 0
+    fixed_resident: bool = False
 
     hit_rate: float = 0.0
     hit_rate_floor: float = 0.0       # same capacity under static placement
@@ -159,6 +164,29 @@ class ExecutionPlan:
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=1)
+
+
+def _select_warm_blocks(model, warm_bytes: int) -> list:
+    """Pick whole blocks to pin in RAM (the warm tier).
+
+    A block is warm only if all of its experts are pinned, so the choice is
+    "which blocks", not "which experts". Every block runs on every token, so
+    there is no reason to prefer one over another; picking the SMALLEST blocks
+    first maximises the number of blocks the budget covers.
+    """
+    if warm_bytes <= 0:
+        return []
+    per = getattr(model, "per_block_expert_bytes", {}) or {}
+    if not per:
+        return []
+    order = sorted(per, key=lambda b: per[b])
+    out, used = [], 0
+    for b in order:
+        nbytes = int(per[b]) * model.n_experts
+        if used + nbytes <= warm_bytes:
+            out.append(int(b))
+            used += nbytes
+    return sorted(out)
 
 
 def _interp_hit(curve, gb):
@@ -219,8 +247,10 @@ def plan(model, hw, context: int = 8192, concurrency: int = 1,
         d.expert_capacity = max(0, free)
         usable_total += d.expert_capacity
         p.devices.append(d)
-    p.expert_capacity_total = usable_total
-    p.expert_capacity_frac_of_bank = usable_total / bank if bank else 0.0
+    # VRAM can never hold more experts than exist. A device may be able to
+    # spare 400 GB, but the bank is finite, so the resident total is capped.
+    p.expert_capacity_total = min(usable_total, bank) if bank else usable_total
+    p.expert_capacity_frac_of_bank = (p.expert_capacity_total / bank) if bank else 0.0
     p.fixed_replicated = True
 
     # every device must independently hold fixed + kv/workspace
@@ -234,11 +264,31 @@ def plan(model, hw, context: int = 8192, concurrency: int = 1,
     # ---- where does the bank live? ---------------------------------------
     p.ram_bank_bytes = bank
     p.ram_bank_resident = hw.ram_usable >= bank
+    p.fixed_bytes = fixed
+    p.fixed_resident = True
     if not p.ram_bank_resident:
         p.notes.append(
             "expert bank is %.1f GB but only %.1f GB of RAM is usable; the "
             "remainder is served from storage at %.2f GB/s"
             % (bank / 1e9, hw.ram_usable / 1e9, hw.storage_read_gbps or 0.0))
+
+    # ---- warm tier: pinned RAM portion of the bank -----------------------
+    # VRAM is a different resource from RAM, so the VRAM hot tier is NOT
+    # subtracted here. Usable RAM minus a fixed OS reserve is what can be pinned
+    # as expert warm tier, capped at the bank itself.
+    os_reserve = 2 << 30
+    ram_left = max(0, hw.ram_usable - os_reserve)
+    p.warm_bytes = min(ram_left, bank) if not p.ram_bank_resident else 0
+    p.warm_blocks = _select_warm_blocks(model, p.warm_bytes)
+    if p.warm_blocks:
+        p.notes.append(
+            "warm tier: %d of %d blocks (%.1f GB) pinned in RAM; these blocks "
+            "refill VRAM from RAM instead of storage"
+            % (len(p.warm_blocks), model.n_blocks, p.warm_bytes / 1e9))
+    elif p.warm_bytes > 0:
+        p.notes.append(
+            "warm tier budget %.1f GB is smaller than one block; nothing "
+            "pinned" % (p.warm_bytes / 1e9))
 
     # ---- choose execution class ------------------------------------------
     gpu_bw = 0.0
@@ -362,16 +412,14 @@ def plan(model, hw, context: int = 8192, concurrency: int = 1,
         p.projected_speedup_low = p.projected_tok_s_low / p.reference_tok_s_estimate
         p.projected_speedup_high = p.projected_tok_s_high / p.reference_tok_s_estimate
 
-    # Storage-backed mode is a correctness/development fallback.  Its simple
-    # ratio can look positive against a very weak CPU reference while still
-    # being dominated by page faults and disk reads, so it must never be
-    # presented as a recommended acceleration plan without a measured
-    # full-model result.
-    if p.exec_class == ExecClass.STORAGE_BACKED:
+    # Storage-backed mode can still be accelerated when a warm tier (pinned
+    # RAM) absorbs most VRAM refills. Apply the same 1.10x bar as other modes.
+    if p.exec_class == ExecClass.STORAGE_BACKED and p.warm_bytes == 0:
         p.recommended = False
         p.notes.append(
-            "storage-backed mode is for correctness/development; acceleration "
-            "is not recommended until a full-model measurement exists")
+            "storage-backed mode without warm tier is for correctness/"
+            "development; acceleration is not recommended until a full-model "
+            "measurement exists")
     else:
         p.recommended = p.projected_speedup_low >= 1.10
     if p.projected_tok_s_high < 5.0:
@@ -416,8 +464,18 @@ def summarize(p: ExecutionPlan) -> str:
               % (d.index, d.name[:30], d.expert_capacity / 1e9, d.vram_usable / 1e9))
     a("expert tier: %.2f GB total = %.1f%% of the bank"
       % (p.expert_capacity_total / 1e9, 100 * p.expert_capacity_frac_of_bank))
+    a("fixed path : %.2f GB %s" % (p.fixed_bytes / 1e9,
+      "resident in VRAM" if p.fixed_resident else "NOT resident"))
     a("ram bank   : %s (%.1f GB)"
       % ("resident" if p.ram_bank_resident else "DOES NOT FIT", p.ram_bank_bytes / 1e9))
+    if p.warm_blocks:
+        a("warm tier  : %.2f GB pinned for %d block(s): %s"
+          % (p.warm_bytes / 1e9, len(p.warm_blocks),
+             "%d..%d" % (p.warm_blocks[0], p.warm_blocks[-1])
+             if len(p.warm_blocks) > 1 else str(p.warm_blocks[0])))
+    elif p.warm_bytes > 0:
+        a("warm tier  : %.2f GB budget (below one block; unused)"
+          % (p.warm_bytes / 1e9))
     a("hit rate   : %.4f  [%s]" % (p.hit_rate, p.hit_rate_source))
     if p.hit_rate_floor and p.hit_rate_floor < p.hit_rate:
         a("             (%.4f static / %.4f LRU: the spread between them is "

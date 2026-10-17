@@ -17,11 +17,18 @@ import platform
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ggml type codes, so a Sabah trace and a llama.cpp trace mean the same thing
-QTYPE = {"Q5_1": 7, "Q8_0": 8, "Q4_K": 12, "Q5_K": 13}
+QTYPE = {
+    "Q5_1": 7, "Q8_0": 8, "Q4_K": 12, "Q5_K": 13,
+    "IQ3_XXS": 18, "IQ4_NL": 20, "IQ3_S": 21, "IQ2_S": 22, "IQ4_XS": 23, "Q2_0": 42,
+}
 QTYPE_NAME = {v: k for k, v in QTYPE.items()}
 
 # (elements per block, bytes per block) - asserted against the model on load
-QBLOCK = {7: (32, 24), 8: (32, 34), 12: (256, 144), 13: (256, 176)}
+QBLOCK = {
+    7: (32, 24), 8: (32, 34), 12: (256, 144), 13: (256, 176),
+    18: (256, 98), 20: (32, 18), 21: (256, 110), 22: (256, 82),
+    23: (256, 136), 42: (64, 18),
+}
 
 
 class RuntimeUnavailable(Exception):
@@ -80,6 +87,7 @@ def lib():
         "sabah_event_record_copy":    ([c_vp], ctypes.c_int),
         "sabah_event_record_compute": ([c_vp], ctypes.c_int),
         "sabah_compute_wait_event":   ([c_vp], ctypes.c_int),
+        "sabah_copy_wait_event":      ([c_vp], ctypes.c_int),
         "sabah_event_elapsed_ms": ([c_vp, c_vp], ctypes.c_float),
         "sabah_event_sync":       ([c_vp], ctypes.c_int),
         "sabah_event_query":      ([c_vp], ctypes.c_int),
@@ -93,6 +101,10 @@ def lib():
         "sabah_dequant":          ([c_vp, c_vp, ctypes.c_int, ctypes.c_int,
                                     ctypes.c_int], ctypes.c_int),
         "sabah_row_bytes":        ([ctypes.c_int, ctypes.c_int], c_sz),
+        "sabah_slab_init":        ([c_sz], ctypes.c_int),
+        "sabah_slab_alloc":       ([c_sz], c_vp),
+        "sabah_slab_free":        ([c_vp], None),
+        "sabah_slab_destroy":     ([], None),
     }
     for name, (argt, rest) in sig.items():
         fn = getattr(L, name)
@@ -143,3 +155,42 @@ def device_count() -> int:
         return int(lib().sabah_rt_device_count())
     except RuntimeUnavailable:
         return 0
+
+
+def slab_init(capacity_bytes: int) -> int:
+    return check(lib().sabah_slab_init(ctypes.c_size_t(capacity_bytes)), "slab init")
+
+
+def slab_alloc(bytes_: int) -> int:
+    return check_ptr(lib().sabah_slab_alloc(ctypes.c_size_t(bytes_)), "slab alloc")
+
+
+def slab_free(ptr: int) -> None:
+    # sabah_slab_free returns void, so there is no status to check.
+    lib().sabah_slab_free(ctypes.c_void_p(ptr))
+
+
+def slab_destroy() -> None:
+    # Releases the pool so a later slab_init() can size it again. Also a `void`
+    # entry point: releasing a slab that was never taken is not an error.
+    lib().sabah_slab_destroy()
+
+
+def host_register(ptr: int, bytes_: int) -> int:
+    """Register host memory as pinned for async DMA.
+
+    The memory must be allocated with sufficient alignment (256 bytes).
+    Returns 0 on success, raises SabahCudaError on failure.
+    """
+    return check(lib().sabah_host_register(ctypes.c_void_p(ptr), ctypes.c_size_t(bytes_)),
+                 "host_register")
+
+
+def host_unregister(ptr) -> int:
+    """Unregister previously pinned host memory.
+
+    Accepts either an integer address or a ctypes.c_void_p object.
+    """
+    if isinstance(ptr, ctypes.c_void_p):
+        ptr = ptr.value
+    return check(lib().sabah_host_unregister(ctypes.c_void_p(ptr)), "host_unregister")

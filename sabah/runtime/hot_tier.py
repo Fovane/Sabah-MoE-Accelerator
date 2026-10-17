@@ -68,6 +68,8 @@ class Telemetry:
         self.host_stage_ms = 0.0      # backing store -> pinned staging, on the
                                       # calling thread, i.e. on the critical path
         self.host_stage_bytes = 0
+        self.prefetch_issued = 0
+        self.prefetch_hits = 0
         self.per_block = collections.defaultdict(lambda: {
             "requests": 0, "hits": 0, "misses": 0, "bytes_fetched": 0,
         })
@@ -95,6 +97,8 @@ class Telemetry:
                     gpu_wait_expert_ms=round(self.gpu_wait_expert_ms, 3),
                     host_stage_ms=round(self.host_stage_ms, 3),
                     host_stage_bytes=self.host_stage_bytes,
+                    prefetch_issued=self.prefetch_issued,
+                    prefetch_hits=self.prefetch_hits,
                     blocks_executed=self.blocks_executed,
                     tokens=self.tokens,
                     per_block={str(block): dict(values)
@@ -127,6 +131,7 @@ class BlockPool:
         self.expert_of = {}                   # slot -> expert
         self.state = {}                       # expert -> state
         self.lru = collections.OrderedDict()  # expert -> None, oldest first
+        self.inflight = {}                    # expert -> copy event, in flight
 
     def slot_ptr(self, slot: int, role: str) -> int:
         return self.base + slot * self.slot_bytes + self.role_offsets[role]
@@ -144,7 +149,7 @@ class HotTier:
     """VRAM residency across all resident blocks of one device."""
 
     def __init__(self, bank, capacity_bytes: int, blocks=None,
-                 device: int = 0):
+                 device: int = 0, prefetch_slots: int = 0):
         self.bank = bank
         self.device = device
         self.tel = Telemetry()
@@ -170,6 +175,17 @@ class HotTier:
 
         self.slots_per_block = slots_each
         self.capacity_bytes = sum(p.bytes_used() for p in self.pools.values())
+        # Slots kept free for prefetch (advice), so a prefetch never has to
+        # evict something the current step may still read. 0 = prefetch off.
+        #
+        # Clamped so the live working set always fits: a single step routes to
+        # top-k experts and every one of them must be resident at the same time,
+        # so reserving more than slots_each - top_k would make the step
+        # unservable ("every slot is protected this step"). Prefetch is advice,
+        # so the tier degrades to fewer (or zero) reserved slots instead of
+        # failing the engine.
+        live = int(getattr(bank, "n_experts_used", 0) or 0)
+        self.prefetch_slots = max(0, min(int(prefetch_slots), slots_each - live))
 
         # ---- pinned staging ring ------------------------------------------
         # Each staging buffer carries its own event, so reusing one waits for
@@ -191,11 +207,24 @@ class HotTier:
         self._stage_i = 0
         self._stage_inflight = [False] * STAGING_SLOTS
 
+        # ---- per-transfer events -------------------------------------------
+        # Every miss and every prefetch gets its own completion event, so the
+        # compute stream can wait on exactly the copies it needs instead of
+        # draining the copy stream. Events are pooled; the pool never grows
+        # beyond the number of simultaneously-outstanding transfers.
+        self._ev_free = []
+        self._ev_all = []
+        # One "slot readers are done" event per block, recorded on the compute
+        # stream right after that block's kernel is submitted. Before any copy
+        # overwrites a slot, the copy stream waits on it -- the precise
+        # dependency that replaces draining the whole compute stream on every
+        # eviction. See `mark_submitted`.
+        self._read_ev = {}
+
         # ---- stall measurement ---------------------------------------------
         # A ring of event PAIRS recorded on the compute stream. Reading elapsed
         # time synchronises, so nothing is read during the run: pairs are
         # drained afterwards. Measuring the stall must not create one.
-        self._ev_fetch = rt.check_ptr(rt.lib().sabah_event_create(), "fetch event")
         self._stall_ring = []
         if slots_each > 0:
             for _ in range(STALL_RING):
@@ -204,7 +233,6 @@ class HotTier:
                     rt.check_ptr(rt.lib().sabah_event_create(), "wait-end event")))
         self._stall_i = 0
         self._stall_pending = 0
-        self._last_compute_submission = False
 
     # ------------------------------------------------------------------
     def state_of(self, block: int, expert: int) -> str:
@@ -256,19 +284,60 @@ class HotTier:
             self._stage_inflight[i] = False
         return i, self._stage[i]
 
-    def _fetch_async(self, block: int, expert: int, slot: int):
-        """mmap/RAM -> pinned staging -> one contiguous async H2D.
+    def _ev_get(self):
+        if self._ev_free:
+            return self._ev_free.pop()
+        ev = rt.check_ptr(rt.lib().sabah_event_create(), "transfer event")
+        self._ev_all.append(ev)
+        return ev
 
-        gate|up|down are adjacent in both the staging buffer and the VRAM
-        slot, so a miss costs exactly one transfer, not three."""
+    def _ev_put(self, ev):
+        self._ev_free.append(ev)
+
+    def mark_submitted(self, block: int):
+        """Record that `block`'s kernel is now enqueued on the compute stream.
+
+        The executor calls this right after submitting `sabah_moe_block`. It
+        anchors the event that every later copy into this block's slots waits on
+        (`_start_copy`), so a slot is never overwritten while a submitted kernel
+        reads it -- without draining the compute stream.
+        """
+        ev = self._read_ev.get(block)
+        if ev is None:
+            ev = rt.check_ptr(rt.lib().sabah_event_create(), "block read event")
+            self._read_ev[block] = ev
+        rt.check(rt.lib().sabah_event_record_compute(ctypes.c_void_p(ev)),
+                 "record block read event")
+
+    def _start_copy(self, block: int, expert: int, slot: int) -> int:
+        """Start the expert->VRAM copy on the copy stream.
+
+        Returns a completion event recorded AFTER the copy. The caller decides
+        when to make the compute stream wait on it; a prefetch can hold it, a
+        miss waits immediately. gate|up|down are adjacent in both the staging
+        buffer and the VRAM slot, so a miss costs one contiguous transfer, not
+        three -- except in direct-DMA mode, where the three live tensors are
+        read in place and cost three transfers.
+        """
         p = self.pools[block]
         L = rt.lib()
 
-        if self._direct:
-            # The bank already lives in pinned RAM, so the DMA engine can read
-            # it in place. There is no staging copy to pay for; the cost is
-            # three transfers instead of one, because gate/up/down are separate
-            # tensors in the artifact and stay separate in the bank.
+        # Ordering: a copy must never overwrite a slot that a *submitted* kernel
+        # may still be reading. The block's read event was recorded on the
+        # compute stream right after that kernel, so waiting on it here is the
+        # exact dependency -- not a full compute-stream drain.
+        rv = self._read_ev.get(block)
+        if rv is not None:
+            rt.check(L.sabah_copy_wait_event(ctypes.c_void_p(rv)), "copy wait read")
+
+        # If this block's experts already live in PINNED RAM -- either the whole
+        # bank was opened mode="ram", or a warm tier pinned this block -- the DMA
+        # engine can read them in place. There is no staging copy to pay for, so
+        # the warm tier removes the host hop as well as the SSD read.
+        pinned_block = getattr(self.bank, "pinned_block", None)
+        direct = self._direct or (pinned_block is not None
+                                  and bool(pinned_block(block)))
+        if direct:
             n = 0
             for r in self.bank.ROLES:
                 src = self.bank.slice(block, expert, r)
@@ -277,8 +346,11 @@ class HotTier:
                     src.ctypes.data_as(ctypes.c_void_p), src.nbytes),
                     "expert h2d async (direct)")
                 n += src.nbytes
+            ev = self._ev_get()
+            rt.check(L.sabah_event_record_copy(ctypes.c_void_p(ev)),
+                     "record fetch event")
             self.tel.bytes_fetched += n
-            return
+            return ev
 
         si, stage = self._acquire_stage()
         dst = np.ctypeslib.as_array(
@@ -293,10 +365,18 @@ class HotTier:
         self.tel.host_stage_bytes += o
         rt.check(L.sabah_h2d_async(ctypes.c_void_p(p.slot_ptr(slot, self.bank.ROLES[0])),
                                    ctypes.c_void_p(stage), o), "expert h2d async")
+        # Two records, deliberately: the staging buffer must not be overwritten
+        # until ITS copy lands (that is `_stage_ev`, checked in _acquire_stage),
+        # and the compute stream must not read the slot until the same copy
+        # lands (that is the pooled event, waited on where it is needed).
         rt.check(L.sabah_event_record_copy(ctypes.c_void_p(self._stage_ev[si])),
                  "record staging event")
         self._stage_inflight[si] = True
+        ev = self._ev_get()
+        rt.check(L.sabah_event_record_copy(ctypes.c_void_p(ev)),
+                 "record fetch event")
         self.tel.bytes_fetched += o
+        return ev
 
     # ------------------------------------------------------------------
     def ensure(self, block: int, experts) -> list:
@@ -324,9 +404,21 @@ class HotTier:
                 "Sabah will not drop an expert to make it fit"
                 % (block, len(set(want)), p.n_slots))
 
+        L = rt.lib()
         misses = []
         for e in want:
             if e in p.slot_of:
+                if e in p.inflight:
+                    # A prefetch already copied (or is copying) this expert's
+                    # bytes. It is only safe to use once the copy lands, so the
+                    # compute stream waits on that transfer's own event. This is
+                    # still a hit: the router asked and got its exact expert.
+                    ev = p.inflight.pop(e)
+                    rt.check(L.sabah_compute_wait_event(ctypes.c_void_p(ev)),
+                             "prefetch wait")
+                    self._ev_put(ev)
+                    p.state[e] = GPU_RESIDENT
+                    self.tel.prefetch_hits += 1
                 self.tel.hits += 1
                 self.tel.per_block[block]["hits"] += 1
                 p.lru.move_to_end(e)
@@ -344,46 +436,80 @@ class HotTier:
 
         # protect everything needed this step from eviction
         protected = set(want)
+        miss_events = []
         for e in dict.fromkeys(misses):
             if p.free_slots:
                 slot = p.free_slots.pop(0)
             else:
-                # The previous compute submission may still be reading the
-                # victim slot.  Overwriting it before that work completes is
-                # a silent correctness bug.  This conservative synchronization
-                # is only needed on an actual eviction; it is preferable to
-                # an occasional wrong token and can later be replaced by
-                # per-slot CUDA fences without changing the contract.
-                if self._last_compute_submission:
-                    rt.check(rt.lib().sabah_sync_compute(),
-                             "sync before expert eviction")
-                    self._last_compute_submission = False
                 slot = self._evict(p, protected)
             p.slot_of[e] = slot
             p.expert_of[slot] = e
             p.state[e] = TRANSFERRING
             p.lru[e] = None
-            self._fetch_async(block, e, slot)
+            miss_events.append(self._start_copy(block, e, slot))
             self.tel.per_block[block]["bytes_fetched"] += self.bank.block_expert_bytes(block)
 
+        # Keep the prefetch reserve free: shed the oldest non-protected entries
+        # so the next prefetch has somewhere to land without evicting live work.
+        reserve = min(self.prefetch_slots, max(0, p.n_slots - len(protected)))
+        soft_cap = p.n_slots - reserve
+        while len(p.slot_of) > soft_cap:
+            try:
+                self._evict(p, protected)
+            except RuntimeError:
+                break
+
         if misses:
-            L = rt.lib()
-            ev = ctypes.c_void_p(self._ev_fetch)
             w0, w1 = self._stall_ring[self._stall_i]
             if self._stall_pending >= len(self._stall_ring):
                 self.drain_stalls()
                 w0, w1 = self._stall_ring[self._stall_i]
-            rt.check(L.sabah_event_record_copy(ev), "record fetch")
             rt.check(L.sabah_event_record_compute(ctypes.c_void_p(w0)), "record wait0")
-            rt.check(L.sabah_compute_wait_event(ev), "compute wait")
+            for ev in miss_events:
+                rt.check(L.sabah_compute_wait_event(ctypes.c_void_p(ev)),
+                         "compute wait")
+                self._ev_put(ev)
             rt.check(L.sabah_event_record_compute(ctypes.c_void_p(w1)), "record wait1")
             self._stall_i = (self._stall_i + 1) % len(self._stall_ring)
             self._stall_pending += 1
             for e in misses:
                 p.state[e] = GPU_RESIDENT
-            self._last_compute_submission = True
 
         return [p.slot_of[e] for e in want]
+
+    # ------------------------------------------------------------------
+    def prefetch(self, block: int, experts) -> int:
+        """Warm the tier with experts the router has NOT asked for yet.
+
+        This is ADVICE, and it is fenced as such: it only ever fills slots that
+        are already free (the reserve `_ensure_locked` keeps open), never evicts
+        a slot that submitted or upcoming work may read, and never changes which
+        expert runs. If the prediction is wrong the bytes are simply evicted
+        later; if capacity is short the call is a no-op.
+
+        Returns how many experts were queued.
+        """
+        with self._lock:
+            p = self.pools[block]
+            if p.n_slots == 0 or self.prefetch_slots <= 0:
+                return 0
+            n = 0
+            for e in dict.fromkeys(int(x) for x in experts):
+                if e in p.slot_of:
+                    if e not in p.inflight:
+                        p.lru.move_to_end(e)
+                    continue
+                if not p.free_slots:
+                    break
+                slot = p.free_slots.pop(0)
+                p.slot_of[e] = slot
+                p.expert_of[slot] = e
+                p.state[e] = TRANSFERRING
+                p.lru[e] = None
+                p.inflight[e] = self._start_copy(block, e, slot)
+                n += 1
+            self.tel.prefetch_issued += n
+            return n
 
     def drain_stalls(self):
         """Read back the recorded stall intervals.
@@ -404,6 +530,8 @@ class HotTier:
         for e in list(p.lru):
             if e in protected:
                 continue
+            if e in p.inflight:
+                self._ev_put(p.inflight.pop(e))
             p.state[e] = EVICT_PENDING
             slot = p.slot_of.pop(e)
             p.expert_of.pop(slot, None)
@@ -425,20 +553,26 @@ class HotTier:
                 p.free()
             for s in self._stage:
                 L.sabah_host_free(ctypes.c_void_p(s))
-            evs = list(self._stage_ev) + [self._ev_fetch]
+            evs = list(self._stage_ev) + list(self._ev_all) \
+                + list(self._read_ev.values())
             for a, b in self._stall_ring:
                 evs += [a, b]
             for ev in evs:
                 L.sabah_event_destroy(ctypes.c_void_p(ev))
             self._stage = []
             self._stage_ev = []
+            self._ev_free = []
+            self._ev_all = []
+            self._read_ev = {}
             self._stall_ring = []
 
     def describe(self) -> str:
         return ("hot tier   : %d blocks x %d slots = %.3f GB VRAM\n"
                 "slot size  : %s bytes (gate|up|down contiguous)\n"
-                "coverage   : %.1f%% of those blocks' experts"
+                "coverage   : %.1f%% of those blocks' experts\n"
+                "prefetch   : %d slot(s) reserved per block"
                 % (len(self.blocks), self.slots_per_block,
                    self.capacity_bytes / 1e9,
                    "{:,}".format(self.pools[self.blocks[0]].slot_bytes) if self.blocks else 0,
-                   100.0 * self.slots_per_block / max(1, self.bank.n_experts)))
+                   100.0 * self.slots_per_block / max(1, self.bank.n_experts),
+                   self.prefetch_slots))
