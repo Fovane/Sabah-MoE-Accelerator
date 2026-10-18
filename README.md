@@ -277,7 +277,17 @@ llama-sabah-diag.exe `
 `llama-sabah-diag` is the measurement driver from patch `0002`. The bridge lives
 in `ggml-cuda`, so any llama.cpp binary loads it: `llama-cli` runs this model end
 to end as well (verified — `EXITCODE=0`, zero mapped fallbacks, generated text,
-~27 GB streamed for the same prompt).
+~27 GB streamed for the same prompt), and so does `llama-server`, which is how a
+client reaches this model over HTTP.
+
+`-c 512` above is deliberate, not an oversight. The KV cache and the expert slab
+are paid from the same 16.31 GB, and at `-c 32768` a 9.8 GB slab has ~0.4 GB of
+headroom left: the run aborts with `SABAH_LLAMA could not execute the
+host-backed exact expert operation` / `Sabah over-budget expert: out of memory`
+once the tier's documented over-budget allocation has no VRAM to take. Both
+sides of that trade, measured, are in
+[`docs/CONTEXT_VRAM.md`](docs/CONTEXT_VRAM.md) — 32K works with an 8.0 GB slab or
+with `-ub 8`.
 
 Two things to know when reproducing:
 
@@ -402,6 +412,7 @@ New IQ quant types implemented along the way, validated bit-exact against the
 | [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md) | the three decode regimes (fill / warm-up / steady state), phase attribution, the no-disk floor, lever verdicts |
 | [`docs/SECOND_TIER.md`](docs/SECOND_TIER.md) | lever 5 measured: what a second tier actually costs per expert on this rig |
 | [`docs/LOCALITY_FINDINGS.md`](docs/LOCALITY_FINDINGS.md) | hit-rate and Belady measurements behind the slab size |
+| [`docs/CONTEXT_VRAM.md`](docs/CONTEXT_VRAM.md) | context vs the expert slab: what 32K costs, the over-budget abort it can cause, and the working configurations found |
 | [`patches/llama.cpp/README.md`](patches/llama.cpp/README.md) | bridge semantics, ABI, every environment variable |
 | [`docs/ACCEL_LAYERS.md`](docs/ACCEL_LAYERS.md) | the A-D acceleration layers of the research harness |
 | [`docs/V1_CORRECTNESS_CONTRACT.md`](docs/V1_CORRECTNESS_CONTRACT.md) | the correctness contract and its evidence |

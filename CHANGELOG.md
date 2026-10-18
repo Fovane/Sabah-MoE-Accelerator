@@ -73,6 +73,24 @@ here changes how experts are routed.
   the repository, never the registry, and never opens a model. `build_dll.bat`
   gained the same `vswhere` fallback, so it no longer assumes a specific Visual
   Studio edition.
+- **Context size and the expert slab compete for the same VRAM, and at 32K the
+  losing side is an abort, not a slow token.** `-c 32768` with the 9.8 GB slab
+  loads and survives a one-token decode (peak 15,892 of 16,311 MiB), then dies
+  once a longer run needs the tier's *documented* over-budget allocation: the
+  slab is full, the extra `cudaMalloc` for that expert has no device memory left,
+  the call returns null and the bridge aborts the process (`0xC0000409`,
+  `Sabah over-budget expert: out of memory`). Reproduced 3 of 3 times, in the
+  diag and in `llama-server`; the `overflow` counter shows the tier was already
+  past its budget (485) when it failed. The context itself is cheap — ~0.5 GB of
+  KV at 32K for this model, not the 3.22 GB the all-layer header arithmetic gives
+  — it is the ~0.4 GB of headroom that is not. `-c 32768` works with an 8.0 GB
+  slab, or with `-ub 8`. The measured peak table, the failure's evidence, and the
+  `llama-server` HTTP path (which answers `/v1/chat/completions` once the ubatch
+  is bounded, and matches the diag's own rate at the same length) are in
+  `docs/CONTEXT_VRAM.md`. Writing it also re-measured a trap the harness was
+  fixed for: `sabah serve` sets `SABAH_LLAMA_STATUS_FILE` unconditionally
+  (`openai_proxy.py:273`), which costs ~0.3 s per token, so the same server
+  request reports 2.04 tok/s with that file set and 5.16 tok/s without it.
 
 ## Unreleased — acceleration layers
 
