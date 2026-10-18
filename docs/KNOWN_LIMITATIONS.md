@@ -10,6 +10,12 @@
 - No end-to-end speedup has been measured on any machine.
 - Multi-GPU H2D aggregate, contention and fixed-path sharding are
   UNVALIDATED; all multi-GPU figures are PROJECTED.
+- **Context and the expert slab compete for the same VRAM, and losing is an
+  abort, not a slow token.** At `-c 32768` a 9.8 GB slab leaves ~0.4 GB of
+  headroom; the tier's documented over-budget allocation then has no device
+  memory to take, the call returns null and the process aborts (`0xC0000409`,
+  reproduced 3 of 3). Measured working configurations — 32K with an 8.0 GB slab,
+  or with `-ub 8` — are in [`docs/CONTEXT_VRAM.md`](CONTEXT_VRAM.md).
 
 ## Correctness scope
 
@@ -40,6 +46,11 @@
 - Sabah executes decode steps only with `GGML_OP_OFFLOAD_MIN_BATCH=1`, which
   `sabah serve` sets. With llama.cpp's default (32), small batches run on the
   CPU and never reach Sabah.
+- The HTTP path is `llama-server` with the bridge loaded — the same backend
+  `sabah serve` spawns — but it was only exercised at 31-64 generated tokens,
+  i.e. inside the warm-up regime, and `sabah serve` itself did not come up on
+  this artifact (its `gguf-py` rejects the quant type, then the warm-RAM planner
+  fails to pin host memory). See [`docs/CONTEXT_VRAM.md`](CONTEXT_VRAM.md).
 - `--validate` (float64 self-check, byte verification) is much slower and is
   meant for verification, not use.
 - The 77 GB expert bank does not fit in the validation machine's RAM; the
