@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased — the streaming path, measured per regime
+
+Measurement, one new command, and a runtime bug the new command found. Nothing
+here changes how experts are routed.
+
+- **The decode number this project quoted was a warm-up artifact.** A generation
+  has three regimes, and differencing `-n 32` and `-n 8` prices only the middle
+  one. Measured on the reference rig: the fill (`-p "Hello"` is 53 templated
+  tokens, but the 11.3 s is the expert tier's cold fill, 12.68 GB at 1.11 GB/s,
+  not prompt processing), the warm-up (~128 decodes, 70.6 MB/token of disk,
+  median 79 ms at step 128), and the steady state (**67 ms/token = ~15 tok/s**,
+  3.0 MB/token, the disk effectively idle). A 256-token answer is 7.0 tok/s end
+  to end. `docs/DECODE_BUDGET.md` now reports all three separately, because
+  averaging them is how the project came to quote 4.84 tok/s.
+- **One-command harness** (`sabah/tools/stream.py`, `sabah/tools/cli.py`):
+  `sabah run` drives the shipped streaming path and splits its own per-step times
+  into fill / warm-up / steady state; `sabah matrix` regenerates
+  `results/matrix.json`; `sabah gate` runs the correctness switches as a
+  pass/fail gate. The gate's checks are pure functions (`gate_checks`,
+  `gate_notes`), so they are unit-tested offline (10 tests, no GPU needed).
+- **Fixed: every process that used the direct I/O wave pool fast-failed at
+  exit.** `0xC0000409` (STATUS_STACK_BUFFER_OVERRUN/`__fastfail`) after the run
+  had completed and its trace had been written. The pool's workers live in a
+  `static std::vector<std::thread>` and nothing joined them, so the vector's
+  destructor at process exit called `std::terminate` -> `abort`. The container is
+  now heap-allocated and deliberately never destroyed — the workers are parked on
+  a condition variable and the process reclaims them - and `sabah_rt_shutdown`
+  joins them properly for a host that unloads the DLL. The pool is restartable
+  now instead of `std::call_once`-once-only, so shutdown no longer costs a
+  process its wave readers. Found by `sabah gate`, the first thing in this
+  project that checked the exit code; the fix leaves the counters byte-identical
+  (`reads=20362 bytes=13794278400` before and after). The CUDA runtime has to be
+  rebuilt for it to take effect (`sabah/runtime/cuda/build_dll.bat sm_120`).
+- **Fixed: the gate called `overflow` "an expert id escaped the model" and failed
+  on it.** `overflow` counts over-budget expert allocations — the documented
+  behaviour when every eviction candidate is still referenced by the call in
+  flight, so the tier allocates past its budget rather than dangle a pointer. The
+  routed result stays exact, which is what the byte comparison proves. Measured:
+  448 over-budget allocations alongside 2000 ok / 0 fail verifications. The
+  counter is now reported, not gated.
+- **The verification oracle can be stale while the runtime is not, and now it
+  says so.** The oracle byte-compares the served expert against the OS mapping of
+  the GGUF, i.e. the page cache; the runtime reads the same file with
+  `FILE_FLAG_NO_BUFFERING`, which the cache cannot answer. Those two disagreed by
+  10 bytes of one 921600-byte expert (offset 1,367,138,304 of shard 1), the same
+  10 bytes in three consecutive runs, at I/O depth 1, at one worker and at depth
+  2 - so not a staging race. It reproduced outside the runtime entirely, with a
+  buffered `read()` against an unbuffered `ReadFile` of that range, and it was
+  gone on the next run of the same binary. A verification failure therefore now
+  prints what it needs for that comparison: `SABAH_VERIFY_MISMATCH` carries the
+  byte count, the number of differing bytes, the first differing positions and the
+  resolved file and offset, and the host-visible error names the file, the offset
+  and the caveat. The origin ring that makes that possible is only maintained
+  while `SABAH_LLAMA_VERIFY_BYTES` is on, so the decode path pays nothing for it.
+- **The harness no longer poisons its own timings.** `sabah matrix` used to run
+  with `SABAH_LLAMA_STATUS_FILE` set to get the counters, which the runtime
+  rewrites after every expert call: 144 synchronous writes per token, worth
+  ~0.3 s per token on the reference rig (the steady state reported 1.86 tok/s
+  instead of 14.6). The counters now come from the runtime's exit snapshot, which
+  is exact and free, and a run directory is wiped of the previous run's step
+  stream before each run so a killed run cannot be read back as the next one's.
+
 ## Unreleased — acceleration layers
 
 Four runtime changes for the 24 GB VRAM / 16 GB RAM class, plus three bug fixes.

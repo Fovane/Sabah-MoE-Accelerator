@@ -14,6 +14,10 @@ Sabah Accelerator — command line.
     sabah benchmark <model.gguf>   full-model reference provenance benchmark
     sabah serve    <model.gguf>    local OpenAI-compatible API; choose
                                    --backend sabah or --backend reference
+    sabah run      <model.gguf>    one command: the shipped streaming decode,
+                                   with the budget measured out of it
+    sabah matrix   <model.gguf>    regenerate results/matrix.json from this rig
+    sabah gate     <model.gguf>    the correctness switches as pass/fail
     sabah calibrate                 re-measure the planner hit curve from a
                                     routing trace
 
@@ -225,6 +229,73 @@ def cmd_serve(args):
         return 2
 
 
+def cmd_run(args):
+    from sabah.tools import stream
+    _banner("streaming decode")
+    try:
+        extra = _pairs(args.set)
+    except ValueError as e:
+        print("run: %s" % e)
+        return 2
+    try:
+        rec = stream.run(args.model, prompt=args.prompt, tokens=args.tokens,
+                         context=args.context, threads=args.threads,
+                         hot_bytes=args.hot_bytes, diag=args.diag, rt=args.rt,
+                         extra_env=extra)
+    except stream.RunError as e:
+        print("run: %s" % e)
+        return 2
+    reg = rec.get("regimes") or {}
+    if reg and not reg.get("steady"):
+        print("\nnote: -n %d ends inside the tier's warm-up, so the numbers above are"
+              "\n      the warm-up regime. The steady state needs ~130 decodes"
+              "\n      (--tokens 256); see docs/DECODE_BUDGET.md." % args.tokens)
+    if args.json:
+        with open(args.json, "w") as f:
+            json.dump(rec, f, indent=2, sort_keys=True)
+        print("\nwrote %s" % args.json)
+    return 0 if rec.get("exit_code") == 0 else 3
+
+
+def cmd_matrix(args):
+    from sabah.tools import stream
+    _banner("results matrix")
+    out = args.out or os.path.join(ROOT, "results", "matrix.json")
+    try:
+        stream.matrix(args.model, diag=args.diag, rt=args.rt, tokens=args.tokens,
+                      tokens_verify=args.tokens_verify, out=out,
+                      hot_bytes=args.hot_bytes, prompt=args.prompt,
+                      threads=args.threads, context=args.context)
+    except stream.RunError as e:
+        print("matrix: %s" % e)
+        return 2
+    return 0
+
+
+def cmd_gate(args):
+    from sabah.tools import stream
+    _banner("correctness gate")
+    try:
+        return stream.gate(args.model, diag=args.diag, rt=args.rt, tokens=args.tokens,
+                           hot_bytes=args.hot_bytes, verify_limit=args.verify_limit,
+                           prompt=args.prompt, threads=args.threads,
+                           context=args.context)
+    except stream.RunError as e:
+        print("gate: %s" % e)
+        return 2
+
+
+def _pairs(spec):
+    """--set KEY=VALUE, repeatable."""
+    out = {}
+    for item in spec or []:
+        if "=" not in item:
+            raise ValueError("--set wants KEY=VALUE, got %r" % item)
+        k, v = item.split("=", 1)
+        out[k] = v
+    return out
+
+
 def cmd_doctor(args):
     _banner("doctor")
     ok = True
@@ -362,6 +433,37 @@ def main(argv=None):
     a.add_argument("--trace", default="")
     a.add_argument("--json", default="")
     a.set_defaults(fn=cmd_calibrate)
+
+    def _stream_args(a, default_tokens):
+        a.add_argument("model")
+        a.add_argument("--prompt", default="Hello")
+        a.add_argument("--tokens", type=int, default=default_tokens)
+        a.add_argument("--context", type=int, default=512)
+        a.add_argument("--threads", type=int, default=8)
+        a.add_argument("--hot-bytes", default="9.8e9",
+                       help="VRAM budget for the expert tier (9.8e9, 9.8G, or bytes)")
+        a.add_argument("--diag", default="",
+                       help="path to llama-sabah-diag.exe (or SABAH_DIAG_EXE)")
+        a.add_argument("--rt", default="",
+                       help="path to sabah_rt.dll (or SABAH_RT_LIB)")
+
+    a = sub.add_parser("run", help="one command: the shipped streaming decode")
+    _stream_args(a, 256)
+    a.add_argument("--json", default="")
+    a.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                   help="extra runtime environment, repeatable")
+    a.set_defaults(fn=cmd_run)
+
+    a = sub.add_parser("matrix", help="regenerate results/matrix.json")
+    _stream_args(a, 32)
+    a.add_argument("--tokens-verify", type=int, default=8)
+    a.add_argument("--out", default="")
+    a.set_defaults(fn=cmd_matrix)
+
+    a = sub.add_parser("gate", help="correctness switches as pass/fail")
+    _stream_args(a, 8)
+    a.add_argument("--verify-limit", type=int, default=2000)
+    a.set_defaults(fn=cmd_gate)
 
     a = sub.add_parser("doctor", help="environment check")
     a.set_defaults(fn=cmd_doctor)
