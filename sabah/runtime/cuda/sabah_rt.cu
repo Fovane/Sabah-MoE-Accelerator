@@ -42,6 +42,10 @@
 #include <cmath>
 #include <map>
 #include <vector>
+#include <condition_variable>
+#include <deque>
+#include <thread>
+#include <utility>
 
 // The IQ-family expert quants need ggml's grid/sign lookup tables. They are
 // extracted verbatim from ggml-common.h by tools/gen_iq_tables.py; plain
@@ -109,6 +113,7 @@ static double g_t_fetch = 0;   // resolve + disk reads + host-to-device copies
 static double g_t_wait  = 0;   // of which: blocked on the reads
 static double g_t_ids   = 0;   // router id download and its stream synchronise
 static double g_t_ptr   = 0;   // pointer table upload and copy/compute hand-off
+static double g_t_prime = 0;   // residency snapshot: one table sweep per tensor
 
 struct sb_phase_timer {
     std::chrono::steady_clock::time_point t0;
@@ -129,6 +134,9 @@ static uint64_t g_mmid_hits = 0;
 static uint64_t g_mmid_misses = 0;
 static uint64_t g_mmid_evictions = 0;
 static uint64_t g_mmid_bytes_fetched = 0;
+// Slots reserved on behalf of the tensor that follows this call in the same
+// layer, so that a layer's three tensors share one disk wave (merged fetch).
+static uint64_t g_mp_reserved = 0;
 // Diagnostics. `epoch` identifies the MUL_MAT_ID call in progress: a slot whose
 // pointer has already been handed to that call must not be evicted before the
 // call's kernel has run, whatever the capacity says.
@@ -164,14 +172,69 @@ static std::vector<const void *> g_sc_tensors;   // distinct expert tensors chec
 
 static bool ck(cudaError_t e, const char * what);
 
+// Read a byte count written as a plain integer, in scientific notation, or with
+// a binary multiplier suffix ("9800000000", "9.8e9", "9.8G", "9800MiB").
+//
+// This used to be a plain strtoull(..., 10), and strtoull stops at the first
+// character it does not understand. The documented value "9.8e9" therefore
+// parsed as 9 - nine bytes - and because 9 bytes is a valid (if useless) answer
+// nothing complained. The hot tier then failed to hold even one expert, every
+// miss fell through to a fresh cudaMalloc, and decode ran 4x slower than the
+// documented figure with no error anywhere. A value that cannot be read whole
+// is now refused, and a tier too small to hold more than a few experts is said
+// out loud.
+static bool sb_parse_size(const char * text, size_t & out) {
+    if (text == nullptr || *text == '\0') return false;
+    char * end = nullptr;
+    const double value = std::strtod(text, &end);
+    if (end == text || !(value > 0)) return false;
+
+    double multiplier = 1.0;
+    if (*end != '\0') {
+        switch (*end) {
+            case 'k': case 'K': multiplier = 1024.0;                       break;
+            case 'm': case 'M': multiplier = 1024.0 * 1024.0;              break;
+            case 'g': case 'G': multiplier = 1024.0 * 1024.0 * 1024.0;     break;
+            case 't': case 'T': multiplier = 1024.0 * 1024.0 * 1024.0 * 1024.0; break;
+            default: return false;
+        }
+        const char * rest = end + 1;
+        if (*rest == 'i' || *rest == 'I') ++rest;
+        if (*rest == 'b' || *rest == 'B') ++rest;
+        if (*rest != '\0') return false;
+    }
+
+    const double bytes = value * multiplier;
+    if (!(bytes > 0) || bytes > 1.0e15) return false;
+    out = (size_t) bytes;
+    return true;
+}
+
+// Below this a hot tier holds a handful of experts, which is never what anyone
+// meant: it is the shape of a value that did not parse the way it was written.
+static const size_t SB_TIER_SUSPICIOUSLY_SMALL = (size_t) 256 * 1024 * 1024;
+
 static size_t sb_mmid_capacity_bytes() {
     const char * env = std::getenv("SABAH_LLAMA_HOT_BYTES");
     if (env && *env) {
-        char * end = nullptr;
-        const unsigned long long value = std::strtoull(env, &end, 10);
-        if (end != env && value > 0) {
-            return (size_t) value;
+        size_t value = 0;
+        if (sb_parse_size(env, value)) {
+            if (value < SB_TIER_SUSPICIOUSLY_SMALL) {
+                std::fprintf(stderr,
+                             "SABAH_LLAMA: SABAH_LLAMA_HOT_BYTES=%s is only %llu bytes. "
+                             "A tier that small holds almost nothing, so every expert miss "
+                             "ends up as a fresh cudaMalloc and decode gets much slower. "
+                             "Did you mean %s000000000?\n",
+                             env, (unsigned long long) value, env);
+                std::fflush(stderr);
+            }
+            return value;
         }
+        std::fprintf(stderr,
+                     "SABAH_LLAMA: cannot read SABAH_LLAMA_HOT_BYTES=%s. Use a plain byte "
+                     "count or a binary suffix (9.8G, 9800M); using the default 2 GiB.\n",
+                     env);
+        std::fflush(stderr);
     }
     return (size_t) 2ull * 1024ull * 1024ull * 1024ull;
 }
@@ -290,6 +353,7 @@ static void sb_mmid_reset() {
     g_mmid_misses = 0;
     g_mmid_evictions = 0;
     g_mmid_bytes_fetched = 0;
+    g_mp_reserved = 0;
     g_mmid_epoch = 0;
     g_mmid_calls = 0;
     g_mmid_tokens = 0;
@@ -407,24 +471,53 @@ struct sb_fetch {
 // own scan made `slot` the second largest cost after the disk. The pass also
 // stamps recency, so a memo hit needs no entry access at all - which keeps it
 // correct even when an eviction shifts the table underneath it.
+//
+// One snapshot PER TENSOR the call looks at, not one per call. A call may also
+// reserve the experts of the tensor that follows it in the same layer (see the
+// merged fetch in sabah_rt_mul_mat_id_v2), and that is a different tensor with
+// its own residency and its own expert geometry.
 struct sb_memo_hit { int expert; void * device; };
 
-static thread_local std::vector<sb_memo_hit> g_memo;
-static thread_local std::vector<int>         g_memo_ids;
-static thread_local const void *             g_memo_source = nullptr;
-static thread_local size_t                   g_memo_bytes  = 0;
-static thread_local bool                     g_memo_valid  = false;
+struct sb_memo {
+    const void *             source = nullptr;
+    size_t                   bytes  = 0;
+    bool                     valid  = false;   // scan complete: absent means "not resident"
+    std::vector<sb_memo_hit> hits;
+};
 
+static constexpr size_t SB_MEMO_MAX = 3;
+static thread_local sb_memo g_memos[SB_MEMO_MAX];
+static thread_local size_t   g_memos_n = 0;   // number of live snapshots this call
+static thread_local std::vector<int> g_memo_ids;
+
+static sb_memo * sb_memo_find(const void * source_key, size_t bytes) {
+    for (size_t i = 0; i < g_memos_n; ++i) {
+        if (g_memos[i].source == source_key && g_memos[i].bytes == bytes) return &g_memos[i];
+    }
+    return nullptr;
+}
+
+// `count_hits` is false when the snapshot is taken for a tensor that this call
+// did not itself ask for: those experts are counted where they are actually
+// used, by the call that asks for them, so the tier's hit and miss totals stay
+// what they always were - only the wave they arrive in changes.
 static void sb_mmid_prime(const void * source_key, size_t bytes,
                           const uint8_t * ids_raw, size_t id_stride, size_t token_stride,
-                          int n_ids, int n_tokens) {
-    g_memo_valid  = false;
-    g_memo_source = source_key;
-    g_memo_bytes  = bytes;
-    g_memo.clear();
+                          int n_ids, int n_tokens, bool count_hits) {
+    sb_phase_timer _t(&g_t_prime);
+    sb_memo * memo = sb_memo_find(source_key, bytes);
+    if (memo == nullptr) {
+        if (g_memos_n >= SB_MEMO_MAX) return;
+        memo = &g_memos[g_memos_n++];
+        memo->source = source_key;
+        memo->bytes  = bytes;
+    }
+    memo->valid = false;
+    memo->hits.clear();
     if (n_ids <= 0 || n_tokens <= 0) return;
 
-    g_memo_ids.clear();    for (int t = 0; t < n_tokens; ++t) {
+    g_memo_ids.clear();
+    for (int t = 0; t < n_tokens; ++t) {
         for (int i = 0; i < n_ids; ++i) {
             const int e = *(const int32_t *) (ids_raw + (size_t) t * token_stride
                                                        + (size_t) i * id_stride);
@@ -441,21 +534,52 @@ static void sb_mmid_prime(const void * source_key, size_t bytes,
             if (v != entry.expert) continue;
             entry.touch = ++g_mmid_tick;
             entry.epoch = g_mmid_epoch;
-            ++g_mmid_hits;
-            if (g_mmid_verify &&
+            if (count_hits) ++g_mmid_hits;
+            if (count_hits && g_mmid_verify &&
                 (g_mmid_verify_all_hits || g_mmid_hits % g_mmid_verify_hit_every == 0)) {
                 const uint8_t * src = (const uint8_t *) source_key;
                 src += (size_t) entry.expert * bytes;
                 if (!sb_mmid_verify(entry.device, src, bytes)) {
-                    g_memo_valid = false;
+                    memo->valid = false;
                     return;
                 }
             }
-            g_memo.push_back({ entry.expert, entry.device });
+            memo->hits.push_back({ entry.expert, entry.device });
             break;
         }
     }
-    g_memo_valid = true;
+    memo->valid = true;
+}
+
+// Turn one non-resident expert into a reserved device slot: make room, take the
+// space from the slab, and record the fetch that will fill it. The caller holds
+// g_mmid_mutex (eviction looks at the table it is working on, and does not lock
+// it itself).
+static void * sb_mmid_reserve_locked(const void * source_key, int expert,
+                                     const void * source, size_t bytes,
+                                     std::vector<sb_fetch> & miss,
+                                     cudaStream_t compute_stream) {
+    ++g_mmid_misses;
+    sb_mmid_evict_until(bytes, compute_stream);
+
+    void * device = sb_slab_alloc(bytes);
+    bool from_slab = device != nullptr;
+    if (!device) {
+        // The pool is smaller than this working set and nothing else can be
+        // evicted. Documented behaviour is to EXCEED the budget for this fetch
+        // (a plain device allocation) rather than fail the call: the slot is
+        // still freed normally when it is later evicted, and the routed result
+        // stays exact. Overflow counts these over-budget allocations.
+        ++g_mmid_overflow;
+        if (!ck(cudaMalloc(&device, bytes), "Sabah over-budget expert")) return nullptr;
+    }
+
+    g_mmid_entries.push_back({ source_key, expert, device, bytes, ++g_mmid_tick,
+                               g_mmid_epoch, from_slab, false });
+    g_mmid_bytes += bytes;
+    g_mmid_bytes_fetched += bytes;
+    miss.push_back({ source_key, expert, source, bytes, device });
+    return device;
 }
 
 // Reserve (or find) the device slot for one expert. This is pure bookkeeping -
@@ -465,11 +589,26 @@ static void * sb_mmid_slot(const void * source_key, int expert,
                            const void * source, size_t bytes,
                            std::vector<sb_fetch> & miss,
                            cudaStream_t compute_stream) {
-    if (g_memo_valid && g_memo_source == source_key && g_memo_bytes == bytes) {
-        for (const auto & h : g_memo) {
+    sb_memo * memo = sb_memo_find(source_key, bytes);
+    if (memo != nullptr && memo->valid) {
+        // The snapshot is complete, so it answers the question outright: a
+        // resident expert comes back straight from it, and an expert that is
+        // not in it is not resident at all, which saves the table scan that the
+        // miss path used to repeat for every single lookup.
+        for (const auto & h : memo->hits) {
             if (h.expert == expert) return h.device;
         }
+        sb_phase_timer _t(&g_t_slot);
+        std::lock_guard<std::mutex> lock(g_mmid_mutex);
+        if (g_mmid_capacity == 0) {
+            g_mmid_capacity = sb_mmid_capacity_bytes();
+        }
+        void * device = sb_mmid_reserve_locked(source_key, expert, source, bytes,
+                                               miss, compute_stream);
+        if (device != nullptr) memo->hits.push_back({ expert, device });
+        return device;
     }
+
     sb_phase_timer _t(&g_t_slot);
     std::lock_guard<std::mutex> lock(g_mmid_mutex);
     if (g_mmid_capacity == 0) {
@@ -494,27 +633,7 @@ static void * sb_mmid_slot(const void * source_key, int expert,
         }
     }
 
-    ++g_mmid_misses;
-    sb_mmid_evict_until(bytes, compute_stream);
-
-    void * device = sb_slab_alloc(bytes);
-    bool from_slab = device != nullptr;
-    if (!device) {
-        // The pool is smaller than this working set and nothing else can be
-        // evicted. Documented behaviour is to EXCEED the budget for this fetch
-        // (a plain device allocation) rather than fail the call: the slot is
-        // still freed normally when it is later evicted, and the routed result
-        // stays exact. Overflow counts these over-budget allocations.
-        ++g_mmid_overflow;
-        if (!ck(cudaMalloc(&device, bytes), "Sabah over-budget expert")) return nullptr;
-    }
-
-    g_mmid_entries.push_back({ source_key, expert, device, bytes, ++g_mmid_tick,
-                               g_mmid_epoch, from_slab, false });
-    g_mmid_bytes += bytes;
-    g_mmid_bytes_fetched += bytes;
-    miss.push_back({ source_key, expert, source, bytes, device });
-    return device;
+    return sb_mmid_reserve_locked(source_key, expert, source, bytes, miss, compute_stream);
 }
 
 static bool ck(cudaError_t e, const char * what) {
@@ -563,9 +682,17 @@ static size_t sb_io_depth() {
 // 512e and 4Kn volumes.
 static const size_t SB_IO_ALIGN = 4096;
 
+// Read lanes: synchronous readers, one file object each. The count is a thread
+// count - see the read pool for the measurement that forced it.
+static const int SB_IO_LANES = 8;
+
 struct sb_disk_file {
 #if defined(_WIN32)
-    HANDLE h = INVALID_HANDLE_VALUE;
+    HANDLE h = INVALID_HANDLE_VALUE;   // overlapped: the one-off and prefetch reads
+    // One SYNCHRONOUS handle per read lane. See the read pool below for why the
+    // lanes are threads with their own file object rather than requests on one.
+    HANDLE lane[SB_IO_LANES];
+    int    lanes = 0;
 #else
     int    fd = -1;
 #endif
@@ -612,6 +739,17 @@ static size_t sb_disk_open_locked(const std::string & path) {
                       nullptr, OPEN_EXISTING,
                       FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED, nullptr);
     if (f.h == INVALID_HANDLE_VALUE) return (size_t) -1;
+    for (auto & l : f.lane) l = INVALID_HANDLE_VALUE;
+    f.lanes = 0;
+    // The read lanes, opened here so that a shard registered later still has
+    // them: synchronous handle (no FILE_FLAG_OVERLAPPED), one per lane.
+    for (int i = 0; i < SB_IO_LANES; ++i) {
+        HANDLE lane = CreateFileA(path.c_str(), GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                  OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, nullptr);
+        if (lane == INVALID_HANDLE_VALUE) break;
+        f.lane[f.lanes++] = lane;
+    }
     LARGE_INTEGER li;
     if (!GetFileSizeEx(f.h, &li)) { CloseHandle(f.h); return (size_t) -1; }
     f.size = (uint64_t) li.QuadPart;
@@ -776,6 +914,13 @@ static void sb_io_pool_destroy() {
 
 // --------------------------- one unbuffered read ---------------------------
 
+// How each ReadFile actually returned. This is the difference between an
+// overlapped path and a serialised one: a request the driver completes inline
+// never overlaps with the next one, so counting them is the only way to tell
+// whether issuing several reads before waiting means anything at all.
+static uint64_t g_io_sync_reads    = 0;   // ReadFile returned TRUE: done already
+static uint64_t g_io_pending_reads = 0;   // ReadFile returned ERROR_IO_PENDING
+
 struct sb_io_req {
     size_t   file   = 0;
     uint64_t off    = 0;       // aligned
@@ -804,10 +949,11 @@ static bool sb_io_issue(sb_io_req & r) {
     HANDLE h = g_disk_files[r.file].h;
     if (ReadFile(h, r.staging, (DWORD) r.len, &got, &r.ov)) {
         r.issued = false; r.ok = true; r.got = got;
+        ++g_io_sync_reads;
         return true;
     }
     const DWORD e = GetLastError();
-    if (e == ERROR_IO_PENDING) { r.issued = true; r.ok = true; return true; }
+    if (e == ERROR_IO_PENDING) { r.issued = true; r.ok = true; ++g_io_pending_reads; return true; }
     // A read that runs past EOF yields a short (or empty) transfer rather than
     // damage: the caller checks that the expert's bytes were really delivered.
     if (e == ERROR_HANDLE_EOF) { r.issued = false; r.ok = true; r.got = 0; return true; }
@@ -846,15 +992,200 @@ static bool sb_io_wait(sb_io_req & r) {
 // Numbers of bytes actually resident on the host because of this module.
 static uint64_t g_io_reads      = 0;   // unbuffered reads issued
 static uint64_t g_io_read_bytes = 0;   // bytes delivered by those reads
+static uint64_t g_io_waves      = 0;   // read waves issued (one latency each)
 static uint64_t g_io_fallbacks  = 0;   // times the mapped path had to be used
 static size_t   g_io_host_bytes = 0;   // pinned staging currently held
+
+// --------------------------- read lanes (the pool) ---------------------------
+//
+// A wave of expert reads, issued from a small pool of threads that read
+// SYNCHRONOUSLY through one file object each.
+//
+// Why it looks like this. The drive's own numbers (tools/disk_probe.py, and the
+// C++ twin io_bench.cu, 676 KB reads - the expert stride - over this shard) are:
+//
+//     one reader                        ~1.2 GB/s
+//     four readers in flight            ~1.8 GB/s
+//     eight readers in flight           ~1.86 GB/s
+//
+// and both benchmarks read synchronously, from one handle per reader thread.
+// This path used to issue the same requests as OVERLAPPED reads from the calling
+// thread, and measured 1.37-1.42 GB/s at every depth from 1 to 32: the requests
+// really were all in flight (SABAH_DISK sync=0 pending=25000) and the drive
+// still served them one at a time. Handing the wave to threads that block in
+// ReadFile is what makes the overlap real. SABAH_IO reports it: the pool runs at
+// overlap 3.8-4.3 (the sum of the individual read calls against the wall time
+// the caller spent waiting), and SABAH_LLAMA_IO_WORKERS=1 collapses it to 1.00.
+//
+// The honest result of the A/B, though: the wall time does not change. Whole-run
+// unbuffered time for 18.97 GB was 13713.9 / 13663.7 / 13734.0 ms for 1, 2 and 8
+// lanes, and the decode median 205.8 / 203.1 / 204.5 ms. The drive serves this
+// access pattern at ~1.4 GB/s whether the requests overlap or not, so the lanes
+// buy nothing today - they are kept because they are the right shape for a wave
+// that is actually deep (see the merged-fetch note below for what that means).
+//
+// The staging buffers and the host-to-device copies stay on the calling thread:
+// the pool only moves disk bytes into pinned host memory, where the caller
+// already had a wave-sized barrier.
+struct sb_io_wave {
+    sb_io_req * reqs    = nullptr;
+    size_t      n       = 0;
+    int         workers = 0;
+    int         done    = 0;
+    bool        ok      = true;
+};
+
+static std::mutex               g_wave_mutex;
+static std::condition_variable  g_wave_start_cv;
+static std::condition_variable  g_wave_done_cv;
+static sb_io_wave *             g_wave      = nullptr;
+static uint64_t                 g_wave_gen  = 0;
+static int                      g_wave_workers = 0;
+static bool                     g_wave_stop = false;
+static std::vector<std::thread> g_wave_threads;
+static std::once_flag           g_wave_once;
+static uint64_t                 g_io_lane_reads = 0;
+// Sum of the individual read durations, per lane. If the lanes really overlap
+// this is a large multiple of the time the caller spends waiting for a wave.
+static uint64_t                 g_io_read_ns[SB_IO_LANES] = { 0 };
+
+static HANDLE sb_io_lane(size_t file, int lane_index) {
+#if defined(_WIN32)
+    const sb_disk_file & f = g_disk_files[file];
+    // Never hand one file object to two workers: these handles are synchronous,
+    // so a shared one means a shared file pointer and two threads racing on
+    // SetFilePointerEx. An out-of-range lane fails the read, which sends the
+    // batch to the mapped path, which is slow but never wrong.
+    if (lane_index < 0 || lane_index >= f.lanes) return INVALID_HANDLE_VALUE;
+    return f.lane[lane_index];
+#else
+    (void) file; (void) lane_index;
+    return nullptr;
+#endif
+}
+
+// One synchronous unbuffered read on a lane. No OVERLAPPED structure and no
+// FILE_FLAG_OVERLAPPED on these handles: the read blocks, and the concurrency
+// comes from the other lanes running at the same time.
+static bool sb_io_read_lane(sb_io_req & r, int lane_index) {
+#if defined(_WIN32)
+    r.ok  = false;
+    r.got = 0;
+    HANDLE h = sb_io_lane(r.file, lane_index);
+    if (h == INVALID_HANDLE_VALUE || h == nullptr) return false;
+    LARGE_INTEGER li;
+    li.QuadPart = (LONGLONG) r.off;
+    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) return false;
+    DWORD got = 0;
+    const auto t0 = std::chrono::steady_clock::now();
+    const BOOL rc = ReadFile(h, r.staging, (DWORD) r.len, &got, nullptr);
+    const auto t1 = std::chrono::steady_clock::now();
+    g_io_read_ns[lane_index % SB_IO_LANES] +=
+        (uint64_t) std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    if (!rc) return false;
+    r.got = got;
+    r.ok  = true;
+    ++g_io_lane_reads;
+    return true;
+#else
+    (void) r; (void) lane_index;
+    return false;
+#endif
+}
+
+static void sb_io_wave_worker(int id) {
+    uint64_t seen = 0;
+    for (;;) {
+        sb_io_wave * w = nullptr;
+        {
+            std::unique_lock<std::mutex> lock(g_wave_mutex);
+            g_wave_start_cv.wait(lock, [&] { return g_wave_stop || g_wave_gen != seen; });
+            if (g_wave_stop) return;
+            w = g_wave;
+            seen = g_wave_gen;
+        }
+        bool ok = true;
+        for (size_t i = (size_t) id; i < w->n; i += (size_t) w->workers) {
+            if (!sb_io_read_lane(w->reqs[i], id)) ok = false;
+        }
+        // The increment and the wake-up share one critical section: the caller
+        // must not be able to see a finished wave and free it while a worker is
+        // still on its way to the lock.
+        std::lock_guard<std::mutex> lock(g_wave_mutex);
+        if (!ok) w->ok = false;
+        if (++w->done == w->workers) g_wave_done_cv.notify_all();
+    }
+}
+
+// Start the pool once. Returns false if it could not be started, in which case
+// the caller falls back to reading the wave on its own thread.
+static bool sb_io_pool_start() {
+    std::call_once(g_wave_once, [] {
+        size_t want = sb_io_depth();
+        if (const char * w = std::getenv("SABAH_LLAMA_IO_WORKERS")) {
+            long v = strtol(w, nullptr, 10);
+            if (v >= 1) want = (size_t) v;
+        }
+        if (want > (size_t) SB_IO_LANES) want = (size_t) SB_IO_LANES;
+        if (want < 1) want = 1;
+        // Never more readers than the shards actually got file objects for.
+        {
+            std::lock_guard<std::mutex> lock(g_disk_mutex);
+            for (const auto & f : g_disk_files) {
+                if (f.lanes > 0 && want > (size_t) f.lanes) want = (size_t) f.lanes;
+            }
+        }
+        g_wave_workers = (int) want;
+        g_wave_threads.reserve((size_t) g_wave_workers);
+        for (int i = 0; i < g_wave_workers; ++i) {
+            g_wave_threads.emplace_back(sb_io_wave_worker, i);
+        }
+    });
+    return g_wave_workers > 0;
+}
+
+// Read a whole wave. On return every request either has `got` set or `ok`
+// false; the caller checks the delivered length before copying.
+static void sb_io_read_wave(sb_io_req * reqs, size_t n) {
+    if (n == 0) return;
+    // A wave of one has nothing to overlap, and handing it to the pool would add
+    // a condition-variable round trip to a cost that is pure device latency. Most
+    // calls in this workload are exactly that, so the single-request case reads
+    // inline.
+    if (n == 1 || !sb_io_pool_start() || g_wave_workers <= 1) {
+        for (size_t i = 0; i < n; ++i) {
+            if (!sb_io_read_lane(reqs[i], 0)) reqs[i].ok = false;
+        }
+        return;
+    }
+    sb_io_wave w;
+    w.reqs    = reqs;
+    w.n       = n;
+    w.workers = g_wave_workers;
+    {
+        std::lock_guard<std::mutex> lock(g_wave_mutex);
+        g_wave = &w;
+        ++g_wave_gen;
+    }
+    g_wave_start_cv.notify_all();
+    {
+        std::unique_lock<std::mutex> lock(g_wave_mutex);
+        g_wave_done_cv.wait(lock, [&] { return w.done >= w.workers; });
+        g_wave = nullptr;
+    }
+}
 
 // --------------------------- batched fetch ---------------------------
 
 // Reads every pending expert with at most `SABAH_LLAMA_IO_DEPTH` reads in flight.
 // A whole MUL_MAT_ID call is scanned before any of this runs, so the misses of
-// one layer arrive here together: that is what turns a single-stream 1.2 GB/s
-// read into the 2.5 GB/s the device delivers at depth 8.
+// one layer arrive here together.
+//
+// Depth, though, is not what this drive is short of: measured, it serves this
+// access pattern at ~1.4 GB/s for every depth from 1 to 32, for 1 to 8 lanes,
+// and for merged or unmerged waves, while a benchmark that keeps four to eight
+// readers continuously busy reaches 1.8-1.86 GB/s. The difference is the idle
+// time between a layer's burst and the next, which a demand pager cannot remove.
 //
 // Returns false if the direct path cannot be used at all, which tells the caller
 // to complete the slots from the mapped bytes instead.
@@ -882,6 +1213,7 @@ static bool sb_fetch_direct(std::vector<sb_fetch> & miss) {
     size_t wave_no = 0;
     for (size_t base = 0; base < miss.size(); base += depth, ++wave_no) {
         const size_t wave = std::min(depth, miss.size() - base);
+        ++g_io_waves;
         // Staging is double buffered. A wave's host-to-device copies are still in
         // flight on the copy stream when the next wave starts issuing reads, so
         // the reads must not write the buffers the copies are reading. Wave w
@@ -915,18 +1247,23 @@ static bool sb_fetch_direct(std::vector<sb_fetch> & miss) {
 #if defined(_WIN32)
             r.ev      = s->ev;
 #endif
-            if (!sb_io_issue(r)) return false;
+        }
+
+        // All of the wave's reads at once, on the lanes. Waiting for them is
+        // the disk cost, so it is what `wait` accounts for.
+        {
+            sb_phase_timer _tw(&g_t_wait);
+            sb_io_read_wave(reqs.data(), wave);
         }
 
         for (size_t i = 0; i < wave; ++i) {
             const size_t j = base + i;
             sb_io_req & r = reqs[i];
-            bool waited;
-            {
-                sb_phase_timer _tw(&g_t_wait);
-                waited = sb_io_wait(r);
+            if (!r.ok) {
+                snprintf(g_err, sizeof(g_err), "unbuffered read of %llu bytes failed",
+                         (unsigned long long) r.len);
+                return false;
             }
-            if (!waited) return false;
             if (r.got < r.delta + r.bytes) {
                 snprintf(g_err, sizeof(g_err),
                          "unbuffered read delivered %llu of %llu bytes",
@@ -972,12 +1309,6 @@ static bool sb_fetch_direct(std::vector<sb_fetch> & miss) {
 //
 // Disable with SABAH_LLAMA_PREFETCH=0.
 
-#include <condition_variable>
-#include <cstdlib>
-#include <deque>
-#include <thread>
-#include <utility>
-
 struct sb_pf_desc {
     const void * source        = nullptr;
     size_t       expert_stride = 0;
@@ -992,7 +1323,7 @@ struct sb_pf_job {
     size_t       bytes      = 0;
 };
 
-enum sb_pf_state { SB_PF_FREE = 0, SB_PF_FILLING, SB_PF_READY, SB_PF_TAKEN };
+enum sb_pf_state { SB_PF_FREE = 0, SB_PF_FILLING, SB_PF_READY, SB_PF_TAKEN, SB_PF_FAIL };
 
 // A readahead buffer. The prefetcher reads into pinned staging and LEAVES the
 // bytes there; the demand path copies them straight on to their device slot and
@@ -1025,6 +1356,10 @@ static cudaStream_t g_pf_stream  = nullptr;
 
 static std::mutex              g_pf_mutex;
 static std::condition_variable g_pf_cv;
+// A readahead buffer changed state. Kept separate from g_pf_cv so a notify for
+// one purpose can never wake the waiter of the other and leave the real waiter
+// asleep: the worker waits for work, the demand path waits for one buffer.
+static std::condition_variable g_pf_done_cv;
 static std::deque<sb_pf_job>   g_pf_queue;
 static bool                    g_pf_stop  = false;
 static std::thread             g_pf_thread;
@@ -1035,6 +1370,8 @@ static uint64_t                g_pf_seq = 0;
 
 static uint64_t g_pf_reads = 0, g_pf_bytes = 0, g_pf_drops = 0;
 static uint64_t g_pf_used = 0, g_pf_used_bytes = 0, g_pf_stale = 0;
+static uint64_t g_pf_waits = 0, g_pf_wait_timeouts = 0;
+static double   g_pf_wait_ms = 0.0;
 
 // The call sequence, learned as a chain. Indexing it by the router ids tensor
 // was wrong: the graph allocator hands every layer the same address for that
@@ -1073,25 +1410,69 @@ static bool sb_pf_prepare(sb_pf_slot & s, size_t need) {
     return true;
 }
 
-// Hand the demand path the bytes of an expert the prefetcher already read.
-// Returns false when nothing is staged for this expert, and the caller then
-// goes to the disk as usual.
+// Hand the demand path the bytes of an expert the prefetcher has already read,
+// or is still reading. Waiting for the read that is already in flight is the
+// point.
+//
+// An earlier revision returned false the moment a buffer was not READY yet, so
+// the demand path issued its own read of the very same bytes. Every readahead
+// that had not finished by then was read TWICE; with the disk as the binding
+// constraint that turned the readahead into extra load rather than lead time,
+// which is exactly what the earlier measurement saw (the drive's throughput
+// went up, the token did not). The staged read is on the critical path either
+// way - the difference is that it was issued one call earlier, while the
+// previous call's kernel was running, and that it keeps the queue deep.
+//
+// Returns false only when nothing is staged or coming for this expert, or when
+// the wait gave up. The caller then reads it from the disk as usual.
+#define SB_PF_WAIT_LIMIT_MS 50
 static bool sb_pf_take(const sb_fetch & f) {
     size_t idx = g_pf_slots.size();
+    bool   waited = false;
+    const auto t0 = std::chrono::steady_clock::now();
     {
-        std::lock_guard<std::mutex> lock(g_pf_mutex);
-        for (size_t i = 0; i < g_pf_slots.size(); ++i) {
-            sb_pf_slot & s = g_pf_slots[i];
-            if (s.state == SB_PF_READY && s.source_key == f.source_key &&
-                s.expert == f.expert && s.bytes == f.bytes) {
-                s.state = SB_PF_TAKEN;
-                s.free_pending = true;
-                idx = i;
+        std::unique_lock<std::mutex> lock(g_pf_mutex);
+        for (;;) {
+            size_t found = g_pf_slots.size();
+            for (size_t i = 0; i < g_pf_slots.size(); ++i) {
+                sb_pf_slot & s = g_pf_slots[i];
+                if (s.source_key != f.source_key || s.expert != f.expert ||
+                    s.bytes != f.bytes) {
+                    continue;
+                }
+                if (s.state == SB_PF_FAIL) {          // the read itself failed
+                    s.state = SB_PF_FREE;
+                    return false;
+                }
+                if (s.state == SB_PF_READY || s.state == SB_PF_FILLING) {
+                    found = i;
+                    break;
+                }
+                // SB_PF_TAKEN: already leaving. Its identity can only survive
+                // until the copy-out finishes, so this cannot be our expert's
+                // last chance - treat it as absent.
+            }
+            if (found == g_pf_slots.size()) return false;   // nothing staged at all
+            if (g_pf_slots[found].state == SB_PF_READY) {
+                g_pf_slots[found].state        = SB_PF_TAKEN;
+                g_pf_slots[found].free_pending = true;
+                idx = found;
                 break;
+            }
+            // Still filling: wait for the worker instead of reading it twice.
+            waited = true;
+            if (g_pf_done_cv.wait_for(lock, std::chrono::milliseconds(SB_PF_WAIT_LIMIT_MS))
+                    == std::cv_status::timeout) {
+                ++g_pf_wait_timeouts;
+                return false;
             }
         }
     }
-    if (idx == g_pf_slots.size()) return false;
+    if (waited) {
+        ++g_pf_waits;
+        g_pf_wait_ms += std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - t0).count();
+    }
 
     sb_pf_slot & s = g_pf_slots[idx];
     if (!ck(cudaMemcpyAsync(f.dst, (const uint8_t *) s.staging + s.delta, f.bytes,
@@ -1156,14 +1537,18 @@ static void sb_pf_run_batch(std::vector<sb_pf_job> & batch) {
         ok[i] = sb_io_wait(reqs[i]) && reqs[i].got >= reqs[i].delta + reqs[i].bytes;
     }
 
-    std::lock_guard<std::mutex> lock(g_pf_mutex);
-    for (size_t i = 0; i < n; ++i) {
-        sb_pf_slot & s = g_pf_slots[batch[i].slot];
-        if (!ok[i]) { s.state = SB_PF_FREE; continue; }
-        s.state = SB_PF_READY;
-        ++g_pf_reads;
-        g_pf_bytes += batch[i].bytes;
+    {
+        std::lock_guard<std::mutex> lock(g_pf_mutex);
+        for (size_t i = 0; i < n; ++i) {
+            sb_pf_slot & s = g_pf_slots[batch[i].slot];
+            if (!ok[i]) { s.state = SB_PF_FAIL; continue; }
+            s.state = SB_PF_READY;
+            ++g_pf_reads;
+            g_pf_bytes += batch[i].bytes;
+        }
     }
+    // A demand call may be parked on any of these buffers.
+    g_pf_done_cv.notify_all();
 }
 
 static void sb_pf_worker() {
@@ -1200,7 +1585,12 @@ static void sb_pf_offer(const sb_pf_desc & d, int expert) {
 
     size_t idx = g_pf_slots.size();
     for (size_t i = 0; i < g_pf_slots.size(); ++i) {
-        if (g_pf_slots[i].state == SB_PF_FREE) { idx = i; break; }
+        // FAIL is reclaimable too: the previous read of that buffer did not
+        // complete, and nobody is waiting on it any more.
+        if (g_pf_slots[i].state == SB_PF_FREE || g_pf_slots[i].state == SB_PF_FAIL) {
+            idx = i;
+            break;
+        }
     }
     if (idx == g_pf_slots.size()) {
         // Every buffer is busy; take the oldest readahead nobody claimed.
@@ -1253,20 +1643,35 @@ static void sb_pf_plan(const sb_pf_desc & d, const std::vector<int> & experts) {
     }
 }
 
-// Called once per MUL_MAT_ID call, right after the router ids reached the host.
-static void sb_pf_note(const void * source, size_t expert_stride, int n_experts,
-                       int n_ids, int n_tokens, size_t ids_id_stride,
-                       const uint8_t * ids_raw) {
-    if (!g_pf_enabled || n_tokens > SB_PF_MAX_TOKENS || n_ids <= 0 || n_experts <= 0) return;
+// Learn the call sequence and hand back the tensors that will follow `source`.
+//
+// The graph is static, so every forward pass issues the same MUL_MAT_ID calls in
+// the same order: layer L always runs gate, then up, then down, and all three of
+// them are handed THE SAME router ids, so they ask for the same experts. That
+// makes a call's followers knowable one call in advance, and it is the only
+// cross-call knowledge this workload has - a later layer's ids depend on this
+// layer's experts, so nothing further ahead can be predicted without changing
+// the routing.
+//
+// LEARNING IS UNCONDITIONAL; only what is done with it is optional. An earlier
+// revision returned early unless the readahead switch was on, so the chain was
+// never learned at all in the default configuration.
+//
+// Returns how many followers were written to `out` (at most 2).
+static int sb_chain_note(const void * source, size_t expert_stride, int n_experts,
+                         int n_ids, int n_tokens, size_t ids_id_stride,
+                         const uint8_t * ids_raw, sb_pf_desc out[2]) {
+    if (n_ids <= 0 || n_tokens <= 0 || n_experts <= 0) return 0;
 
-    // The first token row stands in for the call. A prefetch is only a warm-up,
-    // and that row is what the demand path asks for first.
-    std::vector<int> experts((size_t) n_ids);
+    // The first token row stands in for the call. Within a layer the three calls
+    // agree on every row; a comparison is only ever used to decide whether a
+    // follower shares this call's routing.
+    std::vector<int32_t> experts((size_t) n_ids);
     for (int i = 0; i < n_ids; ++i) {
         experts[(size_t) i] = *(const int32_t *) (ids_raw + (size_t) i * ids_id_stride);
     }
 
-    sb_pf_desc next{}, after{};
+    int n_out = 0;
     {
         std::lock_guard<std::mutex> lock(g_pf_chain_mutex);
 
@@ -1292,14 +1697,16 @@ static void sb_pf_note(const void * source, size_t expert_stride, int n_experts,
 
         for (const auto & l : g_pf_links) {
             if (l.source != source || !l.shares_ids || l.next_source == nullptr) continue;
-            next.source        = l.next_source;
-            next.expert_stride = l.next_stride;
-            next.n_experts     = l.next_experts;
+            out[n_out].source        = l.next_source;
+            out[n_out].expert_stride = l.next_stride;
+            out[n_out].n_experts     = l.next_experts;
+            ++n_out;
             for (const auto & m : g_pf_links) {
-                if (m.source == next.source && m.shares_ids && m.next_source != nullptr) {
-                    after.source        = m.next_source;
-                    after.expert_stride = m.next_stride;
-                    after.n_experts     = m.next_experts;
+                if (m.source == out[0].source && m.shares_ids && m.next_source != nullptr) {
+                    out[n_out].source        = m.next_source;
+                    out[n_out].expert_stride = m.next_stride;
+                    out[n_out].n_experts     = m.next_experts;
+                    ++n_out;
                     break;
                 }
             }
@@ -1309,9 +1716,61 @@ static void sb_pf_note(const void * source, size_t expert_stride, int n_experts,
         g_pf_prev_source = source;
         g_pf_prev_ids.swap(experts);
     }
+    return n_out;
+}
 
-    if (next.source != nullptr)  sb_pf_plan(next,  g_pf_prev_ids);
-    if (after.source != nullptr) sb_pf_plan(after, g_pf_prev_ids);
+// --------------------------- merged layer fetch ---------------------------
+//
+// One wave per layer instead of up to three.
+//
+// The idea was that each of a layer's three expert tensors pays a wave latency
+// of its own - decode measures 99.9 waves of 262 reads of ~676 KB - and that if
+// the layer's three tensors shared one wave the latency would be paid once
+// (48 x 0.45 ms instead of 99.9 x 0.45 ms). The wave count really does halve;
+// the time does not move, because this drive does not charge per wave. See the
+// measurement at the bottom of this section before enabling it.
+//
+// The three expert tensors of a layer all read the same router ids, so the
+// followers' misses are already known when the first of them runs. Reserving
+// their slots at that point puts every expert the layer will need into the ONE
+// wave the first call already issues. The followers' own calls then find their
+// slots filled and issue no wave at all, so the layer pays the latency once.
+//
+// Nothing about routing changes: the followers' entries are keyed by the very
+// expert indices the true ids name, read from the very file ranges the demand
+// path would have read, and the demand path still asks for residency from the
+// true ids on every call. A prediction that turned out wrong would cost the
+// bytes it read and a tier slot, and nothing else.
+//
+// Supersedes the staging readahead above, which read the same experts a second
+// time when its prediction did not pan out in time.
+//
+// MEASURED, and the reason this defaults to off. It does what it says to the
+// wave count - decode goes 99.9 waves/token to 49.5, the prefill's 5664 to
+// 4088, with the same 262.4 reads and the same 166.6 MB - and the disk time does
+// not move at all: the whole run reads 18.97 GB in 13.7 s (1.385 GB/s) with the
+// merge, 13.70 s without it. The wave latency this was supposed to halve is not
+// something the drive charges: it serves these reads at ~1.4 GB/s whatever the
+// wave size, so there is nothing here to save, and concentrating the layer's
+// wait into one call instead of three leaves the GPU idle for a longer stretch
+// at a time, which the next group's id synchronise then exposes. Net decode:
+// ~205 ms/token without the merge, ~218 ms with it, reproducible across runs.
+//
+// It stays because the mechanism is sound and it is the thing that would pay
+// off if a wave ever became deep enough for depth to matter (batch
+// verification, where one layer's demand is ~4x a decode layer's).
+// Force it on with SABAH_LLAMA_LAYER_MERGE=1.
+static bool          g_layer_merge = false;
+static std::once_flag g_layer_merge_once;
+
+static bool sb_layer_merge_enabled() {
+    std::call_once(g_layer_merge_once, []() {
+        const char * v = std::getenv("SABAH_LLAMA_LAYER_MERGE");
+        if (v == nullptr) return;
+        if (std::strcmp(v, "1") == 0 || std::strcmp(v, "on") == 0) g_layer_merge = true;
+        if (std::strcmp(v, "0") == 0 || std::strcmp(v, "off") == 0) g_layer_merge = false;
+    });
+    return g_layer_merge;
 }
 
 static void sb_pf_quit() {
@@ -2249,23 +2708,39 @@ static void sb_report_diag() {
                  (unsigned long long) g_mmid_overflow,
                  (unsigned long long) g_mmid_verify_ok, (unsigned long long) g_mmid_verify_fail);
     std::fprintf(stderr,
-                 "SABAH_DISK unbuffered_reads=%llu bytes=%llu mapped_fallbacks=%llu staging_bytes=%llu direct_io=%d depth=%llu\n",
+                 "SABAH_DISK unbuffered_reads=%llu bytes=%llu waves=%llu mapped_fallbacks=%llu staging_bytes=%llu direct_io=%d depth=%llu lanes=%d lane_reads=%llu sync=%llu pending=%llu\n",
                  (unsigned long long) g_io_reads,
                  (unsigned long long) g_io_read_bytes,
+                 (unsigned long long) g_io_waves,
                  (unsigned long long) g_io_fallbacks,
                  (unsigned long long) g_io_host_bytes,
                  sb_direct_io_enabled() ? 1 : 0,
-                 (unsigned long long) sb_io_depth());
+                 (unsigned long long) sb_io_depth(),
+                 g_wave_workers,
+                 (unsigned long long) g_io_lane_reads,
+                 (unsigned long long) g_io_sync_reads,
+                 (unsigned long long) g_io_pending_reads);
+    {
+        // Sum of the individual read calls against the wall time the caller
+        // spent inside the waves: ~1.0 means the lanes were served one at a
+        // time, a larger number means they really overlapped.
+        unsigned long long read_ns = 0;
+        for (int i = 0; i < SB_IO_LANES; ++i) read_ns += g_io_read_ns[i];
+        std::fprintf(stderr, "SABAH_IO read_ms=%.1f wave_ms=%.1f overlap=%.2f reads_per_wave=%.2f\n",
+                     (double) read_ns / 1e6, g_t_wait,
+                     g_t_wait > 0.0 ? ((double) read_ns / 1e6) / g_t_wait : 0.0,
+                     g_io_waves > 0 ? (double) g_io_reads / (double) g_io_waves : 0.0);
+    }
     {
         const double calls = g_mmid_calls > 0 ? (double) g_mmid_calls : 1.0;        std::fprintf(stderr,
-                     "SABAH_PHASE calls=%llu ids=%.1fms fetch=%.1fms wait=%.1fms slot=%.1fms ptr=%.1fms "
-                     "| per_call us: ids=%.0f fetch=%.0f wait=%.0f slot=%.0f ptr=%.0f | accounting=%.1fms\n",
+                     "SABAH_PHASE calls=%llu ids=%.1fms fetch=%.1fms wait=%.1fms slot=%.1fms ptr=%.1fms prime=%.1fms "
+                     "| per_call us: ids=%.0f fetch=%.0f wait=%.0f slot=%.0f ptr=%.0f prime=%.0f | accounting=%.1fms\n",
                      (unsigned long long) g_mmid_calls,
-                     g_t_ids, g_t_fetch, g_t_wait, g_t_slot, g_t_ptr,
+                     g_t_ids, g_t_fetch, g_t_wait, g_t_slot, g_t_ptr, g_t_prime,
                      g_t_ids / calls * 1000.0, g_t_fetch / calls * 1000.0,
                      g_t_wait / calls * 1000.0, g_t_slot / calls * 1000.0,
-                     g_t_ptr / calls * 1000.0,
-                     g_t_ids + g_t_fetch + g_t_slot + g_t_ptr);
+                     g_t_ptr / calls * 1000.0, g_t_prime / calls * 1000.0,
+                     g_t_ids + g_t_fetch + g_t_slot + g_t_ptr + g_t_prime);
     }
     std::fprintf(stderr,
                  "SABAH_IDS reused=%llu group_max=%llu check=%d check_ok=%llu check_fail=%llu\n",
@@ -2273,7 +2748,11 @@ static void sb_report_diag() {
                  g_id_check ? 1 : 0,
                  (unsigned long long) g_id_check_ok, (unsigned long long) g_id_check_fail);
     std::fprintf(stderr,
-                 "SABAH_PREFETCH enabled=%d reads=%llu read_bytes=%llu used=%llu used_bytes=%llu dropped=%llu stale=%llu queued=%llu\n",
+                 "SABAH_MERGE enabled=%d reserved=%llu\n",
+                 sb_layer_merge_enabled() ? 1 : 0,
+                 (unsigned long long) g_mp_reserved);
+    std::fprintf(stderr,
+                 "SABAH_PREFETCH enabled=%d reads=%llu read_bytes=%llu used=%llu used_bytes=%llu dropped=%llu stale=%llu queued=%llu waits=%llu wait_ms=%.1f wait_timeouts=%llu\n",
                  g_pf_enabled ? 1 : 0,
                  (unsigned long long) g_pf_reads,
                  (unsigned long long) g_pf_bytes,
@@ -2281,7 +2760,10 @@ static void sb_report_diag() {
                  (unsigned long long) g_pf_used_bytes,
                  (unsigned long long) g_pf_drops,
                  (unsigned long long) g_pf_stale,
-                 (unsigned long long) g_pf_queue.size());
+                 (unsigned long long) g_pf_queue.size(),
+                 (unsigned long long) g_pf_waits,
+                 g_pf_wait_ms,
+                 (unsigned long long) g_pf_wait_timeouts);
     char buf[1024];
     sb_snapshot_json(buf, sizeof(buf));
     std::fprintf(stderr, "SABAH_SNAPSHOT %s\n", buf);
@@ -2704,18 +3186,28 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
                    std::chrono::steady_clock::now() - t_ids0).count();
 
     // While these ids are in hand, the experts the following calls of this same
-    // layer will need are already known: issue their reads now so the disk is
-    // busy through the router work and the kernel that would otherwise idle it.
-    g_memo_valid = false;
+    // layer will need are already known - only their bytes are missing.
+    g_memos_n = 0;
     sb_pf_start();
-    sb_pf_note(source, expert_stride, n_experts, n_ids, n_tokens,
-               ids_id_stride, ids_raw.data());
+    sb_pf_desc followers[2];
+    const int n_followers = sb_chain_note(source, expert_stride, n_experts, n_ids, n_tokens,
+                                         ids_id_stride, ids_raw.data(), followers);
+    // The staging readahead is superseded by the merged fetch below whenever that
+    // is active: the merged fetch fills the followers' slots from this call's own
+    // wave, so there is nothing left for a readahead to guess at, and running both
+    // would read the same experts twice.
+    if (g_pf_enabled && !sb_layer_merge_enabled() && n_tokens <= SB_PF_MAX_TOKENS) {
+        for (int k = 0; k < n_followers; ++k) {
+            sb_pf_plan(followers[k], g_pf_prev_ids);
+        }
+    }
     // A decode call asks about a handful of experts out of tens of thousands of
     // entries. A prefill call asks about nearly all of them, and priming it would
     // cost more than the scans it replaces, so it keeps the per-lookup path.
-    if ((size_t) n_ids * (size_t) n_tokens <= 64) {
+    const bool small_call = (size_t) n_ids * (size_t) n_tokens <= 64;
+    if (small_call) {
         sb_mmid_prime(source, expert_stride, ids_raw.data(),
-                      ids_id_stride, ids_token_stride, n_ids, n_tokens);
+                      ids_id_stride, ids_token_stride, n_ids, n_tokens, true);
     }
 
     static thread_local std::vector<const void *> ptrs;
@@ -2759,6 +3251,34 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
                 return -1;
             }
             ptrs[i] = resident;
+        }
+    }
+
+    // The followers of this call - the other two expert tensors of this same
+    // layer, which read these very ids - have their slots reserved here, on the
+    // first call of the group. Their misses then ride in the one wave below
+    // instead of each paying a fresh read latency of its own. See the "merged
+    // layer fetch" note above for why that is the whole of the win.
+    if (small_call && !reuse && n_followers > 0 && sb_layer_merge_enabled()) {
+        for (int k = 0; k < n_followers; ++k) {
+            const sb_pf_desc & fo = followers[k];
+            if (fo.source == nullptr || fo.expert_stride == 0 || fo.n_experts <= 0) continue;
+            sb_mmid_prime(fo.source, fo.expert_stride, ids_raw.data(), ids_id_stride,
+                          ids_token_stride, n_ids, n_tokens, false);
+            for (int token = 0; token < n_tokens; ++token) {
+                for (int id_i = 0; id_i < n_ids; ++id_i) {
+                    const size_t raw_offset = (size_t) token * ids_token_stride
+                                            + (size_t) id_i * ids_id_stride;
+                    const int expert = *(const int32_t *) (ids_raw.data() + raw_offset);
+                    if (expert < 0 || expert >= fo.n_experts) continue;
+                    void * slot = sb_mmid_slot(
+                        fo.source, expert,
+                        (const uint8_t *) fo.source + (size_t) expert * fo.expert_stride,
+                        fo.expert_stride, miss, compute_stream);
+                    if (!slot) return -1;
+                    ++g_mp_reserved;
+                }
+            }
         }
     }
 

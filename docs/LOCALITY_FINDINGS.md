@@ -179,8 +179,13 @@ So, in priority order:
 - `GB` on the capacity axis assumes a uniform slot count per block, which is the
   design Sabah actually has.
 - The disk probe was single-purpose and lightly loaded (LM Studio not resident).
-  Under a real engine the drive also serves the PLE rows and the OS, so treat
-  2.5 GB/s as an upper bound and 1.4 GB/s as the conservative working number.
+  **Its 2.4-2.5 GB/s was a repeat-read artifact and has been withdrawn:** it drew
+  one offset list and re-read it for every case it reported, and this drive
+  serves a repeated read ~1.5x faster than a fresh one. Fresh offsets measure
+  1.05-1.45 GB/s at one to sixteen readers (`tools/disk_probe.py`,
+  `tools/io_bench.cu`, `docs/DECODE_BUDGET.md`), and under a real engine the
+  drive also serves the PLE rows and the OS, so treat **1.2-1.4 GB/s** as the
+  working number and the ~1.5x repeat-read rate as unreachable.
 - The baseline's split between CPU compute and I/O orchestration is **not yet
   measured**; the claim that it is not disk-bound is inferred from the disk
   probe, not from a direct profile.

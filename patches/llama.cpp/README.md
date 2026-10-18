@@ -50,6 +50,8 @@ exit; `lookups` must equal `tokens × n_used`, and `calls` must equal
 | `SABAH_LLAMA_HOT_BYTES` | VRAM budget of the expert hot tier (default 2 GiB) |
 | `SABAH_LLAMA_DIRECT_IO=0\|off` | force the staging reads through the mapping instead of `FILE_FLAG_NO_BUFFERING` |
 | `SABAH_LLAMA_IO_DEPTH` | unbuffered reads in flight per wave (default 8) |
+| `SABAH_LLAMA_IO_WORKERS` | synchronous readers behind a wave (default = `IO_DEPTH`, cap 8). `1` reads the wave on the calling thread: `SABAH_IO` then reports `overlap=1.00` |
+| `SABAH_LLAMA_LAYER_MERGE=1` | put a layer's three tensors in one wave (default off; measured, see below) |
 | `SABAH_LLAMA_PREFETCH=1` | staging readahead of the calls that follow (default off; see below) |
 | `SABAH_LLAMA_ID_CHECK=1` | download the router ids even when reused and compare: proves the reuse byte for byte |
 | `SABAH_LLAMA_VERIFY_BYTES=1\|fetch` | byte-compare hits and/or fetches against the GGUF range |
@@ -67,6 +69,27 @@ leaves them there; the demand path then finds them without touching the disk. It
 reserves no tier space and does not change residency (the tier's hit/miss
 counters are identical with it on). It is off by default: the disk is the
 binding constraint, so moving reads off the critical path does not pay yet.
+
+### Reading a wave, and the two read-path experiments that did not pay
+
+`SABAH_DISK` reports `sync=`/`pending=` (how the overlapped reads completed),
+`lanes=`/`lane_reads=`, and `SABAH_IO` reports the sum of the individual read
+calls against the wall time the caller spent inside the waves (`overlap`) and the
+average wave size. `SABAH_PHASE` reports `prime`, the residency snapshot's cost.
+
+* **Read lanes** (`SABAH_LLAMA_IO_WORKERS`): a wave is handed to that many threads,
+  each reading synchronously through its own file object. It makes the overlap
+  real - `overlap` goes from 1.00 at one lane to 3.8-4.3 at eight - and changes
+  nothing else: 18.97 GB of reads took 13713.9 / 13663.7 / 13734.0 ms at 1, 2 and
+  8 lanes, decode median 205.8 / 203.1 / 204.5 ms. This drive serves this access
+  pattern at ~1.4 GB/s whether the requests overlap or not.
+* **Merged layer fetch** (`SABAH_LLAMA_LAYER_MERGE=1`): the three expert tensors of
+  a layer share one wave. It halves the wave count exactly as intended (decode
+  99.9 -> 49.5 waves/token, prefill 5664 -> 4088) and buys nothing, because the
+  half of `fetch` that is not transfer is not a per-wave charge on this drive.
+  It is a net loss: ~205 ms/token without it, ~218 ms with it.
+
+See `docs/DECODE_BUDGET.md` for the driver-level measurements behind both.
 
 ## 0002 — `llama-sabah-diag`
 

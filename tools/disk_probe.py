@@ -9,6 +9,13 @@ This opens the file with Windows FILE_FLAG_NO_BUFFERING, so the page cache
 cannot flatter the result, and uses one handle per worker thread so a real
 queue depth can be issued without OVERLAPPED lifetime hazards.
 
+**Every case draws its own offsets.** An earlier version of this probe drew one
+offset list and reused it for every queue depth, which is not what the model
+does and is worth about 1.5x on this drive: re-reading a list it has just read,
+the drive here does 1814-1829 MB/s at depth 4-8, and drawn fresh it does
+1127-1457 MB/s (see tools/io_bench.cu, which varies one factor at a time, and
+docs/DECODE_BUDGET.md). `--reuse-offsets` reproduces the old number.
+
     python tools/disk_probe.py --file <model>.gguf
     python tools/disk_probe.py --file <model>.gguf --size-kb 512 --count 400 \
         --qd 1,8,32,64 --json results/disk_probe.json
@@ -147,6 +154,9 @@ def main() -> int:
     ap.add_argument("--json", default="")
     ap.add_argument("--region-gb", type=float, default=0.0,
                     help="limit random offsets to the first N GB (0 = whole file)")
+    ap.add_argument("--reuse-offsets", action="store_true",
+                    help="draw one offset list and re-read it for every case "
+                         "(the old behaviour; this drive serves it ~1.5x faster)")
     ap.add_argument("--skip-sequential", action="store_true")
     args = ap.parse_args()
 
@@ -169,10 +179,18 @@ def main() -> int:
     print("cache     : FILE_FLAG_NO_BUFFERING (page cache excluded)")
 
     rng = random.Random(args.seed)
-    offs = []
-    for _ in range(args.count):
-        o = rng.randrange(0, hi)
-        offs.append(o - (o % 4096))
+
+    def draw() -> list[int]:
+        out = []
+        for _ in range(args.count):
+            o = rng.randrange(0, hi)
+            out.append(o - (o % 4096))
+        return out
+
+    offs = draw()
+    print("offsets   : %s"
+          % ("one list re-read (--reuse-offsets)" if args.reuse_offsets
+             else "fresh per case"))
 
     results = []
     if not args.skip_sequential:
@@ -180,9 +198,11 @@ def main() -> int:
         results.append(run_case(args.file, seq, 64 * 1024 * 1024, 1,
                                 "sequential 64MB x4"))
     for qd in qds:
-        results.append(run_case(args.file, offs, size, qd, "random %dKB" % args.size_kb))
-    results.append(run_case(args.file, sorted(offs), size, max(qds),
-                            "random %dKB SORTED" % args.size_kb))
+        case_offs = offs if args.reuse_offsets else draw()
+        results.append(run_case(args.file, case_offs, size, qd,
+                                "random %dKB" % args.size_kb))
+    results.append(run_case(args.file, sorted(offs if args.reuse_offsets else draw()),
+                            size, max(qds), "random %dKB SORTED" % args.size_kb))
 
     print("\ninterpretation (134 MB = per-token miss at a ~10.6 GB tier, 86%% hit):")
     for r in results:
