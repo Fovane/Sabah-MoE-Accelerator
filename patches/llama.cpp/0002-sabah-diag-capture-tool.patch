@@ -22,10 +22,10 @@ index 0000000..ee7d2aa
 +target_compile_features(${TARGET} PRIVATE cxx_std_17)
 diff --git a/tools/sabah-diag/sabah-diag.cpp b/tools/sabah-diag/sabah-diag.cpp
 new file mode 100644
-index 0000000..000b6c2
+index 0000000..a12c04a
 --- /dev/null
 +++ b/tools/sabah-diag/sabah-diag.cpp
-@@ -0,0 +1,532 @@
+@@ -0,0 +1,598 @@
 +// sabah-diag: deterministic greedy runs that dump what is needed to compare
 +// execution paths of the same llama.cpp graph without trusting the final text.
 +//
@@ -50,6 +50,14 @@ index 0000000..000b6c2
 +//   SABAH_DIAG_FORCE_DIR teacher forcing: step s of prompt <id> feeds
 +//                        <dir>/<id>/fed.i32[s] instead of the argmax
 +//   SABAH_DIAG_FORCE     (single-prompt mode) path of a fed.i32 file
++//   SABAH_DIAG_BATCH_PROBE  B > 1 (single prompt, with SABAH_DIAG_FORCE): feed
++//                        the forced tokens in groups of B as ONE batch, the way
++//                        a speculative-verification pass feeds its drafts, and
++//                        record one wall time per pass (into step_ms) plus the
++//                        pass sizes (batch_probe_n.i32). Every position's logits
++//                        are read, as a verifier must. The token stream is the
++//                        forced one, so the run stays a sequential-decode run
++//                        with a different batch shape and nothing else.
 +//   SABAH_DIAG_NAMES     comma list of tensor base names to capture; empty
 +//                        means no eval callback (uninstrumented graph)
 +//   SABAH_DIAG_LAYERS    optional comma list of layers
@@ -374,6 +382,7 @@ index 0000000..000b6c2
 +    const std::string manifest = env_str("SABAH_DIAG_MANIFEST");
 +    const bool multiseq = env_str("SABAH_DIAG_MULTISEQ") == "1";
 +    const std::string force_dir = env_str("SABAH_DIAG_FORCE_DIR");
++    const int probe_b = std::atoi(env_str("SABAH_DIAG_BATCH_PROBE", "0").c_str());
 +
 +    // read the manifest before the model so its size can configure sequences
 +    std::vector<json> entries;
@@ -476,6 +485,63 @@ index 0000000..000b6c2
 +            if (llama_decode(ctx, llama_batch_get_one(it.tokens.data(), (int32_t) it.tokens.size()))) {
 +                fprintf(stderr, "sabah-diag: prompt decode failed (%s)\n", it.id.c_str());
 +                return 2;
++            }
++            if (probe_b > 1 && !it.forced.empty()) {
++                // Batch-verification probe. The forced tokens are the model's own
++                // greedy tokens, so a verifier would accept every one of them:
++                // this is the pass cost of speculative decoding at 100%
++                // acceptance. Positions and KV state match the sequential run.
++                std::vector<int32_t> sizes;
++                std::vector<llama_token> chunk(probe_b);
++                llama_pos p = llama_memory_seq_pos_max(llama_get_memory(ctx), 0) + 1;
++                size_t off = 0;
++                int pass = 0;
++                while (off < it.forced.size()) {
++                    const int k = (int) std::min<size_t>((size_t) probe_b, it.forced.size() - off);
++                    for (int i = 0; i < k; ++i) chunk[i] = it.forced[off + i];
++                    llama_batch b = llama_batch_init(k, 0, 1);
++                    for (int i = 0; i < k; ++i) {
++                        b.token[i] = chunk[i];
++                        b.pos[i] = p + i;
++                        b.n_seq_id[i] = 1;
++                        b.seq_id[i][0] = 0;
++                        b.logits[i] = 1;              // a verifier needs every position
++                    }
++                    b.n_tokens = k;
++                    st.step = pass + 1;
++                    st.occ.clear();
++                    st.active = step_selected(steps_spec, pass + 1);
++                    const auto t1 = std::chrono::steady_clock::now();
++                    if (llama_decode(ctx, b)) {
++                        fprintf(stderr, "sabah-diag: probe batch failed (%s)\n", it.id.c_str());
++                        return 2;
++                    }
++                    const double ms = std::chrono::duration<double, std::milli>(
++                            std::chrono::steady_clock::now() - t1).count();
++                    int last = 0;
++                    for (int i = 0; i < k; ++i) {
++                        // Every position's logits, in batch order: the verifier's
++                        // own evidence. They line up one-to-one with the
++                        // sequential run's logits at the same positions.
++                        const float * lg = llama_get_logits_ith(ctx, i);
++                        it.logits.insert(it.logits.end(), lg, lg + n_vocab);
++                        last = argmax_of(lg, n_vocab);
++                    }
++                    llama_batch_free(b);
++                    it.step_ms.push_back(ms);
++                    it.argmax.push_back(last);
++                    sizes.push_back(k);
++                    fprintf(stderr, "sabah-diag: %s pass %d n=%d last_argmax %d  %.1f ms\n",
++                            it.id.c_str(), pass, k, last, ms);
++                    p += k;
++                    off += k;
++                    ++pass;
++                }
++                snapshot_status(it.dir + "/sabah_status_end.json");
++                finish_item(it, n_vocab, "batch_probe B=" + std::to_string(probe_b));
++                write_file(it.dir + "/batch_probe_n.i32", sizes.data(),
++                           sizes.size() * sizeof(int32_t));
++                continue;
 +            }
 +            for (int s = 0; s < it.n_steps; ++s) {
 +                const double ms = std::chrono::duration<double, std::milli>(

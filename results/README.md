@@ -2,7 +2,8 @@
 
 The raw output behind every number the top-level README labels **MEASURED**.
 All of it comes from one machine: RTX 4050 Laptop (6 GB, sm_89, PCIe gen4 x8),
-29.8 GB RAM, Windows 11, CUDA 13.3.
+29.8 GB RAM, Windows 11, CUDA 13.3 - except `matrix.json`, which is the reference
+rig named in its own row and carries an environment fingerprint of its own.
 
 | file | produced by | what it shows |
 |---|---|---|
@@ -11,6 +12,7 @@ All of it comes from one machine: RTX 4050 Laptop (6 GB, sm_89, PCIe gen4 x8),
 | `bench_moe_blk0_ram.json` | `sabah bench --block 0 --bank-mode ram` | pinned RAM bank, staging copy removed |
 | `calib_check.json` | `sabah calibrate` | static placement vs LRU, 4-48 GB |
 | `calib_check_hi.json` | `sabah calibrate --caps 2,6,20,28,36,56,64,72` | the rest of the curve |
+| `matrix.json` | `sabah matrix` (reference rig: RTX 5060 Ti 16 GB, 15.38 GiB RAM) | the shipped streaming path, split by regime: fill / warm-up / steady state, plus the correctness switches |
 
 Reproduce with the commands in the table. The numbers will differ on other
 hardware; that is the point of `sabah qualify`.

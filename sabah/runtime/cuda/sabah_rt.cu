@@ -440,6 +440,26 @@ static void sb_mmid_evict_until(size_t needed, cudaStream_t compute_stream) {
 // oracle is the mapped file, so every check pulls those pages into RAM - the
 // budget bounds that, otherwise a long prefill would fill the machine with the
 // pages the verifier itself asked for.
+//
+// A verification failure also says *where* the served bytes came from, because a
+// bare "differs" is not actionable. The origin of every pending fetch is kept
+// while verification is on, so the mismatch line can name the file and offset.
+struct sb_fetch_origin {
+    const void * dst;
+    size_t       file;
+    uint64_t     off;
+    size_t       bytes;
+};
+static std::mutex                   g_origin_mutex;
+static std::vector<sb_fetch_origin> g_origin;
+// The last object a verification rejected, so the error message the host sees can
+// name the file and offset instead of only "differs".
+static size_t                       g_verify_last_file = (size_t) -1;
+static uint64_t                     g_verify_last_off  = 0;
+
+// Defined after the disk-file table; used only to name a file in a diagnostic.
+static const char * sb_disk_file_path(size_t i, uint64_t * size_out);
+
 static bool sb_mmid_verify(const void * device, const void * source, size_t bytes) {
     if (g_mmid_verify_budget == 0) return true;   // budget spent: assert nothing
     if (g_mmid_verify_budget != UINT64_MAX) --g_mmid_verify_budget;
@@ -451,6 +471,56 @@ static bool sb_mmid_verify(const void * device, const void * source, size_t byte
     }
     if (std::memcmp(back.data(), source, bytes) != 0) {
         ++g_mmid_verify_fail;
+        // How they differ is the whole diagnosis: a mismatch at byte ~0 with the
+        // rest matching is a placement error, a contiguous run at the end is a
+        // short read (the staging buffer's stale tail), and mismatches scattered
+        // through the whole object is the wrong object.
+        const uint8_t * a = back.data();
+        const uint8_t * b = (const uint8_t *) source;
+        size_t nmis = 0, firsts[8], nf = 0, runs = 0, prev = (size_t) -1;
+        for (size_t i = 0; i < bytes; ++i) {
+            if (a[i] != b[i]) {
+                ++nmis;
+                if (prev == (size_t) -1 || i != prev + 1) ++runs;
+                prev = i;
+                if (nf < 8) firsts[nf++] = i;
+            }
+        }
+        char pos[8 * 12 + 1];
+        size_t po = 0;
+        for (size_t i = 0; i < nf; ++i) {
+            po += (size_t) snprintf(pos + po, sizeof(pos) - po, "%s%llu",
+                                    i ? "," : "", (unsigned long long) firsts[i]);
+        }
+        const char * where = "unresolved";
+        uint64_t fsize = 0;
+        g_verify_last_file = (size_t) -1;
+        g_verify_last_off  = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_origin_mutex);
+            for (const auto & o : g_origin) {
+                if (o.dst == device) {
+                    g_verify_last_file = o.file;
+                    g_verify_last_off  = o.off;
+                    std::fprintf(stderr,
+                                 "SABAH_VERIFY_MISMATCH bytes=%llu differing=%llu runs=%llu first=%s\n"
+                                 "  read %llu bytes at offset %llu of file #%llu (%s, size %llu),"
+                                 " source=%p\n",
+                                 (unsigned long long) bytes, (unsigned long long) nmis,
+                                 (unsigned long long) runs, pos,
+                                 (unsigned long long) o.bytes, (unsigned long long) o.off,
+                                 (unsigned long long) o.file, sb_disk_file_path(o.file, &fsize),
+                                 (unsigned long long) fsize, source);
+                    std::fflush(stderr);
+                    return false;
+                }
+            }
+        }
+        std::fprintf(stderr,
+                     "SABAH_VERIFY_MISMATCH bytes=%llu differing=%llu runs=%llu first=%s (%s)\n",
+                     (unsigned long long) bytes, (unsigned long long) nmis,
+                     (unsigned long long) runs, pos, where);
+        std::fflush(stderr);
         return false;
     }
     ++g_mmid_verify_ok;
@@ -626,7 +696,10 @@ static void * sb_mmid_slot(const void * source_key, int expert,
             if (entry.filled && g_mmid_verify &&
                 (g_mmid_verify_all_hits || g_mmid_hits % g_mmid_verify_hit_every == 0) &&
                 !sb_mmid_verify(entry.device, source, bytes)) {
-                snprintf(g_err, sizeof(g_err), "Sabah resident expert %d differs from its GGUF bytes (hit)", expert);
+                snprintf(g_err, sizeof(g_err),
+                         "Sabah resident expert %d differs from its GGUF bytes (hit): the slot was "
+                         "delivered earlier in this run (see SABAH_VERIFY_MISMATCH; a stale OS page "
+                         "cache for the model file is the usual cause, not the read)", expert);
                 return nullptr;
             }
             return entry.device;
@@ -703,6 +776,14 @@ struct sb_disk_file {
 static std::mutex                    g_disk_mutex;
 static std::vector<sb_disk_file>     g_disk_files;
 static std::map<std::string, size_t> g_disk_paths;
+
+// Forward-declared beside sb_mmid_verify, which needs it in a diagnostic.
+static const char * sb_disk_file_path(size_t i, uint64_t * size_out) {
+    if (size_out) *size_out = 0;
+    if (i >= g_disk_files.size()) return "file out of range";
+    if (size_out) *size_out = g_disk_files[i].size;
+    return g_disk_files[i].path.c_str();
+}
 
 #if defined(_WIN32)
 // "\Device\HarddiskVolume3\Strata-data\x.gguf" -> "C:\Strata-data\x.gguf"
@@ -1042,8 +1123,16 @@ static sb_io_wave *             g_wave      = nullptr;
 static uint64_t                 g_wave_gen  = 0;
 static int                      g_wave_workers = 0;
 static bool                     g_wave_stop = false;
-static std::vector<std::thread> g_wave_threads;
-static std::once_flag           g_wave_once;
+static bool                     g_wave_started = false;
+// The pool's threads are held behind a pointer that is deliberately never freed.
+// A std::thread that is still joinable when its destructor runs calls
+// std::terminate -> abort, and no host calls sabah_rt_shutdown, so the vector's
+// own destructor *would* run at process exit and the run would end in a hard
+// fast-fail (STATUS_STACK_BUFFER_OVERRUN, exit 0xC0000409) instead of exiting 0.
+// Nothing needs to run at exit either: the workers are parked on
+// g_wave_start_cv and the process reclaims them. A host that wants the pool gone
+// before it unloads this DLL calls sabah_rt_shutdown, which joins them.
+static std::vector<std::thread> * g_wave_threads = nullptr;
 static uint64_t                 g_io_lane_reads = 0;
 // Sum of the individual read durations, per lane. If the lanes really overlap
 // this is a large multiple of the time the caller spends waiting for a wave.
@@ -1117,31 +1206,64 @@ static void sb_io_wave_worker(int id) {
     }
 }
 
-// Start the pool once. Returns false if it could not be started, in which case
-// the caller falls back to reading the wave on its own thread.
+// Start the pool. Returns false if it could not be started, in which case the
+// caller falls back to reading the wave on its own thread. Cheap after the first
+// call: one uncontended lock, then a load of g_wave_workers.
 static bool sb_io_pool_start() {
-    std::call_once(g_wave_once, [] {
-        size_t want = sb_io_depth();
-        if (const char * w = std::getenv("SABAH_LLAMA_IO_WORKERS")) {
-            long v = strtol(w, nullptr, 10);
-            if (v >= 1) want = (size_t) v;
+    {
+        std::lock_guard<std::mutex> lock(g_wave_mutex);
+        if (g_wave_workers > 0 || g_wave_started) return g_wave_workers > 0;
+    }
+    size_t want = sb_io_depth();
+    if (const char * w = std::getenv("SABAH_LLAMA_IO_WORKERS")) {
+        long v = strtol(w, nullptr, 10);
+        if (v >= 1) want = (size_t) v;
+    }
+    if (want > (size_t) SB_IO_LANES) want = (size_t) SB_IO_LANES;
+    if (want < 1) want = 1;
+    // Never more readers than the shards actually got file objects for.
+    {
+        std::lock_guard<std::mutex> lock(g_disk_mutex);
+        for (const auto & f : g_disk_files) {
+            if (f.lanes > 0 && want > (size_t) f.lanes) want = (size_t) f.lanes;
         }
-        if (want > (size_t) SB_IO_LANES) want = (size_t) SB_IO_LANES;
-        if (want < 1) want = 1;
-        // Never more readers than the shards actually got file objects for.
-        {
-            std::lock_guard<std::mutex> lock(g_disk_mutex);
-            for (const auto & f : g_disk_files) {
-                if (f.lanes > 0 && want > (size_t) f.lanes) want = (size_t) f.lanes;
-            }
-        }
-        g_wave_workers = (int) want;
-        g_wave_threads.reserve((size_t) g_wave_workers);
-        for (int i = 0; i < g_wave_workers; ++i) {
-            g_wave_threads.emplace_back(sb_io_wave_worker, i);
-        }
-    });
-    return g_wave_workers > 0;
+    }
+    std::lock_guard<std::mutex> lock(g_wave_mutex);
+    if (g_wave_workers > 0 || g_wave_started) return g_wave_workers > 0;
+    if (!g_wave_threads) g_wave_threads = new std::vector<std::thread>();
+    g_wave_workers = (int) want;
+    g_wave_started = true;
+    g_wave_stop    = false;
+    // Starting the threads here, under the lock, is safe: they go straight to
+    // g_wave_start_cv and this thread never waits for them.
+    g_wave_threads->reserve((size_t) g_wave_workers);
+    for (int i = 0; i < g_wave_workers; ++i) {
+        g_wave_threads->emplace_back(sb_io_wave_worker, i);
+    }
+    return true;
+}
+
+// Stop the pool and join its workers. Called by sabah_rt_shutdown, before the
+// staging the workers write into is freed and before a host may unload this DLL;
+// the pool can be started again afterwards. Process exit deliberately does not
+// do this - see g_wave_threads - so the only caller is a host that asked for it.
+static void sb_io_pool_stop() {
+    std::vector<std::thread> * threads = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_wave_mutex);
+        threads = g_wave_threads;
+        g_wave_started = false;
+        g_wave_workers = 0;
+        if (threads) g_wave_stop = true;
+    }
+    if (!threads) return;
+    g_wave_start_cv.notify_all();
+    for (auto & t : *threads) {
+        if (t.joinable()) t.join();
+    }
+    std::lock_guard<std::mutex> lock(g_wave_mutex);
+    threads->clear();
+    g_wave_stop = false;
 }
 
 // Read a whole wave. On return every request either has `got` set or `ok`
@@ -1206,6 +1328,16 @@ static bool sb_fetch_direct(std::vector<sb_fetch> & miss) {
         if (!sb_resolve(miss[i].source, file[i], off[i], &why)) {
             snprintf(g_err, sizeof(g_err), "%s", why.empty() ? "unresolved source" : why.c_str());
             return false;
+        }
+    }
+    if (g_mmid_verify) {
+        // Diagnostics only: recording this costs a mutex and a store per miss, and
+        // it exists so a rejected object can name the file and offset it came from.
+        // Verification is a small-test switch, so the hot path never pays for it.
+        std::lock_guard<std::mutex> lock(g_origin_mutex);
+        g_origin.clear();
+        for (size_t i = 0; i < miss.size(); ++i) {
+            g_origin.push_back({miss[i].dst, file[i], off[i], miss[i].bytes});
         }
     }
 
@@ -1881,7 +2013,12 @@ static bool sb_mmid_fill(std::vector<sb_fetch> & miss) {
         }
         if (g_mmid_verify && !sb_mmid_verify(f.dst, f.source, f.bytes)) {
             snprintf(g_err, sizeof(g_err),
-                     "Sabah fetched expert %d differs from its GGUF bytes (miss)", f.expert);
+                     "Sabah fetched expert %d differs from its GGUF bytes (miss): %llu bytes at "
+                     "offset %llu of %s (see SABAH_VERIFY_MISMATCH; a stale OS page cache for "
+                     "that file is the usual cause, not the read)",
+                     f.expert, (unsigned long long) f.bytes,
+                     (unsigned long long) g_verify_last_off,
+                     sb_disk_file_path(g_verify_last_file, nullptr));
             return false;
         }
     }
@@ -2802,6 +2939,7 @@ static void sb_pinned_pool_destroy() {
 
 SABAH_API int sabah_rt_shutdown(void) {
     sb_pf_quit();          // stop reserving and copying before the tier is freed
+    sb_io_pool_stop();     // and stop the wave readers before staging is freed
     sb_mmid_reset();
     sb_slab_destroy();
     sb_io_pool_destroy();

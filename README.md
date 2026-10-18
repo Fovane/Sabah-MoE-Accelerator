@@ -17,11 +17,19 @@ Measured end to end on the reference rig:
 | | |
 |---|---|
 | model | `Qwen3.8-Flash-Next` IQ3_S, **83.6 GB** (2 shards, 48 blocks x 512 experts, top-10) |
-| decode | **4.84 tok/s** (206 ms/token) |
-| prefill | ~145 tok/s (1596 tokens in ~11 s) |
+| time to first token | **11.2 s** (the 53-token prompt is easy; the expert tier starts empty and fills 12.68 GB at 1.11 GB/s) |
+| decode, steady state | **~67 ms/token = ~15 tok/s**, effectively disk-free (4.5 reads, 3.0 MB/token) |
+| decode, first 128 tokens | 79-204 ms/token: the tier is still discovering its working set |
+| 256-token answer end to end | 11.2 s + 24.6 s = **7.1 tok/s including the fill**, 10.4 over the decodes |
 | **host RAM** | **flat at 4.78 GiB**, never grows, `mapped_fallbacks=0` |
 | peak VRAM | 15.36 GB of 16.31 GB |
-| correctness | byte-exact against the GGUF ranges (`verify_ok=500 verify_fail=0`) |
+| correctness | byte-exact against the GGUF ranges (`verify_ok=64191 verify_fail=0`) |
+
+The shape matters here, so it is worth stating plainly: this runtime is fast once
+warm and slow to get warm, because the tier (9.8 GB) is smaller than the working
+set of a fresh prompt (12.68 GB of cold fill) and has to learn it. One long answer
+runs at 15 tok/s; many short ones pay ~11 s each before the first token. The full
+breakdown, per regime, is in [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md).
 
 Numbers describe the **shipped streaming path** (`sabah/runtime/cuda/sabah_rt.cu`
 + the llama.cpp bridge). The separate Python block-level harness in
@@ -127,56 +135,74 @@ revisiting when the disk term drops below the bookkeeping term.
 
 ## The measured decode budget
 
-Isolated by differencing two runs of the same binary (`-n 32` minus `-n 8`, so
-prefill cancels out). Full method and attribution:
-[`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md).
+A generation has three regimes and they must not be averaged:
+
+| regime | cost | what limits it |
+|---|---|---|
+| **time to first token** (53-token prompt) | **11.2 s** | the tier's cold fill: 12.68 GB at 1.11 GB/s |
+| **warm-up** (first ~128 decodes) | 70.6 MB/token of disk, 79-204 ms/token | the tier still discovering its working set |
+| **steady state** (~15 tok/s, ~67 ms/token) | 3.0 MB/token, 4.5 reads/token | the no-disk floor - the disk is off the critical path |
+
+End to end a 256-token answer is 11.2 s + 24.6 s = **7.1 tok/s including the
+fill**, 10.4 tok/s over the decodes alone, 15 tok/s once warm. Full method, phase
+attribution and the per-regime lever table: [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md).
+
+The warm-up token, phase by phase (differencing `-n 32` minus `-n 8`, i.e. decode
+steps 9..32 — this is the number the README used to quote as *the* rate):
 
 | phase | per token | notes |
 |---|---|---|
-| `fetch` — disk reads + H2D | **133 ms** | 174.7 MB/token over 262 misses, 81.8% hit |
-| `ids` — router download + drain | **23 ms** | 3 calls per layer |
-| `slot` — residency bookkeeping | **11.5 ms** | |
-| `ptr` — pointer table upload | **1.8 ms** | |
-| graph + launch overhead | ~37 ms | unprofiled |
-| **decode wall** | **206 ms/token = 4.84 tok/s** | |
+| `fetch` — disk reads + H2D | **121.8 ms** | 164.5 MB/token over 247.4 misses, 82.8% marginal hit |
+| `ids` — router download + drain | **29.3 ms** | 3 calls per layer |
+| `slot` — residency bookkeeping | **9.3 ms** | 239 evictions/token, ~39 us each |
+| `ptr` + `prime` | **2.8 ms** | |
+| outside the bridge (graph, launch, host ops) | **27.7 ms** | residual: phases sum to 163.2 of 190.9 |
+| **warm-up decode wall** | **190.9 ms** | median 205.7 ms |
 
-This budget is the honest state of the project: it says exactly what stands
-between the runtime and its target, and it is the reason the target was re-scoped.
+The steady state is the floor and nothing else: measured independently by
+replaying a token stream against a warm tier (which reads 0 bytes), **67.3
+ms/token**. Two different measurements, same number.
 
-### The disk is the wall, and it is not yet saturated
+### The disk is the wall for the fill and the warm-up, and it is saturated there
 
 | | |
 |---|---|
 | drive | MSI M371 1TB NVMe (Gen3 class) |
-| drive ceiling measured | 2337 MB/s sequential, **2500 MB/s** random 1 MB @ QD 8 |
-| per-request latency | **0.66 ms** (QD 1 random 1 MB is already 1568 MB/s) |
-| Sabah achieves | **1310 MB/s** in the demand path |
+| drive ceiling, fresh offsets, 676 KB random | **1.05-1.45 GB/s** (repeat-offset probes overstate it ~1.5x) |
+| Sabah achieves in the demand path | **1.11-1.35 GB/s** |
+| Sabah achieves in the steady state | ~0: 3 MB/token |
 
-So 174.7 MB/token should cost ~73 ms of pure transfer at the drive's own ceiling,
-and it costs **133 ms**. The ~60 ms difference is **exposed latency**, not
-saturation: the read for layer *L*'s experts cannot be issued until layer *L*'s
-router has run, so the dependency chain is only about one layer deep and the
-drive's queue is never filled. Raising IO depth cannot fix that, which is exactly
-what the prefetcher experiment showed.
+So the demand path is **at** the drive's rate, not below it — that is lever 2's
+conclusion, and it is why raising IO depth or prefetching changes nothing: there
+is no unused bandwidth to recover. The dependency chain is also genuinely one
+layer deep (layer *L*+1's router needs layer *L*'s expert output), so the drive is
+idle during the GPU work and vice versa; a faster drive helps by exactly
+`bytes / rate`, which is why the 12.68 GB fill is the most valuable thing on this
+list to attack.
 
 ## What this project does not claim
 
-- **It does not reach 10-15 tok/s on this machine, and it should not be described
-  as if it does.** The original target was written before this budget existed.
-  With the current algorithm and this drive the ceiling is
-  `73 ms (perfect overlap) + 71.5 ms (everything else) = ~145 ms -> ~6.9 tok/s`.
-  10 tok/s needs 100 ms/token, and 73 ms of that is disk at full efficiency.
-- **It is not faster than a machine with enough RAM.** If host RAM were allowed to
-  be a tier, ~83% of demand would be served from RAM at ~10 GB/s and the disk term
-  would mostly disappear. Sabah trades that speed away for a hard guarantee about
-  RAM — that is a deliberate budget decision, not a performance claim.
+- **It reaches 15 tok/s only once warm.** The remaining gap is the fill, which is
+  paid once per fresh working set: 12.68 GB at 1.11 GB/s. On a 6 GB/s drive the
+  same fill is ~2.1 s and a 256-token answer goes from 7.1 to ~10.5 tok/s end to
+  end. The steady state cannot be improved by any storage change at all - it is
+  already the floor - and the floor is the model's own per-layer work at batch 1.
+- **It is not faster than a machine with enough RAM.** With host RAM allowed to be
+  a tier, the warm-up's ~110 reads/token could be served at 0.047 ms instead of
+  0.45 ms per expert (measured, [`docs/SECOND_TIER.md`](docs/SECOND_TIER.md)),
+  worth ~1.5x on the warm-up and nothing on the steady state. Sabah trades that
+  away for a hard guarantee about RAM — a deliberate budget decision, not a
+  performance claim.
 - **Virtual memory does not help.** Windows "virtual memory" is the page file on
   the same NVMe, reached through the page-fault path instead of a 676 KB
   unbuffered read at QD 8 — the same bandwidth, a worse access path, no
-  controllable queue depth. It adds capacity, and capacity is not the constraint.
-- **The GTX 1080 is not used.** `sabah_rt.dll` is built for `sm_120` only. A
-  second tier on the 1080 would need cross-device copies over PCIe with no P2P on
-  consumer parts; the projected ceiling is +18%, which has not been worth the risk.
+  controllable queue depth. It adds capacity, and the steady state does not need
+  capacity.
+- **The GTX 1080 is not used, and measurement says it should not be.** The old
+  +18% ceiling assumed the path was cheap. It is not: a park plus a hit through
+  the 1080 costs 0.454 ms per expert against the disk's 0.45 ms, with no P2P on
+  consumer parts and a gen3 x4 link on the 1080. Break-even at a 100% hit rate and
+  worse from there ([`docs/SECOND_TIER.md`](docs/SECOND_TIER.md)).
 
 ## Hardware and target artifact
 
@@ -239,12 +265,36 @@ to end as well (verified — `EXITCODE=0`, zero mapped fallbacks, generated text
 
 Two things to know when reproducing:
 
-- The chat template expands a trivial prompt to **~8.5k tokens** (`tokens=8484`
-  for `-p "Hello"`), so a bare `llama-cli` run is prefill-dominated and its
-  console summary is not the decode rate. It also does more work than the diag
-  driver under identical flags (28.8 s vs 22.8 s wall, +35% bytes).
-- **Quote decode from the diag driver.** Differencing `-n 32` and `-n 8` cancels
-  the prefill and yields the 206 ms/token in the budget above.
+- **The prompt is 53 tokens, and the first token still costs ~11 s.** The chat
+  template around `-p "Hello"` is 53 tokens (the diag writes the ids it used to
+  `prompt_tokens.i32`; `prompt.txt` shows the text). The 11 s is the expert
+  tier's **cold fill**: 12.68 GB at 1.11 GB/s, all of it before step 1. The
+  `tokens=` field in the `SABAH_DIAG` line is a count of expert *rows*
+  (`layers x tensors x batch`), not prompt tokens — for a 6-decode run it is
+  already 8484, which is where an earlier version of this README misread it.
+- **Quote decode per regime, not as one number.** `-n 1` is the fill, `-n 128`
+  shows the warm-up, `-n 256` reaches the steady state (67 ms/token, disk-free);
+  differencing `-n 32` and `-n 8` gives the warm-up marginal token
+  (190.9 ms/token), which is *not* the sustained rate. `sabah run` reports all
+  three.
+
+### One-command harness
+
+`sabah run` drives the same binary, reads the counters out of it, and reports the
+three regimes (fill, warm-up, steady state); `sabah matrix` regenerates the
+results matrix as JSON; `sabah gate` runs the correctness switches as pass/fail:
+
+```powershell
+python -m sabah.tools.cli run    <model.gguf> --tokens 256
+python -m sabah.tools.cli matrix <model.gguf> --out results/matrix.json
+python -m sabah.tools.cli gate   <model.gguf>
+```
+
+`sabah run` needs `SABAH_DIAG_EXE` (a built `llama-sabah-diag.exe`) and
+`SABAH_RT_LIB`; `--diag` and `--rt` override both. The cache counters in every
+report come from the runtime's exit snapshot, which is exact — so no timed run
+sets `SABAH_LLAMA_STATUS_FILE` (the runtime rewrites that file after *every*
+expert call, which costs ~0.3 s per token here and turns 14.6 tok/s into 1.9).
 
 ### Verification switches
 
@@ -259,7 +309,39 @@ These are the gate, not debugging aids. Run them before believing any number.
 | `SABAH_LLAMA_IO_WORKERS=1` | reads each wave on the calling thread; `SABAH_IO` then reports `overlap=1.00` instead of ~3.8, with the same wall time |
 | `SABAH_LLAMA_LAYER_MERGE=1` | one wave per layer instead of three; halves the wave count and costs ~13 ms/token (default off) |
 
-Recorded results: `verify_ok=500 verify_fail=0`, `check_ok=3072 check_fail=0`.
+Measured by `sabah gate` on the reference rig: `verify_ok=2000 verify_fail=0`,
+`id_check_ok=768 id_check_fail=0`, exit code 0.
+
+Two things about the run that prints those numbers. First, the `overflow` counter
+it also prints (448) is **not** a correctness failure: `overflow` counts
+over-budget expert allocations — when every eviction candidate is still
+referenced by the call in flight, the tier allocates past its budget rather than
+dangle a pointer — and the byte comparison above is what proves the routed result
+stayed exact. The gate reports it and does not fail on it. Second, the exit code
+is worth checking: every process that used the direct I/O wave pool used to end
+in a fast-fail (`0xC0000409`) *after* the run and its trace had completed,
+because the pool's worker threads were never joined. `sabah gate` was the first
+thing here to check the exit code, and that is what found it; fixed in
+`sabah/runtime/cuda/sabah_rt.cu`.
+
+Third — read this before chasing a `differs from its GGUF bytes` failure. The
+oracle reads the file through the OS mapping, i.e. the page cache; the runtime
+reads it with `FILE_FLAG_NO_BUFFERING`, which the cache cannot answer. Those two
+can disagree about the same range, and they did:
+
+- 10 bytes of one 921600-byte expert, at offset 1,367,138,304 of the first shard,
+  identical in three consecutive runs, and independent of the I/O path (same 10
+  bytes at depth 1, at one worker, and at depth 2 — so not a staging race);
+- reproduced **outside the runtime and outside llama.cpp** with a plain buffered
+  `read()` against an unbuffered `ReadFile` of the same range, while the mismatch
+  line named the file, the offset and the byte positions;
+- gone on the next run of the same binary, with no change to it.
+
+So this failure means "the served bytes and the cached image of the file
+disagree". It does not say which side is stale: a cached page can be older than
+the disk, or newer than an unflushed write. What it does say is that the check
+fired and that the case needs to be looked at — start with the two routes on that
+range, not with the streaming path.
 
 ## Repository layout
 
@@ -301,7 +383,8 @@ New IQ quant types implemented along the way, validated bit-exact against the
 
 | doc | contents |
 |---|---|
-| [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md) | the full decode budget, disk analysis, tier projections |
+| [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md) | the three decode regimes (fill / warm-up / steady state), phase attribution, the no-disk floor, lever verdicts |
+| [`docs/SECOND_TIER.md`](docs/SECOND_TIER.md) | lever 5 measured: what a second tier actually costs per expert on this rig |
 | [`docs/LOCALITY_FINDINGS.md`](docs/LOCALITY_FINDINGS.md) | hit-rate and Belady measurements behind the slab size |
 | [`patches/llama.cpp/README.md`](patches/llama.cpp/README.md) | bridge semantics, ABI, every environment variable |
 | [`docs/ACCEL_LAYERS.md`](docs/ACCEL_LAYERS.md) | the A-D acceleration layers of the research harness |
@@ -312,30 +395,47 @@ New IQ quant types implemented along the way, validated bit-exact against the
 
 ## What would actually move the needle
 
-Ordered by measured leverage, with the honest cost of each.
+Ordered by measured leverage. **The regime decides which lever matters**: the fill
+is paid once per fresh working set (11.2 s), the warm-up is the tier learning
+(~9 GB), and the steady state is disk-free and only the floor can move it.
 
 | # | lever | effect | cost/risk |
 |---|---|---|---|
-| 1 | **Gen4/Gen5 NVMe** | the disk-bound token is ~120 ms of 206. The 6 GB/s projection assumed the old probe's repeat-read ceiling; re-measure any candidate with fresh offsets (`tools/disk_probe.py`, `tools/io_bench.cu`) | money. Still the only single change that could reach the target |
-| 2 | ~~**Close the exposure gap** (1.31 -> ~2.4 GB/s in the demand path)~~ **measured, no gap to close** | the 2.4 GB/s target was a repeat-read artifact of the old probe: with fresh offsets this drive reads ~1.05-1.45 GB/s and gains only ~15% from one reader to sixteen. The runtime reads at 1.38-1.46 GB/s | n/a. See `docs/DECODE_BUDGET.md` |
-| 3 | **Fewer bytes per token** — batch verification / speculative decoding | measured union 982 -> 676 MB/token at B=4, i.e. ~31% less demand and proportional miss traffic | medium-high. Speculative *verification* keeps routing semantics exact, so it respects rule 2 |
-| 4 | **The ~44 ms per token spent outside the runtime** | second only to `fetch`, and not moved by `-t 4..12` or `-fa`; measured, still unprofiled | low-medium |
-| 5 | GTX 1080 as a second tier | +18% ceiling, ~54 ms/token of PCIe traffic | high risk, no P2P on consumer parts |
-| 6 | Productisation: one-command launch, a harness that regenerates the whole results matrix as JSON, correctness as an automated gate | 0% speed, most of the project's remaining value | low |
+| 1 | **Gen4/Gen5 NVMe** | the *fill* is 12.68 GB at 1.11 GB/s = 11.2 s of the 35.8 s a 256-token answer takes; at 6 GB/s that is ~2.1 s and the answer goes 7.1 -> ~10.5 tok/s end to end. The steady state does not move (it is disk-free). Re-measure any candidate with fresh offsets (`tools/disk_probe.py`, `tools/io_bench.cu`) - the old 6 GB/s projection used a repeat-read ceiling | money. Still the largest single change for short answers |
+| 2 | ~~**Close the exposure gap** (1.31 -> ~2.4 GB/s in the demand path)~~ **measured, no gap to close** | the 2.4 GB/s target was a repeat-read artifact of the old probe: with fresh offsets this drive reads ~1.05-1.45 GB/s and gains only ~15% from one reader to sixteen. The runtime reads at 1.11-1.46 GB/s | n/a. See `docs/DECODE_BUDGET.md` |
+| 3 | ~~**Fewer bytes per token** - batch verification / speculative decoding~~ **measured, dead on this rig** | the "982 -> 676 MB/token" figure was residency demand, not miss traffic; measured bytes/position get *worse* with B (164.5 -> 169.6 MB). A 100%-acceptance pass is only 15% faster (161.3 vs 190.9 ms/position), so break-even needs 78-82% acceptance plus rollout, and this rig's `common_ngram_simple_draft` accepts **0.004 drafts/pass** on the model's own greedy stream (99.6% of passes accept nothing; n>=3 never): **2.8-7.7x slower** | high risk, measured net loss for speculation. **What survives: batching real concurrent requests.** The floor is `30.3 + 37/B` ms/position, so B=8 is 34.9 ms = 28.7 tok/s, and a server has independent requests without needing a drafter |
+| 4 | **The floor** (the steady state, measured) | 67.3 ms/token with the disk removed entirely = `30.3` per-position work + `37/B` per-call cost, and the per-call cost is the per-layer router drain (ids ~50 ms/token at B=1). It *is* the steady state, so it is the only thing that moves 15 tok/s | medium: needs the batch (lever 3's surviving half) or faster expert kernels |
+| 5 | ~~GTX 1080 as a second tier~~ **measured, net-negative** | a park + hit through the 1080 costs 0.454 ms per expert against the disk's 0.45 ms: break-even at a 100% hit rate, worse from there. No P2P on consumer parts; the 1080 sits at gen3 x4. A **host-RAM** tier is the one path that beats the disk (0.047 ms, 13.9 GB/s -> ~1.5x on the warm-up, nothing on the steady state) and it spends the RAM this project exists to avoid | n/a for the 1080. See `docs/SECOND_TIER.md` |
+| 6 | Productisation: one-command launch, a harness that regenerates the whole results matrix as JSON, correctness as an automated gate | 0% speed, most of the project's remaining value | low. `sabah run`, `sabah matrix`, `sabah gate` |
 
 ## Status
 
 **Proven:** end-to-end decode of an 83.6 GB MoE through patched llama.cpp, byte-exact
 expert delivery, host RAM flat at 4.78 GiB with zero mapped fallbacks, and a
-measured cost budget that attributes the token to the millisecond.
+measured cost budget that attributes all three regimes of a generation to the
+millisecond - including an independent measurement of the no-disk floor that
+matches the steady-state decode rate.
 
-**Not done:** a faster drive (lever 1). Lever 2 is measured and closed - the
-demand path is at the rate this drive serves it (see `docs/DECODE_BUDGET.md`), so
-the remaining levers are fewer bytes per token (3) and the ~44 ms per token spent
-outside the runtime (4). Prefetching is implemented and correct but disabled; so
-is the merged layer fetch, which halves the wave count and costs ~13 ms/token for
-it. The n-gram prefetch layer of the research harness has a placeholder
-`index_fn`. The Python harness and the shipped runtime have not been unified.
+**Done and measured:** the one-command harness (lever 6) - `sabah run` splits a
+run into fill / warm-up / steady state, `sabah matrix` regenerates
+`results/matrix.json`, `sabah gate` runs the correctness switches and passes on
+the reference rig. Building it found and fixed a runtime bug: every process that
+used the direct I/O wave pool fast-failed at exit (`0xC0000409`) because the
+pool's threads were never joined. It also corrected the gate's misreading of the
+`overflow` counter, and it caught a byte-level disagreement between the runtime
+and the verification oracle that turned out to be a stale page cache rather than
+a delivery error - the runtime now prints the file, offset and differing byte
+positions when that check fires, and the README says how to tell the two apart.
+
+**Not done:** a faster drive (lever 1). Levers 2, 3 and 5 are measured and closed
+(the demand path is at the rate this drive serves it; speculative decoding is
+2.8-7.7x slower with this drafter; the 1080 costs what the disk costs). Lever 4 is
+attributed rather than fixed: the steady state is the floor, `30.3 + 37/B`, and
+moving it needs batching *real* concurrent requests or faster expert kernels.
+Prefetching is implemented and correct but disabled; so is the merged layer fetch,
+which halves the wave count and costs ~13 ms/token for it. The n-gram prefetch
+layer of the research harness has a placeholder `index_fn`. The Python harness and
+the shipped runtime have not been unified.
 
 ## License
 
