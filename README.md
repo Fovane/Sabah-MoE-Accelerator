@@ -218,6 +218,22 @@ Target: `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`, **IQ3_S** shard pair
 
 ## Build
 
+**Windows, one click.** `install.bat` automates everything below: it finds Python
+and MSVC, reads the GPUs' compute capability, creates `.venv`, installs the
+package, builds the runtime DLL for the right architecture and runs
+`sabah doctor`. Add `llama` to also fetch the pinned llama.cpp base, apply both
+patches and build `llama-sabah-diag`:
+
+```bat
+install.bat            :: package + runtime DLL, architecture auto-detected
+install.bat llama      :: also the bridge and the measurement driver
+install.bat sm_89      :: force an architecture
+```
+
+It writes only inside the repository (`.venv\`, `sabah_rt.dll`,
+`third_party\llama.cpp`), never to the registry, and it never opens a model. The
+steps it automates, by hand:
+
 Requirements: CUDA 12.8, MSVC 14.44 (VS 2022 Professional), CMake.
 
 **1. The runtime DLL** (CUDA kernels, IQ quant types, slab allocator, direct I/O):
@@ -426,6 +442,10 @@ pool's threads were never joined. It also corrected the gate's misreading of the
 and the verification oracle that turned out to be a stale page cache rather than
 a delivery error - the runtime now prints the file, offset and differing byte
 positions when that check fires, and the README says how to tell the two apart.
+The same release ships a one-click Windows installer: `install.bat` finds the
+toolchain, builds the runtime for the detected GPU architecture and runs
+`sabah doctor`, and `install.bat llama` does the same for the pinned llama.cpp
+base and both patches.
 
 **Not done:** a faster drive (lever 1). Levers 2, 3 and 5 are measured and closed
 (the demand path is at the rate this drive serves it; speculative decoding is
