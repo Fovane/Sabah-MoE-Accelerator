@@ -1,224 +1,335 @@
 # Sabah-MoE-Accelerator
 
-Sabah's own MoE inference runtime, optimized for **Qwen3.8-Flash-Next (qwen4exp)** on **24 GB VRAM + 16 GB RAM**, targeting **≥10–15 tok/s**.
+**A streaming MoE inference runtime for RAM-constrained machines.**
 
-## Target Artifact
+Sabah runs models far larger than the machine's VRAM + RAM combined. It does that
+**without a RAM tier, without the page cache and without the page file**: the
+expert path goes `disk -> pinned staging -> VRAM` with `FILE_FLAG_NO_BUFFERING`,
+so **host RAM stays flat** for the whole run.
 
-`ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF` — **IQ3_S** pair:
-- `Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf` (54.8 GB)
-- `Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf` (28.8 GB)
+That is the point of the project. An 83.6 GB MoE model either fails to load on a
+16 GB-VRAM / 15 GB-RAM machine, or it "runs" only by letting the OS page weights
+through RAM — which requires a large page file and makes latency unpredictable.
+Sabah is built for the machine that has **the VRAM but not the RAM**.
 
-Expert bank: **50.29 GB** (24576 objects, 512 experts × 48 blocks), fixed path: **4.18 GB/token**. The model cannot fit in 24 GB VRAM under any quantization, so the path to target speed is **hiding transfer latency** (prefetch, warm tier, hot tier), not full residency.
+Measured end to end on the reference rig:
 
-## Hardware
+| | |
+|---|---|
+| model | `Qwen3.8-Flash-Next` IQ3_S, **83.6 GB** (2 shards, 48 blocks x 512 experts, top-10) |
+| decode | **4.84 tok/s** (206 ms/token) |
+| prefill | ~145 tok/s (1596 tokens in ~11 s) |
+| **host RAM** | **flat at 4.78 GiB**, never grows, `mapped_fallbacks=0` |
+| peak VRAM | 15.36 GB of 16.31 GB |
+| correctness | byte-exact against the GGUF ranges (`verify_ok=500 verify_fail=0`) |
 
-| Component | Value |
-|-----------|-------|
-| GPU 0 | NVIDIA RTX 5060 Ti, 16 GB VRAM, sm_120 (Sabah runs here) |
-| GPU 1 | NVIDIA GTX 1080, 8 GB VRAM, sm_61 (Sabah does NOT run here) |
-| RAM | 16 GB DDR5 (~12 GB usable) |
-| Disk | NVMe SSD, 1.56–2.2 GB/s sequential read |
+Numbers describe the **shipped streaming path** (`sabah/runtime/cuda/sabah_rt.cu`
++ the llama.cpp bridge). The separate Python block-level harness in
+`sabah/runtime/*.py` is research scaffolding and is described
+[at the end](#python-block-harness-separate-from-the-shipped-path).
 
-## Acceleration Pieces (A–D)
+---
 
-| Piece | What it does | Status |
-|-------|--------------|--------|
-| **A — n-gram prefetch** | ~28.8 GB n-gram table mmap'd read-only; hinted rows fetched before forward pass. `index_fn` is still a placeholder (`rolling_hash_indices`). | Implemented, `index_fn` pending |
-| **B — warm RAM tier** | Pinned RAM expert warm tier. VRAM refills read pinned RAM instead of SSD. `cudaHostAlloc` conflict fixed with per-expert pinned allocation. | ✅ Done |
-| **C — fixed path resident** | Attention, router, embedding, output head (4.18 GB/token) pinned into VRAM. Never re-read from disk per token. | ✅ Done |
-| **D — MTP expert prefetch** | FrequencyPredictor + advisory expert prefetch. Never changes which experts run; output-identical. | ✅ Done |
+## Design rules
 
-## New IQ Quant Kernels
+1. **RAM is not a tier.** Nothing about expert delivery may depend on host memory
+   growing. Host RAM is allowed to hold only fixed-size pinned staging buffers
+   and loader bookkeeping.
+2. **Routing semantics are never changed.** Sabah decides *when* an expert's bytes
+   reach the GPU and *where* they are kept. Which experts run, and the input rows
+   they are applied to, is exactly what llama.cpp computed. The bridge exists only
+   to intercept execution, not to alter it.
+3. **Every optimisation must be provable.** Either byte-exact verification against
+   the GGUF ranges, or a preserved invariant (for example: a prefetcher is only
+   allowed to move bytes in time, so the tier's `hits`/`misses`/`evictions` must
+   come out identical).
 
-Six new GGML quant types added with CUDA kernels, bit-exact vs gguf-py reference:
+Rule 3 is why every number in this document comes with the check that proves it.
 
-| Code | Type | Elems/block | Bytes/block |
-|------|------|-------------|-------------|
-| 18 | IQ3_XXS | 256 | 98 |
-| 20 | IQ4_NL | 32 | 18 |
-| 21 | IQ3_S | 256 | 110 |
-| 22 | IQ2_S | 256 | 82 |
-| 23 | IQ4_XS | 256 | 136 |
-| 42 | Q2_0 | 64 | 18 |
+## How it works
 
-Together with existing `Q4_K`, `Q5_K`, `Q5_1`, `Q8_0`, Sabah decodes **10 quant types**. Lookup tables are extracted from `ggml-common.h` by `tools/gen_iq_tables.py`.
+### The tier: VRAM is hot, the disk is cold
 
-## Setup
+There is no intermediate RAM tier. The bank of expert weights is a 50.29 GB pool
+of 24576 objects (512 experts x 48 blocks) and it never fits; a VRAM slab
+(`SABAH_LLAMA_HOT_BYTES`, 9.8 GB on this rig) holds whatever is currently hot and
+everything else is read on demand from the GGUF.
 
-### 1. Clone
+A decode token asks for 480 experts x 3 tensors = 1440 tensor reads (~0.97 GB of
+expert bytes). With the 9.8 GB slab, **81.8%** of those hit and **262 reads
+(174.7 MB) go to the disk**.
 
-```powershell
-git clone https://github.com/Fovane/Sabah-MoE-Accelerator.git
-cd Sabah-MoE-Accelerator
-```
+### Direct I/O with pinned staging
 
-### 2. Python environment
+Misses are issued as aligned unbuffered reads:
 
-```powershell
-python -m pip install pytest numpy
-$env:SABAH_GGUF_PY = "C:\Projects\qwen4exp-llama\gguf-py"  # gguf-py fork (knows Q2_0=42)
-```
+- `FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED`, 4096-byte alignment, so the
+  read lands in pinned host memory instead of the OS page cache. The page cache is
+  deliberately bypassed — it is what would make host RAM grow.
+- a double-buffered pinned staging pool (~43 MB) with a wave-boundary event gate;
+  `SABAH_LLAMA_IO_DEPTH` (default 8) reads in flight per wave.
+- `SABAH_LLAMA_DIRECT_IO=0` switches back to the mapping, for A/B comparison only.
 
-### 3. Build CUDA DLL
+### The llama.cpp bridge
 
-Requires CUDA 12.8 + MSVC 14.44 (VS 2022 Professional):
+Sabah is not a fork and not a standalone loader; it hooks one operator. Patch
+`0001` makes the scheduler keep the original host GGUF expert tensor in the graph
+for `MUL_MAT_ID` and hands that op to `sabah_rt_mul_mat_id_v2` together with the
+graph's own ids, input and output tensors. Nothing else about llama.cpp changes
+and the integration is **opt-in via `SABAH_LLAMA=1`**. See
+[`patches/llama.cpp/README.md`](patches/llama.cpp/README.md).
+
+Two placement details are required and easy to get wrong:
+
+- `GGML_OP_OFFLOAD_MIN_BATCH=1`. With `--cpu-moe`, llama.cpp only sends an expert
+  op to CUDA when its batch is at least 32 tokens (the default), so every
+  single-token decode would silently run on the CPU and never reach Sabah.
+- `-ot "\.per_layer_token_embd\.weight=CPU"`. `-ngl 99` alone pushes the 28.8 GB
+  per-layer token embedding into VRAM. It is dense and read sequentially, so the
+  CPU with the file mapping is the right home for it.
+
+### What was optimised, and what it bought
+
+Everything here came from measuring the token, not from guessing. Baseline to
+current is **4.37 -> 4.84 tok/s (+11%)**, with no change to the outputs.
+
+| change | cost before | after | tok/s |
+|---|---|---|---|
+| baseline (per-call stream drain, linear erase) | `ids` 87 ms | | 4.37 |
+| reuse the router ids across a layer's 3 expert tensors | 87 ms | ~23 ms | 4.75 |
+| single-scan residency memo per call | | | 4.79 |
+| swap-and-pop eviction instead of `vector::erase` | `slot` 30 ms | ~11.5 ms | **4.84** |
+
+**Router id reuse** is the interesting one. The three expert tensors of a MoE
+layer (`gate`, `up`, `down`) read the *same* `selected_experts` tensor, so two of
+the three `cudaStreamSynchronize` per layer are redundant. The bridge passes
+`dst->src[2]` — the ids *tensor address* — so the runtime can recognise "same
+tensor as the previous call" and skip both the download and the drain. Groups are
+capped at `SB_ID_GROUP_MAX=4` calls, and that cap doubles as the width of the
+eviction-protection window, which is what makes it safe to free a slot while a
+kernel enqueued before the last drain may still be reading it.
+
+Removing those drains exposed a latent race worth recording: the pointer table is
+**one** shared device buffer that every call rewrites, and the upload used to run
+on the copy stream. The drains had been supplying that ordering implicitly. The
+upload now runs on the compute stream. (A run with the racy order reported
+9.90 tok/s and 23% fewer bytes; those counters are not reproducible and that run
+is not trusted.)
+
+### Prefetch is off by default, on purpose
+
+A staging-readahead prefetcher exists (`SABAH_LLAMA_PREFETCH=1`) and is correct:
+it reserves no tier space and leaves `hits`/`misses`/`evictions` identical to a
+prefetch-free run. It is off because it does not pay — adding reads in flight
+raised the drive's effective rate (1.3 -> 1.6 GB/s) but not the wall clock, and
+40% of the readahead was superseded before anyone asked for it. It becomes worth
+revisiting when the disk term drops below the bookkeeping term.
+
+## The measured decode budget
+
+Isolated by differencing two runs of the same binary (`-n 32` minus `-n 8`, so
+prefill cancels out). Full method and attribution:
+[`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md).
+
+| phase | per token | notes |
+|---|---|---|
+| `fetch` — disk reads + H2D | **133 ms** | 174.7 MB/token over 262 misses, 81.8% hit |
+| `ids` — router download + drain | **23 ms** | 3 calls per layer |
+| `slot` — residency bookkeeping | **11.5 ms** | |
+| `ptr` — pointer table upload | **1.8 ms** | |
+| graph + launch overhead | ~37 ms | unprofiled |
+| **decode wall** | **206 ms/token = 4.84 tok/s** | |
+
+This budget is the honest state of the project: it says exactly what stands
+between the runtime and its target, and it is the reason the target was re-scoped.
+
+### The disk is the wall, and it is not yet saturated
+
+| | |
+|---|---|
+| drive | MSI M371 1TB NVMe (Gen3 class) |
+| drive ceiling measured | 2337 MB/s sequential, **2500 MB/s** random 1 MB @ QD 8 |
+| per-request latency | **0.66 ms** (QD 1 random 1 MB is already 1568 MB/s) |
+| Sabah achieves | **1310 MB/s** in the demand path |
+
+So 174.7 MB/token should cost ~73 ms of pure transfer at the drive's own ceiling,
+and it costs **133 ms**. The ~60 ms difference is **exposed latency**, not
+saturation: the read for layer *L*'s experts cannot be issued until layer *L*'s
+router has run, so the dependency chain is only about one layer deep and the
+drive's queue is never filled. Raising IO depth cannot fix that, which is exactly
+what the prefetcher experiment showed.
+
+## What this project does not claim
+
+- **It does not reach 10-15 tok/s on this machine, and it should not be described
+  as if it does.** The original target was written before this budget existed.
+  With the current algorithm and this drive the ceiling is
+  `73 ms (perfect overlap) + 71.5 ms (everything else) = ~145 ms -> ~6.9 tok/s`.
+  10 tok/s needs 100 ms/token, and 73 ms of that is disk at full efficiency.
+- **It is not faster than a machine with enough RAM.** If host RAM were allowed to
+  be a tier, ~83% of demand would be served from RAM at ~10 GB/s and the disk term
+  would mostly disappear. Sabah trades that speed away for a hard guarantee about
+  RAM — that is a deliberate budget decision, not a performance claim.
+- **Virtual memory does not help.** Windows "virtual memory" is the page file on
+  the same NVMe, reached through the page-fault path instead of a 676 KB
+  unbuffered read at QD 8 — the same bandwidth, a worse access path, no
+  controllable queue depth. It adds capacity, and capacity is not the constraint.
+- **The GTX 1080 is not used.** `sabah_rt.dll` is built for `sm_120` only. A
+  second tier on the 1080 would need cross-device copies over PCIe with no P2P on
+  consumer parts; the projected ceiling is +18%, which has not been worth the risk.
+
+## Hardware and target artifact
+
+| component | value |
+|---|---|
+| GPU 0 | NVIDIA RTX 5060 Ti, 16 GB VRAM, `sm_120` — Sabah runs here |
+| GPU 1 | NVIDIA GTX 1080, 8 GB VRAM, `sm_61` — not used |
+| RAM | 15.38 GiB usable |
+| disk | MSI M371 1TB NVMe (~2.4 GB/s measured ceiling) |
+
+Target: `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`, **IQ3_S** shard pair
+(`...-00001-of-00002.gguf` 54.8 GB, `...-00002-of-00002.gguf` 28.8 GB).
+
+## Build
+
+Requirements: CUDA 12.8, MSVC 14.44 (VS 2022 Professional), CMake.
+
+**1. The runtime DLL** (CUDA kernels, IQ quant types, slab allocator, direct I/O):
 
 ```powershell
 cd sabah\runtime\cuda
 .\build_dll.bat sm_120
 ```
 
-Verify:
+**2. llama.cpp plus the bridge** — reproducible from the pinned upstream base:
 
 ```powershell
-python -c "from sabah.runtime import rt; print(rt.available(), rt.device_count())"
-# Output: True 2
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp
+git checkout 96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b
+git apply <repo>\patches\llama.cpp\0001-sabah-native-mul-mat-id.patch      # required
+git apply <repo>\patches\llama.cpp\0002-sabah-diag-capture-tool.patch       # optional, diagnostics
+cmake -S . -B build -G Ninja -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES="61;120"
+cmake --build build -j 8
 ```
 
-### 4. Model
+## Run
+
+The integration is inert unless `SABAH_LLAMA=1`. Same model, same flags as an
+ordinary `--cpu-moe` run, plus the two placement requirements and the bridge:
 
 ```powershell
-$env:SABAH_MODEL = "C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
-$env:SABAH_TEST_MODEL = $env:SABAH_MODEL
-$env:SABAH_SENTINEL_DIR = "C:\Projects\quantization\Sabah-MoE-Accelerator\build\sentinels"
+$env:SABAH_LLAMA        = "1"
+$env:SABAH_RT_LIB       = "<repo>\sabah\runtime\cuda\sabah_rt.dll"
+$env:SABAH_LLAMA_HOT_BYTES = "9.8e9"          # VRAM expert slab (default 2 GiB)
+$env:GGML_OP_OFFLOAD_MIN_BATCH = "1"          # required, see above
+$env:SABAH_LLAMA_TRACE  = "1"                 # cache / coverage / phase counters at exit
+
+llama-sabah-diag.exe `
+  -m C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf `
+  -dev CUDA0 -ngl 99 --cpu-moe `
+  -ot "\.per_layer_token_embd\.weight=CPU" `
+  -t 8 -c 512 -n 32 -p "Hello"
 ```
 
-## Usage
+`llama-sabah-diag` is the measurement driver from patch `0002`. The bridge lives
+in `ggml-cuda`, so any llama.cpp binary loads it: `llama-cli` runs this model end
+to end as well (verified — `EXITCODE=0`, zero mapped fallbacks, generated text,
+~27 GB streamed for the same prompt).
 
-### Inspect model
+Two things to know when reproducing:
 
-```powershell
-python sabah\tools\cli.py inspect %SABAH_MODEL%
-```
+- The chat template expands a trivial prompt to **~8.5k tokens** (`tokens=8484`
+  for `-p "Hello"`), so a bare `llama-cli` run is prefill-dominated and its
+  console summary is not the decode rate. It also does more work than the diag
+  driver under identical flags (28.8 s vs 22.8 s wall, +35% bytes).
+- **Quote decode from the diag driver.** Differencing `-n 32` and `-n 8` cancels
+  the prefill and yields the 206 ms/token in the budget above.
 
-### Execution plan
+### Verification switches
 
-```powershell
-python sabah\tools\cli.py plan %SABAH_MODEL% --context 4096 --concurrency 1
-```
+These are the gate, not debugging aids. Run them before believing any number.
 
-### Block benchmark (measured throughput)
-
-```powershell
-python sabah\tools\bench_moe.py --model %SABAH_MODEL% `
-  --trace tests\data\bench_trace --block 0 --tokens 500 `
-  --slots 16,32,64,128,256 --bank-mode ram --prefetch-slots 0 --pin-fixed-path
-```
-
-- `--bank-mode ram`: Pinned RAM warm tier (piece B), `host stage = 0 ms`.
-- `--pin-fixed-path`: Pin fixed path into VRAM (piece C).
-
-### Run all tests
-
-```powershell
-python -m pytest tests sabah\tests -q
-```
-
-### Test modules
-
-- `sabah/tests/test_quant_kernels.py` — bit-exact validation of 6 new quant types vs gguf-py
-- `tests/test_prefetch_equivalence.py` — prefetch off/on bit-identical (piece D gate)
-- `tests/test_mul_mat_id_contract.py` — MUL_MAT_ID slot/row contract
-- `tests/test_gpu_smoke.py` — GPU model-free slab/prefetch tests (9/9)
-
-## Measured Results (Block 0, IQ3_S)
-
-Fixed path pinned in VRAM + warm tier in RAM:
-
-| Slots | VRAM | Hit Rate | ms/token | blk tok/s | Fetch MB/tok |
-|-------|------|----------|----------|-----------|--------------|
-| 16 | 0.035 GB | 3.2% | 2.848 | 351.1 | 20.86 |
-| 32 | 0.070 GB | 6.6% | 2.870 | 348.5 | 20.13 |
-| 64 | 0.139 GB | 13.1% | 2.678 | 373.5 | 18.73 |
-| 128 | 0.279 GB | 25.3% | 2.342 | 427.1 | 16.11 |
-| 256 | 0.557 GB | 50.0% | 1.753 | 570.5 | 10.79 |
-
-Full-model projection (approximate): **8–12 tok/s**. Reaching 10–15 tok/s requires larger warm tier / VRAM capacity and higher hit rate.
-
-## Architecture Notes
-
-- **Full-model `llama-cli` does not work on this hardware**: the 84 GB model cannot be loaded by `llama.cpp` on 16 GB physical RAM (OOM). Even with a 128 GB pagefile, random-access expert reads from SSD are too slow.
-- Sabah's yield is measured at **block-level benchmarks**; end-to-end `llama.cpp` integration exists under `integration/llama.cpp/` (patched bridge) but cannot be measured on this hardware due to RAM limits.
-- `sabah_rt.dll` is built for **sm_120 only** (RTX 5060 Ti). GTX 1080 (sm_61) cannot run it.
-- `SABAH_LLAMA_HOT_BYTES` env var controls VRAM hot tier size (default 2 GiB).
-
-## Repository Structure
-
-```
-sabah/
-  runtime/
-    cuda/
-      sabah_rt.cu        # CUDA kernels + IQ quant + slab allocator
-      sabah_iq_tables.h  # Generated IQ lookup tables
-      build_dll.bat      # VS 2022 Professional + nvcc build
-      build_sentinels.bat # Test-only sentinel builds
-    rt.py                # QTYPE/QBLOCK registries, host_register/unregister
-    residency.py         # FixedPathResident, apply_plan (pieces C + B)
-    expert_bank.py       # Expert bank, warm tier, file-handle I/O
-    hot_tier.py          # VRAM hot tier + prefetch (pieces B + D)
-    mtp_prefetch.py      # FrequencyPredictor, ExternalPredictor (piece D)
-    ngram_prefetch.py    # Piece A (index_fn placeholder)
-    executor.py          # MoEExecutor
-  core/
-    model_inspector.py   # Model inspection, QUANT_BLOCK, RUNTIME_QUANTS
-  planner/
-    planner.py           # Execution planner, hit-rate curves
-  server/
-    openai_proxy.py      # OpenAI-compatible proxy (sabah/reference backend)
-  tests/
-    test_moe_block.py
-    test_planner.py
-    test_quant_kernels.py
-tools/
-  gen_iq_tables.py       # IQ table generator from ggml-common.h
-  bench_moe.py           # Per-block benchmark
-  cli.py                 # Sabah CLI (inspect, plan, bench, serve, ...)
-integration/
-  llama.cpp/             # Patched llama.cpp bridge (sabah-bridge.cu)
-patches/
-  llama.cpp/             # 0001-sabah-native-mul-mat-id.patch, 0002-diag-capture
-docs/
-  ACCEL_LAYERS.md        # Acceleration layers documentation
-results/
-  bench_moe_blk0_iq3s.json
-```
-
----
-
-## Decode-cost budget on the streaming path (measured)
-
-Rig: RTX 5060 Ti 16 GB, 15.38 GiB host RAM, NVMe, `Qwen3.8-Flash-Next` IQ3_S
-(83.6 GB), `SABAH_LLAMA_HOT_BYTES=9.8e9`, direct I/O depth 8. Details, method and
-the full attribution of every number are in
-[`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md).
-
-| | |
+| variable | what it proves |
 |---|---|
-| decode | **4.84 tok/s** (206 ms/token) |
-| prefill | ~145 tok/s (1596 tokens in ~11 s) |
-| host RAM | flat at 4.78 GiB, `mapped_fallbacks=0` |
-| peak VRAM | 15.36 GB of 16.31 GB |
-| correctness | `verify_ok=500 verify_fail=0`, byte-exact against the GGUF ranges |
+| `SABAH_LLAMA_VERIFY_BYTES=1\|fetch` | byte-compares served expert data (hits, or fetches) against the GGUF range |
+| `SABAH_LLAMA_VERIFY_LIMIT` | caps those checks — the oracle reads the mapping and inflates host RAM |
+| `SABAH_LLAMA_ID_CHECK=1` | forces the ids download even when reused and compares — proves the reuse byte for byte |
+| `SABAH_LLAMA_TRACE=1` | prints cache, coverage and phase counters |
 
-Decode breakdown: `fetch` 133 ms (174.7 MB/token off the disk, 81.8% tier hit
-rate), `ids` 23 ms, `slot` 11.5 ms, `ptr` 1.8 ms, graph/launch ~37 ms.
+Recorded results: `verify_ok=500 verify_fail=0`, `check_ok=3072 check_fail=0`.
 
-Three things were established by measurement rather than assumption:
+## Repository layout
 
-1. **The disk is the binding constraint**, at ~1.3-1.6 GB/s for random 676 KB
-   reads. Adding reads in flight does **not** raise it, so prefetching cannot
-   deliver a speedup while the disk is saturated. A staging-readahead prefetcher
-   was built, verified correct (it reserves no tier space and leaves the tier's
-   hit/miss counters identical) and is therefore **off by default**.
-2. **Two of the three stream drains per MoE layer were redundant**: the layer's
-   three expert tensors read the same router tensor. Reusing the ids download is
-   worth ~11% of decode, and is proven byte-exact by `SABAH_LLAMA_ID_CHECK`.
-3. **Host RAM never becomes a tier.** The expert path uses `FILE_FLAG_NO_BUFFERING`
-   with a ~43 MB pinned staging pool. Page-file or page-cache based schemes can
-   only match or lose to this (same NVMe, worse access path), so virtual memory
-   offers no speedup here.
+```
+sabah/runtime/cuda/sabah_rt.cu      the shipped streaming runtime: tier, direct I/O,
+                                    pinned staging, kernels, IQ quant types
+sabah/runtime/cuda/build_dll.bat    nvcc build (sm_120)
+patches/llama.cpp/                  the pinned upstream base, the bridge patch, the diag patch
+integration/llama.cpp/              reference copies of every llama.cpp file the bridge touches
+tools/disk_probe.py                 direct-I/O rate/latency probe (produces the drive table)
+tools/trace_locality.py             expert-reuse trace -> hit-rate curves
+sabah/tools/bench_moe.py            per-block benchmark (research harness)
+sabah/runtime/*.py                  Python research harness, see below
+docs/                               design notes, budgets, validation reports
+results/                            raw JSON for every number quoted here
+```
 
-Reaching 10 tok/s would need a ~18 GB effective tier *and* essentially perfect
-overlap; 15 tok/s would need ~34 GB. Neither is reachable on this machine. The one
-lever that remains is the RAM budget: allowing a host-RAM expert tier would serve
-most demand from RAM instead of disk.
+## Python block harness (separate from the shipped path)
+
+`sabah/runtime/*.py` is an earlier, independent research harness. It works on a
+single block in isolation with synthetic traces, and its tables assume a **pinned
+RAM warm tier** — the configuration the shipped runtime explicitly forbids. Its
+`bench_moe` numbers are per-block and are not comparable to the end-to-end tok/s
+above; the two must not be quoted together.
+
+Use it for what it is good at: quant-kernel bit-exactness, planner hit-rate
+curves, and prefetch-equivalence tests.
+
+- `python -m pytest tests sabah\tests -q`
+- `python sabah\tools\bench_moe.py --model $env:SABAH_MODEL --block 0 --tokens 500 --slots 16,32,64,128,256`
+
+New IQ quant types implemented along the way, validated bit-exact against the
+`gguf-py` reference: `IQ2_S`, `IQ3_S`, `IQ3_XXS`, `IQ4_XS`, `IQ4_NL`, `Q2_0`
+(plus the existing `Q4_K`, `Q5_K`, `Q5_1`, `Q8_0`).
+
+## Docs
+
+| doc | contents |
+|---|---|
+| [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md) | the full decode budget, disk analysis, tier projections |
+| [`docs/LOCALITY_FINDINGS.md`](docs/LOCALITY_FINDINGS.md) | hit-rate and Belady measurements behind the slab size |
+| [`patches/llama.cpp/README.md`](patches/llama.cpp/README.md) | bridge semantics, ABI, every environment variable |
+| [`docs/ACCEL_LAYERS.md`](docs/ACCEL_LAYERS.md) | the A-D acceleration layers of the research harness |
+| [`docs/V1_CORRECTNESS_CONTRACT.md`](docs/V1_CORRECTNESS_CONTRACT.md) | the correctness contract and its evidence |
+| [`docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md`](docs/RC4_NUMERICAL_EQUIVALENCE_REPORT.md) | numerical-equivalence study |
+| [`docs/IMPLEMENTATION_LOG.md`](docs/IMPLEMENTATION_LOG.md), [`CHANGELOG.md`](CHANGELOG.md) | history |
+| `docs/V1_*.md`, `docs/RC3_*.md` | point-in-time release/validation reports (historical) |
+
+## What would actually move the needle
+
+Ordered by measured leverage, with the honest cost of each.
+
+| # | lever | effect | cost/risk |
+|---|---|---|---|
+| 1 | **Gen4/Gen5 NVMe** | 174.7 MB at 6 GB/s = 29 ms -> **~10 tok/s**; at 12 GB/s ~11.6 | money. This is the only single change that reaches the target |
+| 2 | **Close the exposure gap** (1.31 -> ~2.4 GB/s in the demand path) | 133 -> ~76 ms -> **~6.7 tok/s** | high: the layer-by-layer dependency is inherent to autoregressive decode |
+| 3 | **Fewer bytes per token** — batch verification / speculative decoding | measured union 982 -> 676 MB/token at B=4, i.e. ~31% less demand and proportional miss traffic | medium-high. Speculative *verification* keeps routing semantics exact, so it respects rule 2 |
+| 4 | **The ~37 ms of graph/launch overhead** | second only to `fetch`, currently unprofiled | low-medium |
+| 5 | GTX 1080 as a second tier | +18% ceiling, ~54 ms/token of PCIe traffic | high risk, no P2P on consumer parts |
+| 6 | Productisation: one-command launch, a harness that regenerates the whole results matrix as JSON, correctness as an automated gate | 0% speed, most of the project's remaining value | low |
+
+## Status
+
+**Proven:** end-to-end decode of an 83.6 GB MoE through patched llama.cpp, byte-exact
+expert delivery, host RAM flat at 4.78 GiB with zero mapped fallbacks, and a
+measured cost budget that attributes the token to the millisecond.
+
+**Not done:** a faster drive (lever 1) and the exposure gap (lever 2). Prefetching
+is implemented and correct but disabled. The n-gram prefetch layer of the research
+harness has a placeholder `index_fn`. The Python harness and the shipped runtime
+have not been unified.
+
+## License
+
+See [`LICENSE`](LICENSE).
