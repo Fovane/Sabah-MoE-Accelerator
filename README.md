@@ -185,7 +185,7 @@ what the prefetcher experiment showed.
 | GPU 0 | NVIDIA RTX 5060 Ti, 16 GB VRAM, `sm_120` — Sabah runs here |
 | GPU 1 | NVIDIA GTX 1080, 8 GB VRAM, `sm_61` — not used |
 | RAM | 15.38 GiB usable |
-| disk | MSI M371 1TB NVMe (~2.4 GB/s measured ceiling) |
+| disk | MSI M371 1TB NVMe (~1.05-1.45 GB/s random 676 KB reads, measured; see `docs/DECODE_BUDGET.md`) |
 
 Target: `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`, **IQ3_S** shard pair
 (`...-00001-of-00002.gguf` 54.8 GB, `...-00002-of-00002.gguf` 28.8 GB).
@@ -256,6 +256,8 @@ These are the gate, not debugging aids. Run them before believing any number.
 | `SABAH_LLAMA_VERIFY_LIMIT` | caps those checks — the oracle reads the mapping and inflates host RAM |
 | `SABAH_LLAMA_ID_CHECK=1` | forces the ids download even when reused and compares — proves the reuse byte for byte |
 | `SABAH_LLAMA_TRACE=1` | prints cache, coverage and phase counters |
+| `SABAH_LLAMA_IO_WORKERS=1` | reads each wave on the calling thread; `SABAH_IO` then reports `overlap=1.00` instead of ~3.8, with the same wall time |
+| `SABAH_LLAMA_LAYER_MERGE=1` | one wave per layer instead of three; halves the wave count and costs ~13 ms/token (default off) |
 
 Recorded results: `verify_ok=500 verify_fail=0`, `check_ok=3072 check_fail=0`.
 
@@ -268,6 +270,8 @@ sabah/runtime/cuda/build_dll.bat    nvcc build (sm_120)
 patches/llama.cpp/                  the pinned upstream base, the bridge patch, the diag patch
 integration/llama.cpp/              reference copies of every llama.cpp file the bridge touches
 tools/disk_probe.py                 direct-I/O rate/latency probe (produces the drive table)
+tools/io_bench.cu                   C++ twin of it: one factor at a time (offsets, buffers,
+                                    flags, locality, H2D copies, reader count)
 tools/trace_locality.py             expert-reuse trace -> hit-rate curves
 sabah/tools/bench_moe.py            per-block benchmark (research harness)
 sabah/runtime/*.py                  Python research harness, see below
@@ -312,10 +316,10 @@ Ordered by measured leverage, with the honest cost of each.
 
 | # | lever | effect | cost/risk |
 |---|---|---|---|
-| 1 | **Gen4/Gen5 NVMe** | 174.7 MB at 6 GB/s = 29 ms -> **~10 tok/s**; at 12 GB/s ~11.6 | money. This is the only single change that reaches the target |
-| 2 | **Close the exposure gap** (1.31 -> ~2.4 GB/s in the demand path) | 133 -> ~76 ms -> **~6.7 tok/s** | high: the layer-by-layer dependency is inherent to autoregressive decode |
+| 1 | **Gen4/Gen5 NVMe** | the disk-bound token is ~120 ms of 206. The 6 GB/s projection assumed the old probe's repeat-read ceiling; re-measure any candidate with fresh offsets (`tools/disk_probe.py`, `tools/io_bench.cu`) | money. Still the only single change that could reach the target |
+| 2 | ~~**Close the exposure gap** (1.31 -> ~2.4 GB/s in the demand path)~~ **measured, no gap to close** | the 2.4 GB/s target was a repeat-read artifact of the old probe: with fresh offsets this drive reads ~1.05-1.45 GB/s and gains only ~15% from one reader to sixteen. The runtime reads at 1.38-1.46 GB/s | n/a. See `docs/DECODE_BUDGET.md` |
 | 3 | **Fewer bytes per token** — batch verification / speculative decoding | measured union 982 -> 676 MB/token at B=4, i.e. ~31% less demand and proportional miss traffic | medium-high. Speculative *verification* keeps routing semantics exact, so it respects rule 2 |
-| 4 | **The ~37 ms of graph/launch overhead** | second only to `fetch`, currently unprofiled | low-medium |
+| 4 | **The ~44 ms per token spent outside the runtime** | second only to `fetch`, and not moved by `-t 4..12` or `-fa`; measured, still unprofiled | low-medium |
 | 5 | GTX 1080 as a second tier | +18% ceiling, ~54 ms/token of PCIe traffic | high risk, no P2P on consumer parts |
 | 6 | Productisation: one-command launch, a harness that regenerates the whole results matrix as JSON, correctness as an automated gate | 0% speed, most of the project's remaining value | low |
 
@@ -325,10 +329,13 @@ Ordered by measured leverage, with the honest cost of each.
 expert delivery, host RAM flat at 4.78 GiB with zero mapped fallbacks, and a
 measured cost budget that attributes the token to the millisecond.
 
-**Not done:** a faster drive (lever 1) and the exposure gap (lever 2). Prefetching
-is implemented and correct but disabled. The n-gram prefetch layer of the research
-harness has a placeholder `index_fn`. The Python harness and the shipped runtime
-have not been unified.
+**Not done:** a faster drive (lever 1). Lever 2 is measured and closed - the
+demand path is at the rate this drive serves it (see `docs/DECODE_BUDGET.md`), so
+the remaining levers are fewer bytes per token (3) and the ~44 ms per token spent
+outside the runtime (4). Prefetching is implemented and correct but disabled; so
+is the merged layer fetch, which halves the wave count and costs ~13 ms/token for
+it. The n-gram prefetch layer of the research harness has a placeholder
+`index_fn`. The Python harness and the shipped runtime have not been unified.
 
 ## License
 
