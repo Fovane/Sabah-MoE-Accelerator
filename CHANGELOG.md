@@ -61,6 +61,18 @@ here changes how experts are routed.
   instead of 14.6). The counters now come from the runtime's exit snapshot, which
   is exact and free, and a run directory is wiped of the previous run's step
   stream before each run so a killed run cannot be read back as the next one's.
+- **One-click install on Windows** (`install.bat`). It finds Python and MSVC
+  (`vswhere`, so any edition or Build Tools works), reads the compute capability
+  of every installed GPU out of `nvidia-smi`, builds the runtime DLL for the
+  highest one, creates `.venv` and installs the package, builds the optional H2D
+  probe best-effort, and finishes with `sabah doctor` and the exact environment
+  block to run a model. `install.bat llama` additionally fetches the pinned
+  upstream commit from `third_party/llama.cpp.version` (shallow, by SHA), applies
+  patches `0001` and `0002` only if they are not already applied, and builds
+  `llama-sabah-diag` for every detected GPU architecture. It writes only inside
+  the repository, never the registry, and never opens a model. `build_dll.bat`
+  gained the same `vswhere` fallback, so it no longer assumes a specific Visual
+  Studio edition.
 
 ## Unreleased — acceleration layers
 

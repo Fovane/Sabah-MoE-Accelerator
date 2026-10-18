@@ -6,6 +6,18 @@ read-only.
 
 ## Install
 
+One click, from the repository root:
+
+```bat
+install.bat
+```
+
+It finds Python and MSVC, detects your GPU's compute capability, creates
+`.venv`, installs the package, builds the runtime DLL for that architecture and
+runs `sabah doctor`. Add `llama` to also fetch the pinned llama.cpp base, apply
+both patches and build `llama-sabah-diag` (needs git + cmake + ninja, 10-40
+minutes). By hand, the same thing:
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
