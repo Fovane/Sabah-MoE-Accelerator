@@ -182,3 +182,43 @@ docs/
 results/
   bench_moe_blk0_iq3s.json
 ```
+
+---
+
+## Decode-cost budget on the streaming path (measured)
+
+Rig: RTX 5060 Ti 16 GB, 15.38 GiB host RAM, NVMe, `Qwen3.8-Flash-Next` IQ3_S
+(83.6 GB), `SABAH_LLAMA_HOT_BYTES=9.8e9`, direct I/O depth 8. Details, method and
+the full attribution of every number are in
+[`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md).
+
+| | |
+|---|---|
+| decode | **4.84 tok/s** (206 ms/token) |
+| prefill | ~145 tok/s (1596 tokens in ~11 s) |
+| host RAM | flat at 4.78 GiB, `mapped_fallbacks=0` |
+| peak VRAM | 15.36 GB of 16.31 GB |
+| correctness | `verify_ok=500 verify_fail=0`, byte-exact against the GGUF ranges |
+
+Decode breakdown: `fetch` 133 ms (174.7 MB/token off the disk, 81.8% tier hit
+rate), `ids` 23 ms, `slot` 11.5 ms, `ptr` 1.8 ms, graph/launch ~37 ms.
+
+Three things were established by measurement rather than assumption:
+
+1. **The disk is the binding constraint**, at ~1.3-1.6 GB/s for random 676 KB
+   reads. Adding reads in flight does **not** raise it, so prefetching cannot
+   deliver a speedup while the disk is saturated. A staging-readahead prefetcher
+   was built, verified correct (it reserves no tier space and leaves the tier's
+   hit/miss counters identical) and is therefore **off by default**.
+2. **Two of the three stream drains per MoE layer were redundant**: the layer's
+   three expert tensors read the same router tensor. Reusing the ids download is
+   worth ~11% of decode, and is proven byte-exact by `SABAH_LLAMA_ID_CHECK`.
+3. **Host RAM never becomes a tier.** The expert path uses `FILE_FLAG_NO_BUFFERING`
+   with a ~43 MB pinned staging pool. Page-file or page-cache based schemes can
+   only match or lose to this (same NVMe, worse access path), so virtual memory
+   offers no speedup here.
+
+Reaching 10 tok/s would need a ~18 GB effective tier *and* essentially perfect
+overlap; 15 tok/s would need ~34 GB. Neither is reachable on this machine. The one
+lever that remains is the RAM budget: allowing a host-RAM expert tier would serve
+most demand from RAM instead of disk.

@@ -19,6 +19,18 @@
 // ---------------------------------------------------------------------------
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#if defined(_WIN32)
+  #ifndef NOMINMAX
+  #define NOMINMAX
+  #endif
+  #include <windows.h>
+  #include <psapi.h>
+  #pragma comment(lib, "psapi.lib")
+#else
+  #include <fcntl.h>
+  #include <unistd.h>
+  #include <sys/stat.h>
+#endif
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -86,6 +98,26 @@ struct sb_mmid_entry {
     uint64_t touch;
     uint64_t epoch;     // last MUL_MAT_ID call that referenced this slot
     bool slab;          // true: came from the hot-tier slab; false: over-budget
+    bool filled;        // true: the expert bytes are already in `device`
+};
+
+// Per-phase cost of a MUL_MAT_ID call, in milliseconds, accumulated over the run.
+// Reported via SABAH_LLAMA_TRACE so tuning is driven by measurement rather than
+// by which part of the path looks expensive.
+static double g_t_slot  = 0;   // residency lookup + allocation + eviction
+static double g_t_fetch = 0;   // resolve + disk reads + host-to-device copies
+static double g_t_wait  = 0;   // of which: blocked on the reads
+static double g_t_ids   = 0;   // router id download and its stream synchronise
+static double g_t_ptr   = 0;   // pointer table upload and copy/compute hand-off
+
+struct sb_phase_timer {
+    std::chrono::steady_clock::time_point t0;
+    double * acc;
+    explicit sb_phase_timer(double * a) : t0(std::chrono::steady_clock::now()), acc(a) {}
+    ~sb_phase_timer() {
+        *acc += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - t0).count();
+    }
 };
 
 static std::mutex g_mmid_mutex;
@@ -101,14 +133,24 @@ static uint64_t g_mmid_bytes_fetched = 0;
 // pointer has already been handed to that call must not be evicted before the
 // call's kernel has run, whatever the capacity says.
 static uint64_t g_mmid_epoch = 0;
+// The router ids of one layer's three expert tensors are the same tensor, so the
+// downloads after the first of a group are redundant. Reuse is allowed only
+// while the ids tensor is unchanged and the group stays this short; that bound
+// is also the width of the eviction-protection window above.
+static constexpr uint64_t SB_ID_GROUP_MAX = 4;
 static uint64_t g_mmid_calls = 0;
 static uint64_t g_mmid_tokens = 0;
-static uint64_t g_mmid_overflow = 0;       // allocations that exceeded capacity
+static uint64_t g_id_reuse = 0;       // calls that reused the previous call's ids
+static uint64_t g_id_group_max = 0;   // longest reuse streak observed
+static bool     g_id_check = false;   // SABAH_LLAMA_ID_CHECK=1: prove the reuse
+static uint64_t g_id_check_ok = 0, g_id_check_fail = 0;
+static uint64_t g_mmid_overflow = 0;   // allocations that exceeded capacity
 static uint64_t g_mmid_verify_ok = 0;
 static uint64_t g_mmid_verify_fail = 0;
 static bool     g_mmid_verify = false;     // SABAH_LLAMA_VERIFY_BYTES=1 | fetch
 static bool     g_mmid_verify_all_hits = false;
 static uint64_t g_mmid_verify_hit_every = 64; // "fetch" mode: every Nth hit, by counter
+static uint64_t g_mmid_verify_budget = UINT64_MAX; // how many checks may touch the mapped oracle
 static uint64_t g_mmid_empty_calls = 0;    // MUL_MAT_ID with zero token rows (no-op)
 // in-runtime float64 self-check (SABAH_LLAMA_SELFCHECK=K samples per call)
 static int      g_sc_k = 0;
@@ -260,7 +302,19 @@ static void sb_mmid_reset() {
     const char * v = std::getenv("SABAH_LLAMA_VERIFY_BYTES");
     g_mmid_verify = v && (std::strcmp(v, "1") == 0 || std::strcmp(v, "fetch") == 0);
     g_mmid_verify_all_hits = v && std::strcmp(v, "1") == 0;
+    g_mmid_verify_budget = UINT64_MAX;
+    if (const char * lim = std::getenv("SABAH_LLAMA_VERIFY_LIMIT")) {
+        g_mmid_verify_budget = (uint64_t) std::strtoull(lim, nullptr, 10);
+    }
     g_mmid_empty_calls = 0;
+    g_id_reuse = 0;
+    g_id_group_max = 0;
+    g_id_check_ok = 0;
+    g_id_check_fail = 0;
+    {
+        const char * ic = std::getenv("SABAH_LLAMA_ID_CHECK");
+        g_id_check = ic && (std::strcmp(ic, "1") == 0 || std::strcmp(ic, "on") == 0);
+    }
     const char * k = std::getenv("SABAH_LLAMA_SELFCHECK");
     g_sc_k = k ? std::atoi(k) : 0;
     const char * tol = std::getenv("SABAH_LLAMA_SELFCHECK_TOL");
@@ -272,42 +326,59 @@ static void sb_mmid_reset() {
 }
 
 static void sb_mmid_evict_until(size_t needed, cudaStream_t compute_stream) {
-    // A slot can still be read by a previously submitted compute kernel, and
-    // this entry point does NOT launch that kernel (llama.cpp does), so there is
-    // no point at which we can record "the kernel that reads this slot has
-    // finished". The only safe ordering is therefore to drain the compute stream
-    // before the freed slot is reused. This is taken ONLY on an actual eviction
-    // and preserves the exact-output invariant.
+    // No stream synchronisation belongs here, and saying why matters because the
+    // obvious "drain before reuse" is what this used to do - twice per eviction,
+    // which at roughly seven hundred evictions per token cost more than the
+    // expert reads themselves.
     //
-    // Slots already handed to the call in progress are never victims: their
-    // device pointers sit in that call's pointer table and the kernel has not
-    // run yet. If nothing else can be evicted the tier temporarily exceeds its
-    // budget instead of producing a dangling pointer.
+    // Every entry that can be evicted here was created by an EARLIER MUL_MAT_ID
+    // call. Each call begins by downloading the router ids on the compute stream
+    // and synchronising that stream, so by the time this runs:
+    //   * the previous calls' kernels have completed, and
+    //   * each of those kernels had already waited on the copy-stream event that
+    //     ordered its own host-to-device expert transfers,
+    // so both the kernel and the transfer that touched a victim are finished.
+    // Entries created by the call in progress are never victims: their pointers
+    // are already in that call's pointer table and its kernel has not run yet.
+    // If nothing else can be evicted the tier temporarily exceeds its budget
+    // instead of producing a dangling pointer.
+    // The router-id reuse keeps up to SB_ID_GROUP_MAX calls of one layer from
+    // draining the compute stream, so kernels from the last epochs can still be
+    // reading their slots. Their entries are held back as victims for as many
+    // epochs as that window is wide; older ones are provably finished.
+    (void) compute_stream;
     while (g_mmid_bytes + needed > g_mmid_capacity) {
         auto victim = g_mmid_entries.end();
         for (auto it = g_mmid_entries.begin(); it != g_mmid_entries.end(); ++it) {
-            if (it->epoch == g_mmid_epoch) continue;
+            if (it->epoch + SB_ID_GROUP_MAX > g_mmid_epoch) continue;
             if (victim == g_mmid_entries.end() || it->touch < victim->touch) victim = it;
         }
         if (victim == g_mmid_entries.end()) {
             ++g_mmid_overflow;
             return;
         }
-        cudaStreamSynchronize(compute_stream);
-        cudaStreamSynchronize(g_copy);
         if (victim->slab) {
             if (g_slab_base) sb_slab_free(victim->device);
         } else {
             cudaFree(victim->device);
         }
         g_mmid_bytes -= victim->bytes;
-        g_mmid_entries.erase(victim);
+        // Order in the table is irrelevant: recency is `touch`. Swapping the last
+        // element in avoids shifting the tens of thousands of entries behind the
+        // victim, which cost more than the disk read it made room for.
+        *victim = g_mmid_entries.back();
+        g_mmid_entries.pop_back();
         ++g_mmid_evictions;
     }
 }
 
-// Byte-exact check of a resident slot against the original GGUF range.
+// Byte-exact check of a resident slot against the original GGUF range. The
+// oracle is the mapped file, so every check pulls those pages into RAM - the
+// budget bounds that, otherwise a long prefill would fill the machine with the
+// pages the verifier itself asked for.
 static bool sb_mmid_verify(const void * device, const void * source, size_t bytes) {
+    if (g_mmid_verify_budget == 0) return true;   // budget spent: assert nothing
+    if (g_mmid_verify_budget != UINT64_MAX) --g_mmid_verify_budget;
     std::vector<uint8_t> back(bytes);
     if (cudaStreamSynchronize(g_copy) != cudaSuccess ||
         cudaMemcpy(back.data(), device, bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
@@ -322,20 +393,99 @@ static bool sb_mmid_verify(const void * device, const void * source, size_t byte
     return true;
 }
 
-static void * sb_mmid_resident(const void * source_key, int expert,
-                               const void * source, size_t bytes,
-                               cudaStream_t compute_stream) {
+// A pending expert fetch: the slot is reserved but its bytes are not in it yet.
+struct sb_fetch {
+    const void * source_key;
+    int          expert;
+    const void * source;   // mapped bytes: fallback route and verification oracle
+    size_t       bytes;
+    void *       dst;      // device slot
+};
+
+// Residency memo for one call. Every lookup of a call asks the same table for
+// the same tensor, so one pass answers all of them; testing each expert with its
+// own scan made `slot` the second largest cost after the disk. The pass also
+// stamps recency, so a memo hit needs no entry access at all - which keeps it
+// correct even when an eviction shifts the table underneath it.
+struct sb_memo_hit { int expert; void * device; };
+
+static thread_local std::vector<sb_memo_hit> g_memo;
+static thread_local std::vector<int>         g_memo_ids;
+static thread_local const void *             g_memo_source = nullptr;
+static thread_local size_t                   g_memo_bytes  = 0;
+static thread_local bool                     g_memo_valid  = false;
+
+static void sb_mmid_prime(const void * source_key, size_t bytes,
+                          const uint8_t * ids_raw, size_t id_stride, size_t token_stride,
+                          int n_ids, int n_tokens) {
+    g_memo_valid  = false;
+    g_memo_source = source_key;
+    g_memo_bytes  = bytes;
+    g_memo.clear();
+    if (n_ids <= 0 || n_tokens <= 0) return;
+
+    g_memo_ids.clear();    for (int t = 0; t < n_tokens; ++t) {
+        for (int i = 0; i < n_ids; ++i) {
+            const int e = *(const int32_t *) (ids_raw + (size_t) t * token_stride
+                                                       + (size_t) i * id_stride);
+            bool seen = false;
+            for (int v : g_memo_ids) { if (v == e) { seen = true; break; } }
+            if (!seen) g_memo_ids.push_back(e);
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(g_mmid_mutex);
+    for (auto & entry : g_mmid_entries) {
+        if (entry.source_key != source_key || entry.bytes != bytes || !entry.filled) continue;
+        for (int v : g_memo_ids) {
+            if (v != entry.expert) continue;
+            entry.touch = ++g_mmid_tick;
+            entry.epoch = g_mmid_epoch;
+            ++g_mmid_hits;
+            if (g_mmid_verify &&
+                (g_mmid_verify_all_hits || g_mmid_hits % g_mmid_verify_hit_every == 0)) {
+                const uint8_t * src = (const uint8_t *) source_key;
+                src += (size_t) entry.expert * bytes;
+                if (!sb_mmid_verify(entry.device, src, bytes)) {
+                    g_memo_valid = false;
+                    return;
+                }
+            }
+            g_memo.push_back({ entry.expert, entry.device });
+            break;
+        }
+    }
+    g_memo_valid = true;
+}
+
+// Reserve (or find) the device slot for one expert. This is pure bookkeeping -
+// no I/O is issued here - so a whole MUL_MAT_ID call can be scanned first and
+// then fetched with a bounded number of concurrent unbuffered reads.
+static void * sb_mmid_slot(const void * source_key, int expert,
+                           const void * source, size_t bytes,
+                           std::vector<sb_fetch> & miss,
+                           cudaStream_t compute_stream) {
+    if (g_memo_valid && g_memo_source == source_key && g_memo_bytes == bytes) {
+        for (const auto & h : g_memo) {
+            if (h.expert == expert) return h.device;
+        }
+    }
+    sb_phase_timer _t(&g_t_slot);
     std::lock_guard<std::mutex> lock(g_mmid_mutex);
     if (g_mmid_capacity == 0) {
         g_mmid_capacity = sb_mmid_capacity_bytes();
     }
 
     for (auto & entry : g_mmid_entries) {
-        if (entry.source_key == source_key && entry.expert == expert && entry.bytes == bytes) {
+        // `filled` is what makes a slot a hit. An entry created earlier in this
+        // same call is already reserved for us, so it is returned as well.
+        if (entry.source_key == source_key && entry.expert == expert && entry.bytes == bytes &&
+            (entry.filled || entry.epoch == g_mmid_epoch)) {
             entry.touch = ++g_mmid_tick;
             entry.epoch = g_mmid_epoch;
             ++g_mmid_hits;
-            if (g_mmid_verify && (g_mmid_verify_all_hits || g_mmid_hits % g_mmid_verify_hit_every == 0) &&
+            if (entry.filled && g_mmid_verify &&
+                (g_mmid_verify_all_hits || g_mmid_hits % g_mmid_verify_hit_every == 0) &&
                 !sb_mmid_verify(entry.device, source, bytes)) {
                 snprintf(g_err, sizeof(g_err), "Sabah resident expert %d differs from its GGUF bytes (hit)", expert);
                 return nullptr;
@@ -358,19 +508,12 @@ static void * sb_mmid_resident(const void * source_key, int expert,
         ++g_mmid_overflow;
         if (!ck(cudaMalloc(&device, bytes), "Sabah over-budget expert")) return nullptr;
     }
-    if (!ck(cudaMemcpyAsync(device, source, bytes, cudaMemcpyHostToDevice, g_copy),
-            "Sabah expert H2D")) {
-        if (from_slab) sb_slab_free(device); else cudaFree(device);
-        return nullptr;
-    }
 
-    g_mmid_entries.push_back({ source_key, expert, device, bytes, ++g_mmid_tick, g_mmid_epoch, from_slab });
+    g_mmid_entries.push_back({ source_key, expert, device, bytes, ++g_mmid_tick,
+                               g_mmid_epoch, from_slab, false });
     g_mmid_bytes += bytes;
     g_mmid_bytes_fetched += bytes;
-    if (g_mmid_verify && !sb_mmid_verify(device, source, bytes)) {
-        snprintf(g_err, sizeof(g_err), "Sabah fetched expert %d differs from its GGUF bytes (miss)", expert);
-        return nullptr;
-    }
+    miss.push_back({ source_key, expert, source, bytes, device });
     return device;
 }
 
@@ -378,6 +521,946 @@ static bool ck(cudaError_t e, const char * what) {
     if (e == cudaSuccess) return true;
     snprintf(g_err, sizeof(g_err), "%s: %s", what, cudaGetErrorString(e));
     return false;
+}
+
+// ===========================================================================
+// Direct expert streaming:  file -> pinned staging -> VRAM slot
+// ===========================================================================
+//
+// The expert bank is 50.29 GB and this machine has 16 GB of RAM. Reading those
+// bytes through llama.cpp's mmap would push every fetched entity through the
+// Windows file cache, so the box would spend its RAM caching expert bytes that
+// a multi-gigabyte VRAM tier is going to ask for again only rarely - and that
+// is exactly what makes it thrash.
+//
+// Instead the bytes are read with FILE_FLAG_NO_BUFFERING straight from the GGUF
+// file into a pinned, sector-aligned staging block and copied on to their device
+// slot. The resident host footprint is a fixed few tens of megabytes no matter
+// how large the model is, and the OS file cache is never touched.
+//
+// The runtime is a drop-in adapter, so it is not told which file backs a given
+// host pointer. Windows has no inverse-mapping API, but a mapped view is a
+// single MEM_MAPPED allocation: VirtualQuery reports its base and
+// GetMappedFileName names the file. llama.cpp maps whole files from offset 0,
+// which the "GGUF" magic at the view base confirms before anything is trusted.
+// ===========================================================================
+
+static bool sb_direct_io_enabled() {
+    const char * v = std::getenv("SABAH_LLAMA_DIRECT_IO");
+    return !(v && (std::strcmp(v, "0") == 0 || std::strcmp(v, "off") == 0));
+}
+
+static size_t sb_io_depth() {
+    const char * v = std::getenv("SABAH_LLAMA_IO_DEPTH");
+    long n = v ? std::atol(v) : 8;
+    if (n < 1)  n = 1;
+    if (n > 32) n = 32;
+    return (size_t) n;
+}
+
+// Unbuffered I/O requires the offset, the length and the buffer to share an
+// alignment that is a multiple of the volume sector size. 4096 satisfies both
+// 512e and 4Kn volumes.
+static const size_t SB_IO_ALIGN = 4096;
+
+struct sb_disk_file {
+#if defined(_WIN32)
+    HANDLE h = INVALID_HANDLE_VALUE;
+#else
+    int    fd = -1;
+#endif
+    uint64_t    size = 0;
+    std::string path;
+};
+
+static std::mutex                    g_disk_mutex;
+static std::vector<sb_disk_file>     g_disk_files;
+static std::map<std::string, size_t> g_disk_paths;
+
+#if defined(_WIN32)
+// "\Device\HarddiskVolume3\Strata-data\x.gguf" -> "C:\Strata-data\x.gguf"
+static bool sb_device_path_to_dos(const std::string & dev, std::string & out) {
+    char drives[1024];
+    const DWORD n = GetLogicalDriveStringsA((DWORD) sizeof(drives) - 1, drives);
+    if (n == 0 || n >= sizeof(drives)) return false;
+    for (const char * d = drives; d < drives + n && *d; d += std::strlen(d) + 1) {
+        char target[1024];
+        char drive[4];
+        snprintf(drive, sizeof(drive), "%c:", d[0]);   // QueryDosDevice wants "C:"
+        if (!QueryDosDeviceA(drive, target, sizeof(target))) continue;
+        const size_t tl = std::strlen(target);
+        if (dev.size() >= tl && dev.compare(0, tl, target) == 0) {
+            out = d;                                        // "C:\"
+            if (!out.empty() && out.back() == '\\') out.pop_back();
+            out += dev.substr(tl);
+            return true;
+        }
+    }
+    return false;
+}
+#endif
+
+// Must be called with g_disk_mutex held. Returns the file index or (size_t)-1.
+static size_t sb_disk_open_locked(const std::string & path) {
+    auto it = g_disk_paths.find(path);
+    if (it != g_disk_paths.end()) return it->second;
+
+    sb_disk_file f;
+    f.path = path;
+#if defined(_WIN32)
+    f.h = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      nullptr, OPEN_EXISTING,
+                      FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED, nullptr);
+    if (f.h == INVALID_HANDLE_VALUE) return (size_t) -1;
+    LARGE_INTEGER li;
+    if (!GetFileSizeEx(f.h, &li)) { CloseHandle(f.h); return (size_t) -1; }
+    f.size = (uint64_t) li.QuadPart;
+#else
+    f.fd = ::open(path.c_str(), O_RDONLY | O_DIRECT);
+    if (f.fd < 0) return (size_t) -1;
+    struct stat st;
+    if (fstat(f.fd, &st) != 0) { ::close(f.fd); return (size_t) -1; }
+    f.size = (uint64_t) st.st_size;
+#endif
+    g_disk_paths[path] = g_disk_files.size();
+    g_disk_files.push_back(f);
+    return g_disk_files.size() - 1;
+}
+
+// A host pointer that lives in a memory-mapped file -> which file and where.
+struct sb_host_map {
+    const uint8_t * base;
+    uint64_t        offset;   // file offset of `base`
+    uint64_t        size;     // covered range, so two files cannot be confused
+    size_t          file;
+};
+
+static std::vector<sb_host_map> g_host_maps;
+
+// Resolve a mapped host pointer to (file, byte offset in that file).
+// `trace`, when given, receives the reason for failure - the runtime must be
+// able to explain why it fell back to the mapped bytes.
+static bool sb_resolve(const void * source, size_t & file_idx, uint64_t & file_off,
+                       std::string * trace = nullptr) {
+#if defined(_WIN32)
+    const uint8_t * p = (const uint8_t *) source;
+
+    {
+        std::lock_guard<std::mutex> lock(g_disk_mutex);
+        for (const auto & m : g_host_maps) {
+            if (p >= m.base && p < m.base + m.size) {
+                file_idx = m.file;
+                file_off = (uint64_t) (p - m.base) + m.offset;
+                return true;
+            }
+        }
+    }
+
+    MEMORY_BASIC_INFORMATION mbi;
+    if (VirtualQuery(source, &mbi, sizeof(mbi)) == 0) {
+        if (trace) *trace = "VirtualQuery failed";
+        return false;
+    }
+
+    // The state of the region the pointer sits in is NOT what identifies the
+    // mapping. llama.cpp unmaps fragments of a view once their bytes have been
+    // copied elsewhere, so a tensor can legitimately point into a MEM_RESERVE
+    // hole inside a MEM_MAPPED allocation. What identifies the mapping is the
+    // allocation base, which is the view base, which carries the GGUF magic
+    // because llama.cpp maps whole files from offset 0.
+    const uint8_t * base = (const uint8_t *) mbi.AllocationBase;
+    if (base == nullptr || base > p) {
+        if (trace) *trace = "allocation base is not below the pointer";
+        return false;
+    }
+    if (std::memcmp(base, "GGUF", 4) != 0) {
+        char b[192];
+        snprintf(b, sizeof(b),
+                 "no GGUF magic at allocation base (Type=%lu State=%lu first bytes %02x %02x %02x %02x)",
+                 (unsigned long) mbi.Type, (unsigned long) mbi.State,
+                 base[0], base[1], base[2], base[3]);
+        if (trace) *trace = b;
+        return false;
+    }
+
+    char devname[4096];
+    if (GetMappedFileNameA(GetCurrentProcess(), (LPVOID) base, devname,
+                           (DWORD) sizeof(devname)) == 0) {
+        if (trace) {
+            char b[160];
+            snprintf(b, sizeof(b), "GetMappedFileName failed (err %lu)", (unsigned long) GetLastError());
+            *trace = b;
+        }
+        return false;
+    }
+    std::string path;
+    if (!sb_device_path_to_dos(devname, path)) {
+        if (trace) *trace = std::string("cannot map device path to a drive: ") + devname;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(g_disk_mutex);
+    const size_t fi = sb_disk_open_locked(path);
+    if (fi == (size_t) -1) {
+        if (trace) {
+            char b[160];
+            snprintf(b, sizeof(b), "cannot open unbuffered: %s (err %lu)",
+                     path.c_str(), (unsigned long) GetLastError());
+            *trace = b;
+        }
+        return false;
+    }
+    g_host_maps.push_back({ base, 0, g_disk_files[fi].size, fi });
+    file_idx = fi;
+    file_off = (uint64_t) (p - base);
+    return true;
+#else
+    (void) source; (void) file_idx; (void) file_off;
+    if (trace) *trace = "direct I/O is Windows only in this build";
+    return false;
+#endif
+}
+
+// --------------------------- pinned staging pool ---------------------------
+
+struct sb_io_slot {
+    void * staging = nullptr;
+    size_t cap     = 0;
+#if defined(_WIN32)
+    HANDLE ev      = nullptr;
+#endif
+};
+
+static std::vector<sb_io_slot> g_io_slots;
+static std::mutex              g_io_slots_mutex;
+
+// One event per staging parity, recorded on the copy stream after a wave's
+// host-to-device transfers so the following reuse of those buffers can wait for
+// them. Two entries are enough for double buffering.
+static cudaEvent_t g_io_wave_ev[2] = { nullptr, nullptr };
+
+static sb_io_slot * sb_io_slot_at(size_t i, size_t need) {
+    std::lock_guard<std::mutex> lock(g_io_slots_mutex);
+    while (g_io_slots.size() <= i) {
+        sb_io_slot s;
+#if defined(_WIN32)
+        s.ev = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+        if (s.ev == nullptr) return nullptr;
+#endif
+        g_io_slots.push_back(s);
+    }
+    sb_io_slot & s = g_io_slots[i];
+    if (s.cap < need) {
+        if (s.staging) { cudaFreeHost(s.staging); s.staging = nullptr; }
+        void * p = nullptr;
+        if (!ck(cudaHostAlloc(&p, need, cudaHostAllocDefault), "sabah io staging")) return nullptr;
+        s.staging = p;
+        s.cap = need;
+    }
+    return &s;
+}
+
+static void sb_io_pool_destroy() {
+    std::lock_guard<std::mutex> lock(g_io_slots_mutex);
+    for (auto & s : g_io_slots) {
+        if (s.staging) { cudaFreeHost(s.staging); s.staging = nullptr; }
+#if defined(_WIN32)
+        if (s.ev) { CloseHandle(s.ev); s.ev = nullptr; }
+#endif
+    }
+    g_io_slots.clear();
+    for (auto & e : g_io_wave_ev) {
+        if (e) { cudaEventDestroy(e); e = nullptr; }
+    }
+}
+
+// --------------------------- one unbuffered read ---------------------------
+
+struct sb_io_req {
+    size_t   file   = 0;
+    uint64_t off    = 0;       // aligned
+    size_t   len    = 0;       // aligned
+    void *   staging = nullptr;
+    size_t   delta  = 0;       // expert bytes start here inside `staging`
+    size_t   bytes  = 0;       // expert bytes requested
+    void *   dst    = nullptr; // device slot
+    size_t   got    = 0;
+    bool     issued = false;
+    bool     ok     = false;
+#if defined(_WIN32)
+    HANDLE   ev     = nullptr;
+    OVERLAPPED ov;
+#endif
+};
+
+static bool sb_io_issue(sb_io_req & r) {
+#if defined(_WIN32)
+    std::memset(&r.ov, 0, sizeof(r.ov));
+    r.ov.Offset     = (DWORD) (r.off & 0xffffffffull);
+    r.ov.OffsetHigh = (DWORD) (r.off >> 32);
+    r.ov.hEvent     = r.ev;
+    if (r.ev) ResetEvent(r.ev);
+    DWORD got = 0;
+    HANDLE h = g_disk_files[r.file].h;
+    if (ReadFile(h, r.staging, (DWORD) r.len, &got, &r.ov)) {
+        r.issued = false; r.ok = true; r.got = got;
+        return true;
+    }
+    const DWORD e = GetLastError();
+    if (e == ERROR_IO_PENDING) { r.issued = true; r.ok = true; return true; }
+    // A read that runs past EOF yields a short (or empty) transfer rather than
+    // damage: the caller checks that the expert's bytes were really delivered.
+    if (e == ERROR_HANDLE_EOF) { r.issued = false; r.ok = true; r.got = 0; return true; }
+    snprintf(g_err, sizeof(g_err), "ReadFile failed (err %lu, off %llu, len %llu)",
+             (unsigned long) e, (unsigned long long) r.off, (unsigned long long) r.len);
+    r.issued = false; r.ok = false; r.got = 0;
+    return false;
+#else
+    (void) r;
+    return false;
+#endif
+}
+
+static bool sb_io_wait(sb_io_req & r) {
+#if defined(_WIN32)
+    if (!r.issued) return r.ok;
+    DWORD got = 0;
+    if (!GetOverlappedResult(g_disk_files[r.file].h, &r.ov, &got, TRUE)) {
+        const DWORD e = GetLastError();
+        r.issued = false;
+        r.got = got;
+        // A short tail read is fine; anything else is not.
+        r.ok = (e == ERROR_HANDLE_EOF);
+        return r.ok;
+    }
+    r.issued = false;
+    r.got = got;
+    r.ok = true;
+    return true;
+#else
+    (void) r;
+    return false;
+#endif
+}
+
+// Numbers of bytes actually resident on the host because of this module.
+static uint64_t g_io_reads      = 0;   // unbuffered reads issued
+static uint64_t g_io_read_bytes = 0;   // bytes delivered by those reads
+static uint64_t g_io_fallbacks  = 0;   // times the mapped path had to be used
+static size_t   g_io_host_bytes = 0;   // pinned staging currently held
+
+// --------------------------- batched fetch ---------------------------
+
+// Reads every pending expert with at most `SABAH_LLAMA_IO_DEPTH` reads in flight.
+// A whole MUL_MAT_ID call is scanned before any of this runs, so the misses of
+// one layer arrive here together: that is what turns a single-stream 1.2 GB/s
+// read into the 2.5 GB/s the device delivers at depth 8.
+//
+// Returns false if the direct path cannot be used at all, which tells the caller
+// to complete the slots from the mapped bytes instead.
+static bool sb_fetch_direct(std::vector<sb_fetch> & miss) {
+    if (!sb_direct_io_enabled()) {
+        snprintf(g_err, sizeof(g_err), "direct I/O disabled");
+        return false;
+    }
+    if (miss.empty()) return true;
+    sb_phase_timer _tf(&g_t_fetch);
+
+    // Resolve every source first. One failure sends the whole batch down the
+    // fallback so a slot is never a mix of bytes from two different routes.
+    std::vector<size_t>   file(miss.size(), (size_t) -1);
+    std::vector<uint64_t> off(miss.size(), 0);
+    for (size_t i = 0; i < miss.size(); ++i) {
+        std::string why;
+        if (!sb_resolve(miss[i].source, file[i], off[i], &why)) {
+            snprintf(g_err, sizeof(g_err), "%s", why.empty() ? "unresolved source" : why.c_str());
+            return false;
+        }
+    }
+
+    const size_t depth = sb_io_depth();
+    size_t wave_no = 0;
+    for (size_t base = 0; base < miss.size(); base += depth, ++wave_no) {
+        const size_t wave = std::min(depth, miss.size() - base);
+        // Staging is double buffered. A wave's host-to-device copies are still in
+        // flight on the copy stream when the next wave starts issuing reads, so
+        // the reads must not write the buffers the copies are reading. Wave w
+        // therefore uses the buffers wave w-2 used, and waits for that wave's
+        // copies to land first. This was the source of both a data race and of a
+        // hard serialisation between reading and copying.
+        const size_t parity = wave_no % 2;
+        const size_t slot0  = parity * depth;
+        if (g_io_wave_ev[parity] != nullptr &&
+            !ck(cudaEventSynchronize(g_io_wave_ev[parity]), "Sabah staging reuse wait")) {
+            return false;
+        }
+        std::vector<sb_io_req> reqs(wave);
+
+        for (size_t i = 0; i < wave; ++i) {
+            const size_t j = base + i;
+            const sb_fetch & f = miss[j];
+            const uint64_t a_off = off[j] & ~(uint64_t) (SB_IO_ALIGN - 1);
+            const size_t   delta = (size_t) (off[j] - a_off);
+            const size_t   len   = ((delta + f.bytes + SB_IO_ALIGN - 1) / SB_IO_ALIGN) * SB_IO_ALIGN;
+            sb_io_slot * s = sb_io_slot_at(slot0 + i, len);
+            if (s == nullptr) return false;
+            sb_io_req & r = reqs[i];
+            r.file    = file[j];
+            r.off     = a_off;
+            r.len     = len;
+            r.staging = s->staging;
+            r.delta   = delta;
+            r.bytes   = f.bytes;
+            r.dst     = f.dst;
+#if defined(_WIN32)
+            r.ev      = s->ev;
+#endif
+            if (!sb_io_issue(r)) return false;
+        }
+
+        for (size_t i = 0; i < wave; ++i) {
+            const size_t j = base + i;
+            sb_io_req & r = reqs[i];
+            bool waited;
+            {
+                sb_phase_timer _tw(&g_t_wait);
+                waited = sb_io_wait(r);
+            }
+            if (!waited) return false;
+            if (r.got < r.delta + r.bytes) {
+                snprintf(g_err, sizeof(g_err),
+                         "unbuffered read delivered %llu of %llu bytes",
+                         (unsigned long long) r.got,
+                         (unsigned long long) (r.delta + r.bytes));
+                return false;
+            }
+            if (!ck(cudaMemcpyAsync(miss[j].dst, (const uint8_t *) r.staging + r.delta,
+                                    miss[j].bytes, cudaMemcpyHostToDevice, g_copy),
+                    "Sabah expert H2D")) {
+                return false;
+            }
+            ++g_io_reads;
+            g_io_read_bytes += miss[j].bytes;
+        }
+        if (g_io_wave_ev[parity] == nullptr &&
+            !ck(cudaEventCreateWithFlags(&g_io_wave_ev[parity], cudaEventDisableTiming),
+                "Sabah staging event")) {
+            return false;
+        }
+        if (!ck(cudaEventRecord(g_io_wave_ev[parity], g_copy), "Sabah staging event record")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ===========================================================================
+// Exact cross-call expert prefetch
+// ===========================================================================
+//
+// A forward pass issues a fixed sequence of MUL_MAT_ID calls, and the three
+// expert tensors of one mixture-of-experts layer all consume the SAME router
+// ids. So as soon as a call's ids are in hand, the experts the FOLLOWING calls
+// of that layer will ask for are already known - only their bytes are missing.
+//
+// A single call has roughly three reads in flight, and the disk sits idle
+// through the router download and the kernel that follow it. Issuing the
+// followers' reads during that window both deepens the queue and stops the
+// device idling, without changing which experts execute: the demand path still
+// chooses residency from the true ids, so a wrong prediction costs bytes and
+// nothing else.
+//
+// Disable with SABAH_LLAMA_PREFETCH=0.
+
+#include <condition_variable>
+#include <cstdlib>
+#include <deque>
+#include <thread>
+#include <utility>
+
+struct sb_pf_desc {
+    const void * source        = nullptr;
+    size_t       expert_stride = 0;
+    int          n_experts     = 0;
+};
+
+struct sb_pf_job {
+    size_t       slot       = 0;
+    const void * source_key = nullptr;
+    const void * source     = nullptr;   // mapped bytes: fallback source
+    int          expert     = 0;
+    size_t       bytes      = 0;
+};
+
+enum sb_pf_state { SB_PF_FREE = 0, SB_PF_FILLING, SB_PF_READY, SB_PF_TAKEN };
+
+// A readahead buffer. The prefetcher reads into pinned staging and LEAVES the
+// bytes there; the demand path copies them straight on to their device slot and
+// never touches the disk for them. Crucially it reserves no tier space: that is
+// what made the first shape cost more than it gained, because the demand path
+// then found its own slot reserved-but-unfilled and read the same bytes again.
+struct sb_pf_slot {
+    void *       staging      = nullptr;
+    size_t       cap          = 0;
+    size_t       delta        = 0;   // expert bytes begin here inside `staging`
+    int          state        = SB_PF_FREE;
+    bool         free_pending = false;
+    const void * source_key   = nullptr;
+    int          expert       = 0;
+    size_t       bytes        = 0;
+    uint64_t     seq          = 0;
+#if defined(_WIN32)
+    HANDLE       ev           = nullptr;   // overlapped read event
+#endif
+    cudaEvent_t  free_ev      = nullptr;   // copy-out finished
+};
+
+static constexpr int SB_PF_DEPTH      = 8;   // readahead buffers / reads in flight
+static constexpr int SB_PF_MAX_QUEUE  = 64;
+static constexpr int SB_PF_MAX_TOKENS = 4;   // only worth it when a call has few ids
+
+static bool         g_pf_enabled = false;
+static int          g_pf_dev     = 0;
+static cudaStream_t g_pf_stream  = nullptr;
+
+static std::mutex              g_pf_mutex;
+static std::condition_variable g_pf_cv;
+static std::deque<sb_pf_job>   g_pf_queue;
+static bool                    g_pf_stop  = false;
+static std::thread             g_pf_thread;
+static std::once_flag          g_pf_once;
+
+static std::vector<sb_pf_slot> g_pf_slots;
+static uint64_t                g_pf_seq = 0;
+
+static uint64_t g_pf_reads = 0, g_pf_bytes = 0, g_pf_drops = 0;
+static uint64_t g_pf_used = 0, g_pf_used_bytes = 0, g_pf_stale = 0;
+
+// The call sequence, learned as a chain. Indexing it by the router ids tensor
+// was wrong: the graph allocator hands every layer the same address for that
+// buffer, so the chain collapsed into a single node claiming all 144 tensors and
+// the prefetcher pulled the whole bank. The expert tensors themselves are
+// distinct, so the chain is keyed by those, and whether the following call
+// reuses the ids is learned by comparing the ids this call downloaded with the
+// ones the previous call did.
+struct sb_pf_link {
+    const void * source       = nullptr;
+    const void * next_source  = nullptr;
+    size_t       next_stride  = 0;
+    int          next_experts = 0;
+    bool         shares_ids   = false;
+};
+
+static std::mutex              g_pf_chain_mutex;
+static std::vector<sb_pf_link> g_pf_links;
+static const void *            g_pf_prev_source = nullptr;
+static std::vector<int32_t>    g_pf_prev_ids;
+
+// Make a readahead buffer usable: room for `need` bytes, and nobody still
+// copying out of it.
+static bool sb_pf_prepare(sb_pf_slot & s, size_t need) {
+    if (s.free_pending) {
+        if (s.free_ev != nullptr) cudaEventSynchronize(s.free_ev);
+        s.free_pending = false;
+    }
+    if (s.cap < need) {
+        if (s.staging) { cudaFreeHost(s.staging); s.staging = nullptr; }
+        void * p = nullptr;
+        if (!ck(cudaHostAlloc(&p, need, cudaHostAllocDefault), "sabah prefetch staging")) return false;
+        s.staging = p;
+        s.cap = need;
+    }
+    return true;
+}
+
+// Hand the demand path the bytes of an expert the prefetcher already read.
+// Returns false when nothing is staged for this expert, and the caller then
+// goes to the disk as usual.
+static bool sb_pf_take(const sb_fetch & f) {
+    size_t idx = g_pf_slots.size();
+    {
+        std::lock_guard<std::mutex> lock(g_pf_mutex);
+        for (size_t i = 0; i < g_pf_slots.size(); ++i) {
+            sb_pf_slot & s = g_pf_slots[i];
+            if (s.state == SB_PF_READY && s.source_key == f.source_key &&
+                s.expert == f.expert && s.bytes == f.bytes) {
+                s.state = SB_PF_TAKEN;
+                s.free_pending = true;
+                idx = i;
+                break;
+            }
+        }
+    }
+    if (idx == g_pf_slots.size()) return false;
+
+    sb_pf_slot & s = g_pf_slots[idx];
+    if (!ck(cudaMemcpyAsync(f.dst, (const uint8_t *) s.staging + s.delta, f.bytes,
+                            cudaMemcpyHostToDevice, g_copy), "Sabah prefetched expert H2D")) {
+        std::lock_guard<std::mutex> lock(g_pf_mutex);
+        s.state = SB_PF_FREE;
+        s.free_pending = false;
+        return false;
+    }
+    if (s.free_ev == nullptr &&
+        !ck(cudaEventCreateWithFlags(&s.free_ev, cudaEventDisableTiming),
+            "Sabah prefetch free event")) {
+        return false;
+    }
+    if (!ck(cudaEventRecord(s.free_ev, g_copy), "Sabah prefetch free record")) return false;
+    {
+        std::lock_guard<std::mutex> lock(g_pf_mutex);
+        s.state = SB_PF_FREE;   // reusable once the worker has waited on free_ev
+    }
+    ++g_pf_used;
+    g_pf_used_bytes += f.bytes;
+    return true;
+}
+
+// Read a batch of experts into their readahead buffers. Nothing is copied to a
+// device slot here: the bytes stay in pinned staging until a demand call asks
+// for them, which is what keeps the tier free of reservations nobody wanted.
+static void sb_pf_run_batch(std::vector<sb_pf_job> & batch) {
+    const size_t n = batch.size();
+    std::vector<sb_io_req> reqs(n);
+    std::vector<char>      issued(n, 0);
+
+    for (size_t i = 0; i < n; ++i) {
+        sb_pf_job & j = batch[i];
+        sb_pf_slot & s = g_pf_slots[j.slot];
+        size_t   file = 0;
+        uint64_t off  = 0;
+        if (!sb_resolve(j.source, file, off)) continue;
+        const uint64_t a_off = off & ~(uint64_t) (SB_IO_ALIGN - 1);
+        const size_t   delta = (size_t) (off - a_off);
+        const size_t   len   = ((delta + j.bytes + SB_IO_ALIGN - 1) / SB_IO_ALIGN) * SB_IO_ALIGN;
+        if (!sb_pf_prepare(s, len)) continue;
+        s.delta = delta;
+        sb_io_req & r = reqs[i];
+        r.file    = file;
+        r.off     = a_off;
+        r.len     = len;
+        r.staging = s.staging;
+        r.delta   = delta;
+        r.bytes   = j.bytes;
+        r.dst     = nullptr;
+#if defined(_WIN32)
+        r.ev      = s.ev;
+#endif
+        if (!sb_io_issue(r)) continue;
+        issued[i] = 1;
+    }
+
+    std::vector<char> ok(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        if (!issued[i]) continue;
+        ok[i] = sb_io_wait(reqs[i]) && reqs[i].got >= reqs[i].delta + reqs[i].bytes;
+    }
+
+    std::lock_guard<std::mutex> lock(g_pf_mutex);
+    for (size_t i = 0; i < n; ++i) {
+        sb_pf_slot & s = g_pf_slots[batch[i].slot];
+        if (!ok[i]) { s.state = SB_PF_FREE; continue; }
+        s.state = SB_PF_READY;
+        ++g_pf_reads;
+        g_pf_bytes += batch[i].bytes;
+    }
+}
+
+static void sb_pf_worker() {
+    cudaSetDevice(g_pf_dev);
+    std::vector<sb_pf_job> batch;
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> lock(g_pf_mutex);
+            g_pf_cv.wait(lock, [] { return g_pf_stop || !g_pf_queue.empty(); });
+            if (g_pf_queue.empty()) {
+                if (g_pf_stop) break;
+                continue;
+            }
+            const size_t take = std::min(g_pf_queue.size(), (size_t) SB_PF_DEPTH);
+            batch.assign(g_pf_queue.begin(), g_pf_queue.begin() + (std::ptrdiff_t) take);
+            g_pf_queue.erase(g_pf_queue.begin(), g_pf_queue.begin() + (std::ptrdiff_t) take);
+        }
+        sb_pf_run_batch(batch);
+    }
+}
+
+// Queue one expert of one follower tensor for readahead.
+static void sb_pf_offer(const sb_pf_desc & d, int expert) {
+    if (expert < 0 || expert >= d.n_experts || d.expert_stride == 0) return;
+    std::lock_guard<std::mutex> lock(g_pf_mutex);
+    if (g_pf_queue.size() >= (size_t) SB_PF_MAX_QUEUE) return;
+
+    for (const auto & s : g_pf_slots) {
+        if ((s.state == SB_PF_READY || s.state == SB_PF_FILLING) &&
+            s.source_key == d.source && s.expert == expert && s.bytes == d.expert_stride) {
+            return;   // already staged, or already on its way
+        }
+    }
+
+    size_t idx = g_pf_slots.size();
+    for (size_t i = 0; i < g_pf_slots.size(); ++i) {
+        if (g_pf_slots[i].state == SB_PF_FREE) { idx = i; break; }
+    }
+    if (idx == g_pf_slots.size()) {
+        // Every buffer is busy; take the oldest readahead nobody claimed.
+        uint64_t oldest = UINT64_MAX;
+        for (size_t i = 0; i < g_pf_slots.size(); ++i) {
+            if (g_pf_slots[i].state == SB_PF_READY && g_pf_slots[i].seq < oldest) {
+                oldest = g_pf_slots[i].seq;
+                idx = i;
+            }
+        }
+        if (idx == g_pf_slots.size()) { ++g_pf_drops; return; }
+        ++g_pf_stale;
+    }
+
+    sb_pf_slot & s = g_pf_slots[idx];
+    s.state      = SB_PF_FILLING;
+    s.source_key = d.source;
+    s.expert     = expert;
+    s.bytes      = d.expert_stride;
+    s.seq        = ++g_pf_seq;
+
+    sb_pf_job j;
+    j.slot       = idx;
+    j.source_key = d.source;
+    j.source     = (const uint8_t *) d.source + (size_t) expert * d.expert_stride;
+    j.expert     = expert;
+    j.bytes      = d.expert_stride;
+    g_pf_queue.push_back(j);
+    g_pf_cv.notify_one();
+}
+
+// Queue the experts of one tensor that the tier does not already hold. The
+// residency test scans the entry table once and checks membership in the expert
+// list, rather than testing each expert with its own scan.
+static void sb_pf_plan(const sb_pf_desc & d, const std::vector<int> & experts) {
+    if (d.source == nullptr || d.expert_stride == 0 || experts.empty()) return;
+
+    std::vector<char> resident(experts.size(), 0);
+    {
+        std::lock_guard<std::mutex> lock(g_mmid_mutex);
+        for (const auto & e : g_mmid_entries) {
+            if (e.source_key != d.source || e.bytes != d.expert_stride) continue;
+            for (size_t k = 0; k < experts.size(); ++k) {
+                if (experts[k] == e.expert) { resident[k] = 1; break; }
+            }
+        }
+    }
+    for (size_t k = 0; k < experts.size(); ++k) {
+        if (!resident[k]) sb_pf_offer(d, experts[k]);
+    }
+}
+
+// Called once per MUL_MAT_ID call, right after the router ids reached the host.
+static void sb_pf_note(const void * source, size_t expert_stride, int n_experts,
+                       int n_ids, int n_tokens, size_t ids_id_stride,
+                       const uint8_t * ids_raw) {
+    if (!g_pf_enabled || n_tokens > SB_PF_MAX_TOKENS || n_ids <= 0 || n_experts <= 0) return;
+
+    // The first token row stands in for the call. A prefetch is only a warm-up,
+    // and that row is what the demand path asks for first.
+    std::vector<int> experts((size_t) n_ids);
+    for (int i = 0; i < n_ids; ++i) {
+        experts[(size_t) i] = *(const int32_t *) (ids_raw + (size_t) i * ids_id_stride);
+    }
+
+    sb_pf_desc next{}, after{};
+    {
+        std::lock_guard<std::mutex> lock(g_pf_chain_mutex);
+
+        // Close the previous call's edge. This happens before this call's own
+        // edge is read, so a prediction always rests on what the previous token
+        // observed rather than on a fact learned mid-flight.
+        if (g_pf_prev_source != nullptr && g_pf_prev_source != source) {
+            size_t at = g_pf_links.size();
+            for (size_t i = 0; i < g_pf_links.size(); ++i) {
+                if (g_pf_links[i].source == g_pf_prev_source) { at = i; break; }
+            }
+            if (at == g_pf_links.size()) {
+                sb_pf_link l;
+                l.source = g_pf_prev_source;
+                g_pf_links.push_back(l);
+                at = g_pf_links.size() - 1;
+            }
+            g_pf_links[at].next_source  = source;
+            g_pf_links[at].next_stride  = expert_stride;
+            g_pf_links[at].next_experts = n_experts;
+            g_pf_links[at].shares_ids   = (g_pf_prev_ids == experts);
+        }
+
+        for (const auto & l : g_pf_links) {
+            if (l.source != source || !l.shares_ids || l.next_source == nullptr) continue;
+            next.source        = l.next_source;
+            next.expert_stride = l.next_stride;
+            next.n_experts     = l.next_experts;
+            for (const auto & m : g_pf_links) {
+                if (m.source == next.source && m.shares_ids && m.next_source != nullptr) {
+                    after.source        = m.next_source;
+                    after.expert_stride = m.next_stride;
+                    after.n_experts     = m.next_experts;
+                    break;
+                }
+            }
+            break;
+        }
+
+        g_pf_prev_source = source;
+        g_pf_prev_ids.swap(experts);
+    }
+
+    if (next.source != nullptr)  sb_pf_plan(next,  g_pf_prev_ids);
+    if (after.source != nullptr) sb_pf_plan(after, g_pf_prev_ids);
+}
+
+static void sb_pf_quit() {
+    if (!g_pf_enabled) return;
+    {
+        std::lock_guard<std::mutex> lock(g_pf_mutex);
+        g_pf_stop = true;
+    }
+    g_pf_cv.notify_all();
+    if (g_pf_thread.joinable()) g_pf_thread.join();
+    g_pf_enabled = false;
+    for (auto & s : g_pf_slots) {
+        if (s.staging) { cudaFreeHost(s.staging); s.staging = nullptr; }
+        if (s.free_ev) { cudaEventDestroy(s.free_ev); s.free_ev = nullptr; }
+#if defined(_WIN32)
+        if (s.ev) { CloseHandle(s.ev); s.ev = nullptr; }
+#endif
+    }
+    g_pf_slots.clear();
+    if (g_pf_stream) { cudaStreamDestroy(g_pf_stream); g_pf_stream = nullptr; }
+}
+
+static void sb_pf_start() {
+    std::call_once(g_pf_once, []() {
+        // Opt-in while it is still being measured against the plain path; what
+        // decides whether it stays is the SABAH_PREFETCH line, not intent.
+        const char * v = std::getenv("SABAH_LLAMA_PREFETCH");
+        if (v == nullptr) return;
+        if (std::strcmp(v, "0") == 0 || std::strcmp(v, "off") == 0) return;
+        if (cudaGetDevice(&g_pf_dev) != cudaSuccess) return;
+        if (cudaStreamCreateWithFlags(&g_pf_stream, cudaStreamNonBlocking) != cudaSuccess) {
+            g_pf_stream = nullptr;
+            return;
+        }
+        // Fixed size, created once: a slot must never move, because the demand
+        // path holds references to these buffers.
+        g_pf_slots.resize(SB_PF_DEPTH);
+        for (auto & s : g_pf_slots) {
+#if defined(_WIN32)
+            s.ev = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+            if (s.ev == nullptr) {
+                g_pf_slots.clear();
+                cudaStreamDestroy(g_pf_stream);
+                g_pf_stream = nullptr;
+                return;
+            }
+#endif
+        }
+        g_pf_enabled = true;
+        std::atexit(sb_pf_quit);
+        g_pf_thread = std::thread(sb_pf_worker);
+    });
+}
+
+// Completes every reserved slot and marks it filled.
+static bool sb_mmid_fill(std::vector<sb_fetch> & miss) {
+    if (miss.empty()) return true;
+
+    // Satisfy what readahead already holds before scheduling any disk work. The
+    // staged entries stay in `miss` on purpose: they are still reserved slots
+    // that have to be marked filled, or the next token would fetch them again.
+    std::vector<sb_fetch> disk;
+    disk.reserve(miss.size());
+    if (g_pf_enabled) {
+        for (const sb_fetch & f : miss) {
+            if (!sb_pf_take(f)) disk.push_back(f);
+        }
+    } else {
+        disk = miss;
+    }
+
+    if (!disk.empty() && !sb_fetch_direct(disk)) {
+        ++g_io_fallbacks;
+        {
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                std::fprintf(stderr, "SABAH_LLAMA: unbuffered expert read unavailable: %s\n",
+                             g_err[0] ? g_err : "no reason reported");
+                std::fflush(stderr);
+            }
+        }
+        // Diagnostic: stop before a single expert byte is read through the
+        // mapping, so the disk path can be debugged without the box thrashing.
+        const char * act = std::getenv("SABAH_LLAMA_RESOLVE_TRACE");
+        if (act && std::strcmp(act, "exit") == 0) {
+            std::fprintf(stderr, "SABAH_LLAMA_RESOLVE_TRACE=exit: stopping before any mapped read\n");
+            std::fflush(stderr);
+            std::_Exit(0);
+        }
+        g_err[0] = 0;
+        for (const sb_fetch & f : disk) {
+            if (!ck(cudaMemcpyAsync(f.dst, f.source, f.bytes,
+                                    cudaMemcpyHostToDevice, g_copy),
+                    "Sabah expert H2D")) {
+                return false;
+            }
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(g_mmid_mutex);
+    for (const auto & f : miss) {
+        for (auto & e : g_mmid_entries) {
+            if (e.source_key == f.source_key && e.expert == f.expert && e.bytes == f.bytes) {
+                e.filled = true;
+                break;
+            }
+        }
+        if (g_mmid_verify && !sb_mmid_verify(f.dst, f.source, f.bytes)) {
+            snprintf(g_err, sizeof(g_err),
+                     "Sabah fetched expert %d differs from its GGUF bytes (miss)", f.expert);
+            return false;
+        }
+    }
+    return true;
+}
+
+// Single-expert convenience, used by the sentinel test path.
+static void * sb_mmid_resident(const void * source_key, int expert,
+                               const void * source, size_t bytes,
+                               cudaStream_t compute_stream) {
+    std::vector<sb_fetch> miss;
+    void * p = sb_mmid_slot(source_key, expert, source, bytes, miss, compute_stream);
+    if (!p) return nullptr;
+    if (!sb_mmid_fill(miss)) return nullptr;
+    return p;
+}
+
+// Pointer table and hand-off event, reused across calls. cudaMalloc and
+// cudaEventCreate cost tens of microseconds each and this path runs 144 times
+// per token, so neither may appear in the steady state.
+static void **     g_ptr_table    = nullptr;
+static size_t      g_ptr_table_cap = 0;
+static cudaEvent_t g_ready_ev      = nullptr;
+
+static void sb_scratch_destroy() {
+    if (g_ptr_table) { cudaFree(g_ptr_table); g_ptr_table = nullptr; g_ptr_table_cap = 0; }
+    if (g_ready_ev)  { cudaEventDestroy(g_ready_ev); g_ready_ev = nullptr; }
+}
+
+static bool sb_ptr_table(size_t bytes, void *** out) {
+    if (bytes > g_ptr_table_cap) {
+        if (g_ptr_table) { cudaFree(g_ptr_table); g_ptr_table = nullptr; g_ptr_table_cap = 0; }
+        size_t cap = bytes < (1u << 16) ? (1u << 16) : bytes;
+        if (!ck(cudaMalloc(&g_ptr_table, cap), "Sabah pointer table allocation")) return false;
+        g_ptr_table_cap = cap;
+    }
+    *out = g_ptr_table;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,6 +2187,57 @@ extern "C" {
 
 SABAH_API const char * sabah_rt_last_error(void) { return g_err; }
 
+// Safe diagnostic: reports what the runtime would conclude about a host pointer
+// that the model's tensors live in, without loading anything or touching CUDA.
+// Lets the disk path be validated against a real mmap in milliseconds.
+SABAH_API int sabah_rt_resolve_probe(void * ptr, char * buf, size_t n) {
+    if (!buf || n == 0) return -1;
+    buf[0] = 0;
+    size_t   fi  = (size_t) -1;
+    uint64_t off = 0;
+    std::string why;
+    const bool ok = sb_resolve(ptr, fi, off, &why);
+    if (ok) {
+        const sb_disk_file & f = g_disk_files[fi];
+        snprintf(buf, n,
+                 "resolved=1 file=%s offset=%llu file_size=%llu align=%llu direct_io=%d depth=%llu",
+                 f.path.c_str(), (unsigned long long) off, (unsigned long long) f.size,
+                 (unsigned long long) SB_IO_ALIGN,
+                 sb_direct_io_enabled() ? 1 : 0, (unsigned long long) sb_io_depth());
+    } else {
+        snprintf(buf, n, "resolved=0 reason=%s", why.empty() ? "unknown" : why.c_str());
+    }
+    return ok ? 0 : -1;
+}
+
+// Reads `bytes` at `off` with an unbuffered read and reports the first 8 bytes,
+// so the direct path can be proven to deliver the same bytes as the mapping.
+SABAH_API int sabah_rt_read_probe(uint64_t off, size_t bytes, char * buf, size_t n) {
+    if (!buf || n == 0) return -1;
+    buf[0] = 0;
+    if (g_disk_files.empty()) { snprintf(buf, n, "no file registered"); return -1; }
+    const size_t   len = ((bytes + SB_IO_ALIGN - 1) / SB_IO_ALIGN) * SB_IO_ALIGN;
+    sb_io_slot * s = sb_io_slot_at(0, len);
+    if (!s) { snprintf(buf, n, "staging allocation failed"); return -1; }
+    sb_io_req r;
+    r.file = 0; r.off = off & ~(uint64_t) (SB_IO_ALIGN - 1);
+    r.len = len; r.staging = s->staging; r.delta = (size_t) (off - r.off);
+    r.bytes = bytes; r.dst = nullptr;
+#if defined(_WIN32)
+    r.ev = s->ev;
+#endif
+    if (!sb_io_issue(r) || !sb_io_wait(r) || r.got < r.delta + bytes) {
+        snprintf(buf, n, "read failed (got %llu of %llu)", (unsigned long long) r.got,
+                 (unsigned long long) (r.delta + bytes));
+        return -1;
+    }
+    const uint8_t * q = (const uint8_t *) s->staging + r.delta;
+    char hex[64];
+    for (int i = 0; i < 8; ++i) snprintf(hex + i * 3, 4, "%02x ", q[i]);
+    snprintf(buf, n, "read_ok bytes=%llu first8=%s", (unsigned long long) r.got, hex);
+    return 0;
+}
+
 static int sb_snapshot_json(char * buf, size_t n);
 
 static void sb_report_diag() {
@@ -1114,6 +2248,40 @@ static void sb_report_diag() {
                  (unsigned long long) (g_mmid_hits + g_mmid_misses),
                  (unsigned long long) g_mmid_overflow,
                  (unsigned long long) g_mmid_verify_ok, (unsigned long long) g_mmid_verify_fail);
+    std::fprintf(stderr,
+                 "SABAH_DISK unbuffered_reads=%llu bytes=%llu mapped_fallbacks=%llu staging_bytes=%llu direct_io=%d depth=%llu\n",
+                 (unsigned long long) g_io_reads,
+                 (unsigned long long) g_io_read_bytes,
+                 (unsigned long long) g_io_fallbacks,
+                 (unsigned long long) g_io_host_bytes,
+                 sb_direct_io_enabled() ? 1 : 0,
+                 (unsigned long long) sb_io_depth());
+    {
+        const double calls = g_mmid_calls > 0 ? (double) g_mmid_calls : 1.0;        std::fprintf(stderr,
+                     "SABAH_PHASE calls=%llu ids=%.1fms fetch=%.1fms wait=%.1fms slot=%.1fms ptr=%.1fms "
+                     "| per_call us: ids=%.0f fetch=%.0f wait=%.0f slot=%.0f ptr=%.0f | accounting=%.1fms\n",
+                     (unsigned long long) g_mmid_calls,
+                     g_t_ids, g_t_fetch, g_t_wait, g_t_slot, g_t_ptr,
+                     g_t_ids / calls * 1000.0, g_t_fetch / calls * 1000.0,
+                     g_t_wait / calls * 1000.0, g_t_slot / calls * 1000.0,
+                     g_t_ptr / calls * 1000.0,
+                     g_t_ids + g_t_fetch + g_t_slot + g_t_ptr);
+    }
+    std::fprintf(stderr,
+                 "SABAH_IDS reused=%llu group_max=%llu check=%d check_ok=%llu check_fail=%llu\n",
+                 (unsigned long long) g_id_reuse, (unsigned long long) g_id_group_max,
+                 g_id_check ? 1 : 0,
+                 (unsigned long long) g_id_check_ok, (unsigned long long) g_id_check_fail);
+    std::fprintf(stderr,
+                 "SABAH_PREFETCH enabled=%d reads=%llu read_bytes=%llu used=%llu used_bytes=%llu dropped=%llu stale=%llu queued=%llu\n",
+                 g_pf_enabled ? 1 : 0,
+                 (unsigned long long) g_pf_reads,
+                 (unsigned long long) g_pf_bytes,
+                 (unsigned long long) g_pf_used,
+                 (unsigned long long) g_pf_used_bytes,
+                 (unsigned long long) g_pf_drops,
+                 (unsigned long long) g_pf_stale,
+                 (unsigned long long) g_pf_queue.size());
     char buf[1024];
     sb_snapshot_json(buf, sizeof(buf));
     std::fprintf(stderr, "SABAH_SNAPSHOT %s\n", buf);
@@ -1151,8 +2319,11 @@ static void sb_pinned_pool_destroy() {
 
 
 SABAH_API int sabah_rt_shutdown(void) {
+    sb_pf_quit();          // stop reserving and copying before the tier is freed
     sb_mmid_reset();
     sb_slab_destroy();
+    sb_io_pool_destroy();
+    sb_scratch_destroy();
     sb_pinned_pool_destroy();
     if (g_copy)    { cudaStreamDestroy(g_copy);    g_copy = 0; }
     if (g_compute) { cudaStreamDestroy(g_compute); g_compute = 0; }
@@ -1362,7 +2533,8 @@ static void sb_status_write(bool) {
 // counter only, never by observed error.
 static void sb_selfcheck(const void * source, size_t expert_stride, size_t row_stride,
                          const void * d_x, size_t x_id_stride, int x_rows, size_t x_token_stride,
-                         const std::vector<int32_t> & ids, int n_ids, int n_tokens,
+                         const uint8_t * ids_raw, size_t ids_id_stride, size_t ids_token_stride,
+                         int n_ids, int n_tokens,
                          const float * d_dst, size_t dst_id_stride, size_t dst_token_stride,
                          int rows, int k, int qt, cudaStream_t stream, uint64_t call_no) {
     if (g_sc_k <= 0) return;
@@ -1375,7 +2547,9 @@ static void sb_selfcheck(const void * source, size_t expert_stride, size_t row_s
         const uint64_t h = sb_mix64(h0 + (uint64_t) s);
         const int t = (int) (h % (uint64_t) n_tokens);
         const int slot = (int) ((sb_mix64(h) + (uint64_t) s) % (uint64_t) n_ids);
-        const int expert = ids[(size_t) t * n_ids + slot];
+        const int expert = *(const int32_t *) (ids_raw
+                             + (size_t) t * ids_token_stride
+                             + (size_t) slot * ids_id_stride);
         const uint8_t * xp = (const uint8_t *) d_x + (size_t) (slot % x_rows) * x_id_stride
                            + (size_t) t * x_token_stride;
         const uint8_t * op = (const uint8_t *) d_dst + (size_t) t * dst_token_stride
@@ -1436,7 +2610,8 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
         int k,
         int n_experts,
         int qt,
-        void * stream_ptr) {
+        void * stream_ptr,
+        const void * ids_key) {
     if (!source || !d_x || !d_ids || !d_dst || !g_copy) {
         snprintf(g_err, sizeof(g_err), "invalid Sabah MUL_MAT_ID arguments");
         return -1;
@@ -1472,33 +2647,91 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
 
     cudaStream_t compute_stream = stream_ptr ? (cudaStream_t) stream_ptr : g_compute;
 
+    const auto t_ids0 = std::chrono::steady_clock::now();
     const size_t ids_bytes = (size_t) (n_ids - 1) * ids_id_stride
                            + (size_t) (n_tokens - 1) * ids_token_stride
                            + sizeof(int32_t);
-    std::vector<uint8_t> ids_raw(ids_bytes);
-    if (!ck(cudaMemcpyAsync(ids_raw.data(), d_ids, ids_bytes,
-                            cudaMemcpyDeviceToHost, compute_stream),
-            "Sabah router id download")) {
-        return -1;
-    }
-    // The host MUST wait: the residency decision below reads `ids_raw` on the
-    // CPU and chooses which experts to fetch. There is no way to overlap this
-    // with the same call's own work, because that work depends on the answer.
-    // (Overlapping it across tokens is the job of the MTP prefetcher, which
-    // predicts ids instead of waiting for them.)
-    if (!ck(cudaStreamSynchronize(compute_stream),
-            "Sabah router id synchronize")) {
-        return -1;
+    static thread_local std::vector<uint8_t> ids_raw;
+    static thread_local std::vector<uint8_t> ids_fresh;
+    if (ids_raw.size() < ids_bytes) ids_raw.resize(ids_bytes);
+    if (ids_fresh.size() < ids_bytes) ids_fresh.resize(ids_bytes);
+
+    // The three expert tensors of one MoE layer read the SAME router tensor, so
+    // the ids downloaded for the first of them are still the ids of the second
+    // and third. Noticing that (same tensor as the call before, short group)
+    // turns two of three stream drains per layer into nothing, which lets the
+    // GPU run a layer's kernels back to back instead of one at a time.
+    static const void * last_ids_key  = nullptr;
+    static size_t       last_ids_bytes = 0;
+    static uint64_t     group_len      = 0;
+    const bool adjacent = ids_key != nullptr && ids_key == last_ids_key &&
+                          ids_bytes == last_ids_bytes;
+    const bool reuse = adjacent && !g_id_check && group_len < SB_ID_GROUP_MAX;
+    group_len = reuse ? group_len + 1 : 1;
+    if (reuse) {
+        ++g_id_reuse;
+        if (group_len > g_id_group_max) g_id_group_max = group_len;
     }
 
-    std::vector<int32_t> ids((size_t) n_ids * n_tokens);
-    std::vector<const void *> ptrs(ids.size());
+    if (!reuse) {
+        // First call of a group: the routing is not known yet, and the host MUST
+        // wait for the router to produce it. There is no way to overlap this with
+        // the same call's own work, because that work depends on the answer.
+        // (Overlapping it across tokens is the job of the prefetcher, which
+        // predicts ids instead of waiting for them.)
+        uint8_t * into = (g_id_check && adjacent) ? ids_fresh.data() : ids_raw.data();
+        if (!ck(cudaMemcpyAsync(into, d_ids, ids_bytes,
+                                cudaMemcpyDeviceToHost, compute_stream),
+                "Sabah router id download")) {
+            return -1;
+        }
+        if (!ck(cudaStreamSynchronize(compute_stream),
+                "Sabah router id synchronize")) {
+            return -1;
+        }
+        if (g_id_check && adjacent) {
+            // Evidence that the reuse above is byte for byte the same routing.
+            if (std::memcmp(ids_raw.data(), ids_fresh.data(), ids_bytes) == 0) {
+                ++g_id_check_ok;
+            } else {
+                ++g_id_check_fail;
+            }
+        }
+    }
+    last_ids_key   = ids_key;
+    last_ids_bytes = ids_bytes;
+    g_t_ids += std::chrono::duration<double, std::milli>(
+                   std::chrono::steady_clock::now() - t_ids0).count();
+
+    // While these ids are in hand, the experts the following calls of this same
+    // layer will need are already known: issue their reads now so the disk is
+    // busy through the router work and the kernel that would otherwise idle it.
+    g_memo_valid = false;
+    sb_pf_start();
+    sb_pf_note(source, expert_stride, n_experts, n_ids, n_tokens,
+               ids_id_stride, ids_raw.data());
+    // A decode call asks about a handful of experts out of tens of thousands of
+    // entries. A prefill call asks about nearly all of them, and priming it would
+    // cost more than the scans it replaces, so it keeps the per-lookup path.
+    if ((size_t) n_ids * (size_t) n_tokens <= 64) {
+        sb_mmid_prime(source, expert_stride, ids_raw.data(),
+                      ids_id_stride, ids_token_stride, n_ids, n_tokens);
+    }
+
+    static thread_local std::vector<const void *> ptrs;
+    static thread_local std::vector<sb_fetch>     miss;
+    const size_t n_slots = (size_t) n_ids * n_tokens;
+    if (ptrs.size() < n_slots) ptrs.resize(n_slots);
+    miss.clear();
+
+    // Pass 1: reserve every slot this call needs. Nothing is read from disk
+    // yet, so by the time the fetches are issued the whole call's miss set is
+    // known and can be fetched with several reads in flight at once.
     for (int token = 0; token < n_tokens; ++token) {
         for (int id_i = 0; id_i < n_ids; ++id_i) {
             const size_t raw_offset = (size_t) token * ids_token_stride
                                     + (size_t) id_i * ids_id_stride;
             const int expert = *(const int32_t *) (ids_raw.data() + raw_offset);
-            ids[(size_t) token * n_ids + id_i] = expert;
             const size_t i = (size_t) token * n_ids + id_i;
             if (expert < 0 || expert >= n_experts) {
                 snprintf(g_err, sizeof(g_err), "Sabah expert id out of range");
@@ -1509,20 +2742,19 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
             // so the correctness gate can prove it rejects a wrong expert in
             // the real graph. Slot 0 of every call runs the neighbouring expert.
             if (id_i == 0) {
-                ids[(size_t) token * n_ids + id_i] = expert;
-                void * wrong = sb_mmid_resident(
+                void * wrong = sb_mmid_slot(
                     source, (expert + 1) % n_experts,
                     (const uint8_t *) source + (size_t) ((expert + 1) % n_experts) * expert_stride,
-                    expert_stride, compute_stream);
+                    expert_stride, miss, compute_stream);
                 if (!wrong) return -1;
-                ptrs[(size_t) token * n_ids + id_i] = wrong;
+                ptrs[i] = wrong;
                 continue;
             }
 #endif
-            void * resident = sb_mmid_resident(
+            void * resident = sb_mmid_slot(
                 source, expert,
                 (const uint8_t *) source + (size_t) expert * expert_stride,
-                expert_stride, compute_stream);
+                expert_stride, miss, compute_stream);
             if (!resident) {
                 return -1;
             }
@@ -1530,30 +2762,39 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
         }
     }
 
-    void ** d_ptrs = nullptr;
-    if (!ck(cudaMalloc(&d_ptrs, ptrs.size() * sizeof(void *)),
-            "Sabah pointer table allocation")) {
-        return -1;
-    }
-    if (!ck(cudaMemcpyAsync(d_ptrs, ptrs.data(), ptrs.size() * sizeof(void *),
-                            cudaMemcpyHostToDevice, g_copy),
-            "Sabah pointer table upload")) {
-        cudaFree(d_ptrs);
+    // Pass 2: one bounded-depth unbuffered read wave set fills every miss.
+    if (!sb_mmid_fill(miss)) {
         return -1;
     }
 
-    cudaEvent_t ready = nullptr;
-    if (!ck(cudaEventCreateWithFlags(&ready, cudaEventDisableTiming),
+    const auto t_ptr0 = std::chrono::steady_clock::now();
+    void ** d_ptrs = nullptr;
+    if (!sb_ptr_table(n_slots * sizeof(void *), &d_ptrs)) {
+        return -1;
+    }
+    // The table lives in ONE device buffer that every call rewrites, so this
+    // copy is queued on the compute stream: that orders it after the previous
+    // call's kernel, which is still reading the same buffer. (Per-call stream
+    // drains used to provide that ordering implicitly; the router-id reuse
+    // removed two of three of them.) It does not need to wait for the expert
+    // transfers, because it carries addresses, not data.
+    if (!ck(cudaMemcpyAsync(d_ptrs, ptrs.data(), n_slots * sizeof(void *),
+                            cudaMemcpyHostToDevice, compute_stream),
+            "Sabah pointer table upload")) {
+        return -1;
+    }
+
+    if (g_ready_ev == nullptr &&
+        !ck(cudaEventCreateWithFlags(&g_ready_ev, cudaEventDisableTiming),
             "Sabah copy event")) {
-        cudaFree(d_ptrs);
         return -1;
     }
-    if (!ck(cudaEventRecord(ready, g_copy), "Sabah copy event record") ||
-        !ck(cudaStreamWaitEvent(compute_stream, ready, 0), "Sabah compute wait")) {
-        cudaEventDestroy(ready);
-        cudaFree(d_ptrs);
+    if (!ck(cudaEventRecord(g_ready_ev, g_copy), "Sabah copy event record") ||
+        !ck(cudaStreamWaitEvent(compute_stream, g_ready_ev, 0), "Sabah compute wait")) {
         return -1;
     }
+    g_t_ptr += std::chrono::duration<double, std::milli>(
+                   std::chrono::steady_clock::now() - t_ptr0).count();
 
     dim3 grid((unsigned) rows, (unsigned) n_ids, (unsigned) n_tokens);
     k_mul_mat_id<<<grid, NT, 0, compute_stream>>>(
@@ -1564,17 +2805,12 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
         row_stride, x_id_stride, x_rows, x_token_stride,
         dst_id_stride, dst_token_stride, qt);
     if (!ck(cudaGetLastError(), "Sabah MUL_MAT_ID launch")) {
-        cudaEventDestroy(ready);
-        cudaFree(d_ptrs);
         return -1;
     }
 
-    // The event is no longer needed after the wait has been enqueued. CUDA
-    // permits deferred destruction while dependent work is in flight.
-    cudaEventDestroy(ready);
-    cudaFree(d_ptrs);
     sb_selfcheck(source, expert_stride, row_stride, d_x, x_id_stride, x_rows, x_token_stride,
-                 ids, n_ids, n_tokens, d_dst, dst_id_stride, dst_token_stride,
+                 ids_raw.data(), ids_id_stride, ids_token_stride, n_ids, n_tokens,
+                 d_dst, dst_id_stride, dst_token_stride,
                  rows, k, qt, compute_stream, call_no);
     sb_status_write(false);
     return 0;

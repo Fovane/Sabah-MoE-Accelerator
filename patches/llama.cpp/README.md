@@ -48,8 +48,25 @@ exit; `lookups` must equal `tokens × n_used`, and `calls` must equal
 | variable | effect |
 |---|---|
 | `SABAH_LLAMA_HOT_BYTES` | VRAM budget of the expert hot tier (default 2 GiB) |
-| `SABAH_LLAMA_VERIFY_BYTES=1` | byte-compare every hit and fetch against the GGUF range |
-| `SABAH_LLAMA_TRACE=1` | print cache and coverage counters at exit |
+| `SABAH_LLAMA_DIRECT_IO=0\|off` | force the staging reads through the mapping instead of `FILE_FLAG_NO_BUFFERING` |
+| `SABAH_LLAMA_IO_DEPTH` | unbuffered reads in flight per wave (default 8) |
+| `SABAH_LLAMA_PREFETCH=1` | staging readahead of the calls that follow (default off; see below) |
+| `SABAH_LLAMA_ID_CHECK=1` | download the router ids even when reused and compare: proves the reuse byte for byte |
+| `SABAH_LLAMA_VERIFY_BYTES=1\|fetch` | byte-compare hits and/or fetches against the GGUF range |
+| `SABAH_LLAMA_VERIFY_LIMIT` | how many of those checks may touch the mapped oracle (it inflates host RAM) |
+| `SABAH_LLAMA_TRACE=1` | print cache, coverage and phase counters at exit |
+
+The bridge passes the ids *tensor address* (`dst->src[2]`) as the last argument of
+`sabah_rt_mul_mat_id_v2`. The three expert tensors of one MoE layer read the same
+`selected_experts` tensor, so the runtime reuses the first download for the other
+two and skips their stream drain, which is worth ~11% of decode. A runtime
+without the extra argument is still safe: it sees no key and always downloads.
+
+`SABAH_LLAMA_PREFETCH` reads the following calls' experts into pinned staging and
+leaves them there; the demand path then finds them without touching the disk. It
+reserves no tier space and does not change residency (the tier's hit/miss
+counters are identical with it on). It is off by default: the disk is the
+binding constraint, so moving reads off the critical path does not pay yet.
 
 ## 0002 — `llama-sabah-diag`
 
