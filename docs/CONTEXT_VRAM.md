@@ -21,12 +21,21 @@ Run section). Hardware and method caveats are in
 | 32768 | 9.8e9 | default | **abort** (VRAM exhausted), 3 of 3 runs |
 | 32768 | 8.0e9 | default | works — the slab pays for the context |
 | 32768 | 9.8e9 | `-ub 8` | works — the prefill pays for the context |
+| 131072 | 6.0e9 | default | works - full speed (17.2 tok/s) |
+| 131072 | 9.8e9 | default | works, but 34% slower (11.3 tok/s) at the VRAM ceiling |
 
-The last row is `llama-server` only — the diag driver takes no ubatch argument,
+The `-ub 8` row is `llama-server` only — the diag driver takes no ubatch argument,
 and that driver is the one that aborts at `-c 32768` with the 9.8 GB slab. The
 512 row is the README's headline run; the rest were run for this note, each with
 `sabah run --tokens 32` and, where a ubatch applies, with `llama-server`, at the
 same prompt.
+
+The abort is not a hard context limit: the Phase 0 measurement ran `-c 131072`
+with the same 9.8 GB slab through the diag driver for 255 decodes and exited 0
+(88.4 ms/token, peak 16,000 MiB). It sits at the same ceiling the 32K run
+aborted at, so whether a run survives is decided by the timing of the
+over-budget allocation against whatever free block is left - which is also why
+that configuration is 34% slower there (see "128K context" below).
 
 `-c 32768` with a 9.8 GB slab *loads* and even survives a one-token decode
 (peak 15,892 of 16,311 MiB). It dies once the run is long enough for the
@@ -92,6 +101,40 @@ run reports no counters unless `SABAH_LLAMA_STATUS_FILE` is set.
 | `-c 32768`, slab 9.8e9, `-ub 8` | 15,223 | 1,088 |
 | `-c 8192`, slab 9.8e9 | 14,804 | 1,507 |
 | `-c 32768`, slab 8.0e9 | 13,823 | 2,488 |
+
+### 128K context: the context is cheap, the last 300 MiB are not
+
+Measured with `-c 131072 -n 256`, same flags. The KV cache at 131,072 cells is
+**384 MiB at f16, 204 MiB at q8_0, 108 MiB at q4_0** (llama.cpp's own
+`KV buffer size` line): only 12 of the 48 blocks keep a cache
+(`full_attention_interval=4`), it is **K-only** (V is empty), 2 KV heads x 128
+elements. The compute buffer is 964-976 MiB. The context itself costs ~1 ms of
+decode.
+
+What costs 30 ms is running the slab into the VRAM ceiling. Same prompt, same
+131.6 misses/token, same kernel set:
+
+| `-c` | slab | steady median | tok/s | VRAM plateau | free |
+|---|---|---|---|---|---|
+| 512 | 9.8e9 | 58.34 ms | 17.14 | 15,367 | 916 |
+| 8192 | 9.8e9 | 58.39 ms | 17.13 | 15,475 | 808 |
+| 32768 | 9.8e9 | 60.04 ms | 16.65 | 15,982 | 301 |
+| 131072 | 6.0e9 | **58.23 ms** | **17.17** | 15,377 | 906 |
+| 131072 | 7.0e9 | 63.29 ms | 15.80 | 15,991 | 292 |
+| 131072 | 8.0e9 | 71.54 ms | 13.98 | 15,994 | 289 |
+| 131072 | 9.8e9 | 88.43 ms | 11.31 | 16,000 | 283 |
+| 131072 | 9.8e9, `-ub 64` | 79.29 ms | 12.61 | 15,988 | 295 |
+
+An Nsight capture at 128K / 9.8e9 shows GPU busy 92.3 ms/token with
+`k_mul_mat_id` at 465 us/call against ~188 us at 512 context: the same kernel on
+the same bytes, 2.5x slower within 300 MiB of the ceiling. At a 6.0 GB slab the
+run reads 149.5 objects/token instead of 131.6 (14% more bytes) and is still full
+speed - the extra reads overlap, the pressure does not.
+
+So 128K is affordable in KV and is paid for in slab: **6.0e9 is the value that
+keeps this workload at full speed at `-c 131072`**; 9.8e9 costs 34%. The
+mechanism (WDDM eviction, driver bookkeeping, or the runtime's over-budget
+allocations) is not separated, only the effect is measured.
 
 The 32K KV cache costs less than the header arithmetic suggests. From the GGUF:
 48 blocks, 2 KV heads, key/value length 256, f16 — 2 KB per token per block, i.e.
@@ -218,10 +261,12 @@ never a timing configuration.
 - The steady state through the HTTP path. Every request measured here generated
   30-64 tokens, so all of it is warm-up regime; a 256-token request through the
   bridge was not run.
-- Context sizes above 32K. The model's own `context_length` is 262144, but at the
-  measured ~0.5 GB of KV per 32K, a 256K context is ~4 GB on top of everything
-  else — far more than the ~0.4 GB of margin the 32K + 9.8 GB configuration
-  already leaves. Nothing that large was run.
+- Context sizes above 32K were measured in Phase 0 (128K: 384 MiB of KV at f16,
+  see above); 192K and 256K were not run. At 131,072 cells the KV is 384 MiB, so
+  a 256K context would be ~768 MiB. The earlier "~4 GB" estimate assumed a value
+  cache on every block; this model keeps one on 12 of 48 blocks and has no V.
+- The 128K configuration was run to 255 decodes, not to a full 128K prefill, and
+  not through `llama-server`.
 - A graceful failure mode. Today the runtime aborts the process when the
   over-budget allocation fails; failing the call (and letting the caller decide)
   is not implemented.

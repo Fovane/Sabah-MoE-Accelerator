@@ -1,0 +1,2805 @@
+{
+  "db": "C:\\Temp\\nsys\\warm.sqlite",
+  "tokens": [
+    {
+      "token": 0,
+      "start_ns": 26719015425,
+      "end_ns": 27083518460,
+      "span_ms": 364.503035,
+      "gpu_busy_ms": 54.260033,
+      "gpu_busy_pct": 14.88603051000659,
+      "idle_ms": 310.243002,
+      "kernels": 3808,
+      "kernel_time_ms": {
+        "sabah gate+up": 17.763052,
+        "elementwise/router": 2.790087,
+        "sabah down": 10.055382,
+        "dense matmul": 22.428251,
+        "ple/embedding": 0.744399,
+        "ssm": 0.274121,
+        "other": 0.053313,
+        "attention": 0.151428
+      },
+      "kernel_count": {
+        "sabah gate+up": 96,
+        "elementwise/router": 2593,
+        "sabah down": 48,
+        "dense matmul": 781,
+        "ple/embedding": 100,
+        "ssm": 72,
+        "other": 58,
+        "attention": 60
+      },
+      "kernel_time_top": {
+        "k_mul_mat_id(const void *const *, const float *, float *, int, int, int, int, unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long, int)": 27.818434,
+        "void mul_mat_vec_q<(ggml_type)14, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 9.086747,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)256, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 5.188841,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)160, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 4.041615,
+        "void mul_mat_vec_q<(ggml_type)13, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 1.725997,
+        "void mul_mat_vec_q<(ggml_type)12, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.999259,
+        "void mul_mat_vec_q<(ggml_type)23, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.852021,
+        "void k_get_rows_float_vec<float>(const T1 *, const int *, T1 *, long long, long long, uint3, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long)": 0.60081,
+        "void k_bin_bcast<&op_add, float, float, float, const float *>(const T2 *, const T3 *, T4 *, unsigned int, unsigned int, unsigned int, uint3, uint3, uint3, uint3, uint3, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, T5...)": 0.550702,
+        "void rms_norm_f32<(int)1024, (bool)1, (bool)0>(const float *, float *, int, long long, long long, long long, float, const float *, long long, long long, long long, uint3, uint3, uint3, uint3, const float *, long long, long long, long long, uint3, uint3, uint3, uint3)": 0.337796,
+        "scale_f32(const float *, float *, float, float, long long)": 0.323145,
+        "void mul_mat_vec_q<(ggml_type)20, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.282407,
+        "void topk_moe_cuda<(int)512, (bool)0>(const float *, float *, int *, float *, int, int, float, float, topk_moe_config)": 0.228965,
+        "quantize_q8_1(const float *, void *, long long, long long, long long, long long, long long, unsigned int, uint3)": 0.217417,
+        "void gated_delta_net_cuda<(int)128, (bool)0, (bool)0>(const float *, const float *, const float *, const float *, const float *, const float *, float *, float *, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, uint3, uint3, float, long long, int)": 0.184932
+      },
+      "launch_calls": 3808,
+      "runtime_calls": 5515,
+      "stream_sync_calls": 80,
+      "stream_sync_ms": 3.826656,
+      "stream_sync_max_ms": 2.664178,
+      "memcpy": {
+        "kind1": 0.482639,
+        "kind8": 0.018977,
+        "kind2": 0.043491
+      },
+      "memcpy_n": {
+        "kind1": 18,
+        "kind8": 36,
+        "kind2": 48
+      },
+      "layers": [
+        {
+          "layer": 0,
+          "span_ms": 26.58633,
+          "busy_ms": 3.636641,
+          "busy_pct": 13.67861227931798,
+          "kernels": 87
+        },
+        {
+          "layer": 1,
+          "span_ms": 18.935912,
+          "busy_ms": 1.488039,
+          "busy_pct": 7.858290638444031,
+          "kernels": 110
+        },
+        {
+          "layer": 2,
+          "span_ms": 15.768721,
+          "busy_ms": 1.088574,
+          "busy_pct": 6.903375359358568,
+          "kernels": 74
+        },
+        {
+          "layer": 3,
+          "span_ms": 17.557218,
+          "busy_ms": 1.044893,
+          "busy_pct": 5.951358580841225,
+          "kernels": 95
+        },
+        {
+          "layer": 4,
+          "span_ms": 17.547746,
+          "busy_ms": 1.109374,
+          "busy_pct": 6.322031330975499,
+          "kernels": 74
+        },
+        {
+          "layer": 5,
+          "span_ms": 17.457792,
+          "busy_ms": 1.080829,
+          "busy_pct": 6.191097934950766,
+          "kernels": 74
+        },
+        {
+          "layer": 6,
+          "span_ms": 17.283515,
+          "busy_ms": 1.378983,
+          "busy_pct": 7.9786027321410025,
+          "kernels": 74
+        },
+        {
+          "layer": 7,
+          "span_ms": 18.069776,
+          "busy_ms": 1.047898,
+          "busy_pct": 5.799175374393131,
+          "kernels": 95
+        },
+        {
+          "layer": 8,
+          "span_ms": 17.890443,
+          "busy_ms": 1.045629,
+          "busy_pct": 5.8446232997137075,
+          "kernels": 71
+        },
+        {
+          "layer": 9,
+          "span_ms": 16.247487,
+          "busy_ms": 1.074814,
+          "busy_pct": 6.615263024983494,
+          "kernels": 74
+        },
+        {
+          "layer": 10,
+          "span_ms": 17.699942,
+          "busy_ms": 1.086526,
+          "busy_pct": 6.138585086888985,
+          "kernels": 74
+        },
+        {
+          "layer": 11,
+          "span_ms": 16.168316,
+          "busy_ms": 1.074174,
+          "busy_pct": 6.643697463607218,
+          "kernels": 92
+        },
+        {
+          "layer": 12,
+          "span_ms": 18.545565,
+          "busy_ms": 1.053084,
+          "busy_pct": 5.6783602980011665,
+          "kernels": 74
+        },
+        {
+          "layer": 13,
+          "span_ms": 10.39283,
+          "busy_ms": 1.061023,
+          "busy_pct": 10.209182676903211,
+          "kernels": 71
+        },
+        {
+          "layer": 14,
+          "span_ms": 1.805009,
+          "busy_ms": 1.021499,
+          "busy_pct": 56.59246020379954,
+          "kernels": 74
+        },
+        {
+          "layer": 15,
+          "span_ms": 2.414723,
+          "busy_ms": 1.008411,
+          "busy_pct": 41.76093903938464,
+          "kernels": 92
+        },
+        {
+          "layer": 16,
+          "span_ms": 1.297091,
+          "busy_ms": 1.057882,
+          "busy_pct": 81.55804026086065,
+          "kernels": 74
+        },
+        {
+          "layer": 17,
+          "span_ms": 1.471881,
+          "busy_ms": 1.081887,
+          "busy_pct": 73.50370036708131,
+          "kernels": 71
+        },
+        {
+          "layer": 18,
+          "span_ms": 1.872755,
+          "busy_ms": 1.039513,
+          "busy_pct": 55.507153898934995,
+          "kernels": 74
+        },
+        {
+          "layer": 19,
+          "span_ms": 2.357217,
+          "busy_ms": 1.029978,
+          "busy_pct": 43.694661967905375,
+          "kernels": 92
+        },
+        {
+          "layer": 20,
+          "span_ms": 1.304388,
+          "busy_ms": 1.06089,
+          "busy_pct": 81.33239496223516,
+          "kernels": 71
+        },
+        {
+          "layer": 21,
+          "span_ms": 1.905716,
+          "busy_ms": 1.048063,
+          "busy_pct": 54.99576012375401,
+          "kernels": 74
+        },
+        {
+          "layer": 22,
+          "span_ms": 4.404217,
+          "busy_ms": 1.040573,
+          "busy_pct": 23.62674227904756,
+          "kernels": 74
+        },
+        {
+          "layer": 23,
+          "span_ms": 6.607957,
+          "busy_ms": 1.051933,
+          "busy_pct": 15.9191865201302,
+          "kernels": 95
+        },
+        {
+          "layer": 24,
+          "span_ms": 3.392766,
+          "busy_ms": 1.070013,
+          "busy_pct": 31.538072475378495,
+          "kernels": 71
+        },
+        {
+          "layer": 25,
+          "span_ms": 4.816996,
+          "busy_ms": 1.076988,
+          "busy_pct": 22.35808375178223,
+          "kernels": 74
+        },
+        {
+          "layer": 26,
+          "span_ms": 4.14741,
+          "busy_ms": 1.048992,
+          "busy_pct": 25.292700745766634,
+          "kernels": 74
+        },
+        {
+          "layer": 27,
+          "span_ms": 3.439838,
+          "busy_ms": 1.305345,
+          "busy_pct": 37.94786266097415,
+          "kernels": 92
+        },
+        {
+          "layer": 28,
+          "span_ms": 2.356673,
+          "busy_ms": 1.069276,
+          "busy_pct": 45.372268447934864,
+          "kernels": 71
+        },
+        {
+          "layer": 29,
+          "span_ms": 1.294692,
+          "busy_ms": 1.056541,
+          "busy_pct": 81.60558650242683,
+          "kernels": 71
+        },
+        {
+          "layer": 30,
+          "span_ms": 1.922772,
+          "busy_ms": 1.05334,
+          "busy_pct": 54.78236629199926,
+          "kernels": 74
+        },
+        {
+          "layer": 31,
+          "span_ms": 2.245182,
+          "busy_ms": 1.038397,
+          "busy_pct": 46.25001447544119,
+          "kernels": 95
+        },
+        {
+          "layer": 32,
+          "span_ms": 2.501861,
+          "busy_ms": 1.063008,
+          "busy_pct": 42.48869141810836,
+          "kernels": 74
+        },
+        {
+          "layer": 33,
+          "span_ms": 3.523969,
+          "busy_ms": 1.037534,
+          "busy_pct": 29.442199973949826,
+          "kernels": 74
+        },
+        {
+          "layer": 34,
+          "span_ms": 2.448803,
+          "busy_ms": 1.045562,
+          "busy_pct": 42.69686046611344,
+          "kernels": 74
+        },
+        {
+          "layer": 35,
+          "span_ms": 3.578786,
+          "busy_ms": 1.06771,
+          "busy_pct": 29.834418710702455,
+          "kernels": 95
+        },
+        {
+          "layer": 36,
+          "span_ms": 1.355397,
+          "busy_ms": 1.057597,
+          "busy_pct": 78.0285776049379,
+          "kernels": 74
+        },
+        {
+          "layer": 37,
+          "span_ms": 2.489413,
+          "busy_ms": 1.03683,
+          "busy_pct": 41.64957763135325,
+          "kernels": 71
+        },
+        {
+          "layer": 38,
+          "span_ms": 4.163282,
+          "busy_ms": 1.051868,
+          "busy_pct": 25.26535555362332,
+          "kernels": 74
+        },
+        {
+          "layer": 39,
+          "span_ms": 2.418402,
+          "busy_ms": 1.051228,
+          "busy_pct": 43.46787672190149,
+          "kernels": 95
+        },
+        {
+          "layer": 40,
+          "span_ms": 2.104954,
+          "busy_ms": 1.099102,
+          "busy_pct": 52.215012774625954,
+          "kernels": 71
+        },
+        {
+          "layer": 41,
+          "span_ms": 2.382274,
+          "busy_ms": 1.040123,
+          "busy_pct": 43.66093069059227,
+          "kernels": 74
+        },
+        {
+          "layer": 42,
+          "span_ms": 4.071472,
+          "busy_ms": 1.032061,
+          "busy_pct": 25.34859628163966,
+          "kernels": 71
+        },
+        {
+          "layer": 43,
+          "span_ms": 8.424775,
+          "busy_ms": 1.049406,
+          "busy_pct": 12.456190224664754,
+          "kernels": 95
+        },
+        {
+          "layer": 44,
+          "span_ms": 4.224436,
+          "busy_ms": 1.051932,
+          "busy_pct": 24.90112289545871,
+          "kernels": 71
+        },
+        {
+          "layer": 45,
+          "span_ms": 4.019854,
+          "busy_ms": 1.031995,
+          "busy_pct": 25.672449795440333,
+          "kernels": 71
+        },
+        {
+          "layer": 46,
+          "span_ms": 7.605329,
+          "busy_ms": 1.039679,
+          "busy_pct": 13.670401372511302,
+          "kernels": 74
+        },
+        {
+          "layer": 47,
+          "span_ms": 13.981152,
+          "busy_ms": 1.074396,
+          "busy_pct": 7.684602813845383,
+          "kernels": 98
+        }
+      ]
+    },
+    {
+      "token": 1,
+      "start_ns": 27083518460,
+      "end_ns": 27306196672,
+      "span_ms": 222.678212,
+      "gpu_busy_ms": 53.217726,
+      "gpu_busy_pct": 23.89893718025722,
+      "idle_ms": 169.460486,
+      "kernels": 3756,
+      "kernel_time_ms": {
+        "sabah gate+up": 17.413795,
+        "elementwise/router": 2.730216,
+        "sabah down": 9.740528,
+        "dense matmul": 22.156191,
+        "ple/embedding": 0.721751,
+        "other": 0.051941,
+        "ssm": 0.256005,
+        "attention": 0.147299
+      },
+      "kernel_count": {
+        "sabah gate+up": 96,
+        "elementwise/router": 2556,
+        "sabah down": 48,
+        "dense matmul": 770,
+        "ple/embedding": 98,
+        "other": 58,
+        "ssm": 70,
+        "attention": 60
+      },
+      "kernel_time_top": {
+        "k_mul_mat_id(const void *const *, const float *, float *, int, int, int, int, unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long, int)": 27.154323,
+        "void mul_mat_vec_q<(ggml_type)14, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 9.12428,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)256, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 5.090631,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)160, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 3.917106,
+        "void mul_mat_vec_q<(ggml_type)13, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 1.69518,
+        "void mul_mat_vec_q<(ggml_type)12, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.939322,
+        "void mul_mat_vec_q<(ggml_type)23, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.851831,
+        "void k_get_rows_float_vec<float>(const T1 *, const int *, T1 *, long long, long long, uint3, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long)": 0.580242,
+        "void k_bin_bcast<&op_add, float, float, float, const float *>(const T2 *, const T3 *, T4 *, unsigned int, unsigned int, unsigned int, uint3, uint3, uint3, uint3, uint3, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, T5...)": 0.543657,
+        "void rms_norm_f32<(int)1024, (bool)1, (bool)0>(const float *, float *, int, long long, long long, long long, float, const float *, long long, long long, long long, uint3, uint3, uint3, uint3, const float *, long long, long long, long long, uint3, uint3, uint3, uint3)": 0.332137,
+        "scale_f32(const float *, float *, float, float, long long)": 0.316239,
+        "void mul_mat_vec_q<(ggml_type)20, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.284104,
+        "void topk_moe_cuda<(int)512, (bool)0>(const float *, float *, int *, float *, int, int, float, float, topk_moe_config)": 0.22391,
+        "quantize_q8_1(const float *, void *, long long, long long, long long, long long, long long, unsigned int, uint3)": 0.213094,
+        "void gated_delta_net_cuda<(int)128, (bool)0, (bool)0>(const float *, const float *, const float *, const float *, const float *, const float *, float *, float *, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, uint3, uint3, float, long long, int)": 0.179653
+      },
+      "launch_calls": 3808,
+      "runtime_calls": 5171,
+      "stream_sync_calls": 80,
+      "stream_sync_ms": 4.532278,
+      "stream_sync_max_ms": 2.770991,
+      "memcpy": {
+        "kind1": 0.466155,
+        "kind8": 0.018914,
+        "kind2": 0.042883
+      },
+      "memcpy_n": {
+        "kind1": 18,
+        "kind8": 36,
+        "kind2": 48
+      },
+      "layers": [
+        {
+          "layer": 0,
+          "span_ms": 22.666703,
+          "busy_ms": 3.173945,
+          "busy_pct": 14.002676083945689,
+          "kernels": 35
+        },
+        {
+          "layer": 1,
+          "span_ms": 16.169468,
+          "busy_ms": 1.432391,
+          "busy_pct": 8.858615509180636,
+          "kernels": 110
+        },
+        {
+          "layer": 2,
+          "span_ms": 10.684965,
+          "busy_ms": 1.051354,
+          "busy_pct": 9.839564284955543,
+          "kernels": 74
+        },
+        {
+          "layer": 3,
+          "span_ms": 8.330821,
+          "busy_ms": 1.00268,
+          "busy_pct": 12.035788549531913,
+          "kernels": 95
+        },
+        {
+          "layer": 4,
+          "span_ms": 5.649563,
+          "busy_ms": 1.076479,
+          "busy_pct": 19.054199413299756,
+          "kernels": 74
+        },
+        {
+          "layer": 5,
+          "span_ms": 8.309445,
+          "busy_ms": 1.0376,
+          "busy_pct": 12.486995220499082,
+          "kernels": 74
+        },
+        {
+          "layer": 6,
+          "span_ms": 9.401314,
+          "busy_ms": 1.064507,
+          "busy_pct": 11.322959747967145,
+          "kernels": 74
+        },
+        {
+          "layer": 7,
+          "span_ms": 9.726187,
+          "busy_ms": 1.018236,
+          "busy_pct": 10.469015247187825,
+          "kernels": 95
+        },
+        {
+          "layer": 8,
+          "span_ms": 8.540907,
+          "busy_ms": 1.041981,
+          "busy_pct": 12.199886967508252,
+          "kernels": 71
+        },
+        {
+          "layer": 9,
+          "span_ms": 6.007269,
+          "busy_ms": 1.046492,
+          "busy_pct": 17.420428484224693,
+          "kernels": 74
+        },
+        {
+          "layer": 10,
+          "span_ms": 8.758096,
+          "busy_ms": 1.067932,
+          "busy_pct": 12.193654876585049,
+          "kernels": 74
+        },
+        {
+          "layer": 11,
+          "span_ms": 8.802514,
+          "busy_ms": 1.277478,
+          "busy_pct": 14.512649454462668,
+          "kernels": 92
+        },
+        {
+          "layer": 12,
+          "span_ms": 6.647926,
+          "busy_ms": 1.041343,
+          "busy_pct": 15.66417857238483,
+          "kernels": 74
+        },
+        {
+          "layer": 13,
+          "span_ms": 5.962244,
+          "busy_ms": 1.011676,
+          "busy_pct": 16.968040891986305,
+          "kernels": 71
+        },
+        {
+          "layer": 14,
+          "span_ms": 4.398777,
+          "busy_ms": 1.036382,
+          "busy_pct": 23.56068516317149,
+          "kernels": 74
+        },
+        {
+          "layer": 15,
+          "span_ms": 1.426919,
+          "busy_ms": 1.025337,
+          "busy_pct": 71.85670665258505,
+          "kernels": 92
+        },
+        {
+          "layer": 16,
+          "span_ms": 1.968118,
+          "busy_ms": 1.041758,
+          "busy_pct": 52.93168397423325,
+          "kernels": 74
+        },
+        {
+          "layer": 17,
+          "span_ms": 3.027379,
+          "busy_ms": 1.071678,
+          "busy_pct": 35.39953207048077,
+          "kernels": 71
+        },
+        {
+          "layer": 18,
+          "span_ms": 2.314208,
+          "busy_ms": 1.039678,
+          "busy_pct": 44.92586664638615,
+          "kernels": 74
+        },
+        {
+          "layer": 19,
+          "span_ms": 1.887956,
+          "busy_ms": 1.030976,
+          "busy_pct": 54.60805230630375,
+          "kernels": 92
+        },
+        {
+          "layer": 20,
+          "span_ms": 2.875823,
+          "busy_ms": 1.065084,
+          "busy_pct": 37.035798100230785,
+          "kernels": 71
+        },
+        {
+          "layer": 21,
+          "span_ms": 2.292575,
+          "busy_ms": 1.061179,
+          "busy_pct": 46.28764598759037,
+          "kernels": 74
+        },
+        {
+          "layer": 22,
+          "span_ms": 1.353125,
+          "busy_ms": 1.039644,
+          "busy_pct": 76.83281293302541,
+          "kernels": 74
+        },
+        {
+          "layer": 23,
+          "span_ms": 2.078489,
+          "busy_ms": 1.030268,
+          "busy_pct": 49.56812376683254,
+          "kernels": 95
+        },
+        {
+          "layer": 24,
+          "span_ms": 2.802925,
+          "busy_ms": 1.064415,
+          "busy_pct": 37.97515095837384,
+          "kernels": 71
+        },
+        {
+          "layer": 25,
+          "span_ms": 2.297631,
+          "busy_ms": 1.065565,
+          "busy_pct": 46.376681024933944,
+          "kernels": 74
+        },
+        {
+          "layer": 26,
+          "span_ms": 1.296612,
+          "busy_ms": 1.04323,
+          "busy_pct": 80.45814784993506,
+          "kernels": 74
+        },
+        {
+          "layer": 27,
+          "span_ms": 2.031096,
+          "busy_ms": 1.027003,
+          "busy_pct": 50.56398121999157,
+          "kernels": 92
+        },
+        {
+          "layer": 28,
+          "span_ms": 3.925419,
+          "busy_ms": 1.066236,
+          "busy_pct": 27.16234878365851,
+          "kernels": 71
+        },
+        {
+          "layer": 29,
+          "span_ms": 4.782628,
+          "busy_ms": 1.074336,
+          "busy_pct": 22.463298420868192,
+          "kernels": 71
+        },
+        {
+          "layer": 30,
+          "span_ms": 3.598627,
+          "busy_ms": 1.049788,
+          "busy_pct": 29.1719036176853,
+          "kernels": 74
+        },
+        {
+          "layer": 31,
+          "span_ms": 1.440743,
+          "busy_ms": 1.034268,
+          "busy_pct": 71.78712650347772,
+          "kernels": 95
+        },
+        {
+          "layer": 32,
+          "span_ms": 1.352005,
+          "busy_ms": 1.058943,
+          "busy_pct": 78.32389673115114,
+          "kernels": 74
+        },
+        {
+          "layer": 33,
+          "span_ms": 1.293156,
+          "busy_ms": 1.029629,
+          "busy_pct": 79.62140685269217,
+          "kernels": 74
+        },
+        {
+          "layer": 34,
+          "span_ms": 2.362177,
+          "busy_ms": 1.032283,
+          "busy_pct": 43.70049323145556,
+          "kernels": 74
+        },
+        {
+          "layer": 35,
+          "span_ms": 4.639743,
+          "busy_ms": 1.354021,
+          "busy_pct": 29.18310346068737,
+          "kernels": 95
+        },
+        {
+          "layer": 36,
+          "span_ms": 2.813965,
+          "busy_ms": 1.05363,
+          "busy_pct": 37.44289641129154,
+          "kernels": 74
+        },
+        {
+          "layer": 37,
+          "span_ms": 2.792781,
+          "busy_ms": 1.034205,
+          "busy_pct": 37.031367658258915,
+          "kernels": 71
+        },
+        {
+          "layer": 38,
+          "span_ms": 2.845582,
+          "busy_ms": 1.047099,
+          "busy_pct": 36.79735815028349,
+          "kernels": 74
+        },
+        {
+          "layer": 39,
+          "span_ms": 2.504581,
+          "busy_ms": 1.047069,
+          "busy_pct": 41.80615440267254,
+          "kernels": 95
+        },
+        {
+          "layer": 40,
+          "span_ms": 1.347717,
+          "busy_ms": 1.061374,
+          "busy_pct": 78.75347717658826,
+          "kernels": 71
+        },
+        {
+          "layer": 41,
+          "span_ms": 1.643629,
+          "busy_ms": 1.029728,
+          "busy_pct": 62.64966120699987,
+          "kernels": 74
+        },
+        {
+          "layer": 42,
+          "span_ms": 1.303044,
+          "busy_ms": 1.051294,
+          "busy_pct": 80.67985424897394,
+          "kernels": 71
+        },
+        {
+          "layer": 43,
+          "span_ms": 1.417127,
+          "busy_ms": 1.049789,
+          "busy_pct": 74.07868172718464,
+          "kernels": 95
+        },
+        {
+          "layer": 44,
+          "span_ms": 1.865491,
+          "busy_ms": 1.03302,
+          "busy_pct": 55.375233651623084,
+          "kernels": 71
+        },
+        {
+          "layer": 45,
+          "span_ms": 2.944561,
+          "busy_ms": 1.035483,
+          "busy_pct": 35.16595512879509,
+          "kernels": 71
+        },
+        {
+          "layer": 46,
+          "span_ms": 2.46458,
+          "busy_ms": 1.034363,
+          "busy_pct": 41.969138757922245,
+          "kernels": 74
+        },
+        {
+          "layer": 47,
+          "span_ms": 7.631601,
+          "busy_ms": 1.054877,
+          "busy_pct": 13.822486264677622,
+          "kernels": 98
+        }
+      ]
+    },
+    {
+      "token": 2,
+      "start_ns": 27306196672,
+      "end_ns": 27481181734,
+      "span_ms": 174.985062,
+      "gpu_busy_ms": 47.559468,
+      "gpu_busy_pct": 27.17915887014401,
+      "idle_ms": 127.425594,
+      "kernels": 3756,
+      "kernel_time_ms": {
+        "sabah gate+up": 17.820903,
+        "elementwise/router": 2.571362,
+        "sabah down": 9.923599,
+        "dense matmul": 16.314753,
+        "ple/embedding": 0.507726,
+        "other": 0.047712,
+        "ssm": 0.240357,
+        "attention": 0.133056
+      },
+      "kernel_count": {
+        "sabah gate+up": 96,
+        "elementwise/router": 2556,
+        "sabah down": 48,
+        "dense matmul": 770,
+        "ple/embedding": 98,
+        "other": 58,
+        "ssm": 70,
+        "attention": 60
+      },
+      "kernel_time_top": {
+        "k_mul_mat_id(const void *const *, const float *, float *, int, int, int, int, unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long, int)": 27.744502,
+        "void mul_mat_vec_q<(ggml_type)14, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 6.538444,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)256, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 3.57524,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)160, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 3.206139,
+        "void mul_mat_vec_q<(ggml_type)13, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 1.044861,
+        "void mul_mat_vec_q<(ggml_type)23, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.827097,
+        "void mul_mat_vec_q<(ggml_type)12, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.737746,
+        "void k_bin_bcast<&op_add, float, float, float, const float *>(const T2 *, const T3 *, T4 *, unsigned int, unsigned int, unsigned int, uint3, uint3, uint3, uint3, uint3, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, T5...)": 0.509007,
+        "void k_get_rows_float_vec<float>(const T1 *, const int *, T1 *, long long, long long, uint3, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long)": 0.384236,
+        "scale_f32(const float *, float *, float, float, long long)": 0.310085,
+        "void rms_norm_f32<(int)1024, (bool)1, (bool)0>(const float *, float *, int, long long, long long, long long, float, const float *, long long, long long, long long, uint3, uint3, uint3, uint3, const float *, long long, long long, long long, uint3, uint3, uint3, uint3)": 0.292871,
+        "quantize_q8_1(const float *, void *, long long, long long, long long, long long, long long, unsigned int, uint3)": 0.216903,
+        "void topk_moe_cuda<(int)512, (bool)0>(const float *, float *, int *, float *, int, int, float, float, topk_moe_config)": 0.208901,
+        "void mul_mat_vec_q<(ggml_type)20, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.202692,
+        "void gated_delta_net_cuda<(int)128, (bool)0, (bool)0>(const float *, const float *, const float *, const float *, const float *, const float *, float *, float *, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, uint3, uint3, float, long long, int)": 0.177443
+      },
+      "launch_calls": 3756,
+      "runtime_calls": 4998,
+      "stream_sync_calls": 80,
+      "stream_sync_ms": 4.736655,
+      "stream_sync_max_ms": 2.656289,
+      "memcpy": {
+        "kind1": 0.207398,
+        "kind8": 0.019042,
+        "kind2": 0.046496
+      },
+      "memcpy_n": {
+        "kind1": 8,
+        "kind8": 36,
+        "kind2": 48
+      },
+      "layers": [
+        {
+          "layer": 0,
+          "span_ms": 20.833117,
+          "busy_ms": 3.192408,
+          "busy_pct": 15.323717521482743,
+          "kernels": 35
+        },
+        {
+          "layer": 1,
+          "span_ms": 15.354693,
+          "busy_ms": 1.453668,
+          "busy_pct": 9.467255385698692,
+          "kernels": 110
+        },
+        {
+          "layer": 2,
+          "span_ms": 7.949851,
+          "busy_ms": 1.044058,
+          "busy_pct": 13.133051172908775,
+          "kernels": 74
+        },
+        {
+          "layer": 3,
+          "span_ms": 6.950687,
+          "busy_ms": 1.001848,
+          "busy_pct": 14.413654362511217,
+          "kernels": 95
+        },
+        {
+          "layer": 4,
+          "span_ms": 3.900171,
+          "busy_ms": 1.074079,
+          "busy_pct": 27.53927968799317,
+          "kernels": 74
+        },
+        {
+          "layer": 5,
+          "span_ms": 2.207132,
+          "busy_ms": 1.027162,
+          "busy_pct": 46.53831306872448,
+          "kernels": 74
+        },
+        {
+          "layer": 6,
+          "span_ms": 3.782184,
+          "busy_ms": 1.04883,
+          "busy_pct": 27.730803155002505,
+          "kernels": 74
+        },
+        {
+          "layer": 7,
+          "span_ms": 9.206109,
+          "busy_ms": 1.022332,
+          "busy_pct": 11.104930432607304,
+          "kernels": 95
+        },
+        {
+          "layer": 8,
+          "span_ms": 7.030753,
+          "busy_ms": 1.025786,
+          "busy_pct": 14.589987729621564,
+          "kernels": 71
+        },
+        {
+          "layer": 9,
+          "span_ms": 5.118317,
+          "busy_ms": 1.038845,
+          "busy_pct": 20.296613124978386,
+          "kernels": 74
+        },
+        {
+          "layer": 10,
+          "span_ms": 7.64053,
+          "busy_ms": 1.051389,
+          "busy_pct": 13.760681523402173,
+          "kernels": 74
+        },
+        {
+          "layer": 11,
+          "span_ms": 5.340786,
+          "busy_ms": 1.000699,
+          "busy_pct": 18.73692374118716,
+          "kernels": 92
+        },
+        {
+          "layer": 12,
+          "span_ms": 4.510236,
+          "busy_ms": 1.045021,
+          "busy_pct": 23.169984896577475,
+          "kernels": 74
+        },
+        {
+          "layer": 13,
+          "span_ms": 3.567586,
+          "busy_ms": 1.009916,
+          "busy_pct": 28.30810525660769,
+          "kernels": 71
+        },
+        {
+          "layer": 14,
+          "span_ms": 5.66054,
+          "busy_ms": 1.049692,
+          "busy_pct": 18.544025834991007,
+          "kernels": 74
+        },
+        {
+          "layer": 15,
+          "span_ms": 3.852073,
+          "busy_ms": 0.858744,
+          "busy_pct": 22.293035464281182,
+          "kernels": 92
+        },
+        {
+          "layer": 16,
+          "span_ms": 1.741936,
+          "busy_ms": 0.856857,
+          "busy_pct": 49.1899243140965,
+          "kernels": 74
+        },
+        {
+          "layer": 17,
+          "span_ms": 3.172279,
+          "busy_ms": 1.097981,
+          "busy_pct": 34.61174127496352,
+          "kernels": 71
+        },
+        {
+          "layer": 18,
+          "span_ms": 2.702411,
+          "busy_ms": 0.859031,
+          "busy_pct": 31.787577833275545,
+          "kernels": 74
+        },
+        {
+          "layer": 19,
+          "span_ms": 2.249949,
+          "busy_ms": 0.871065,
+          "busy_pct": 38.714877537224176,
+          "kernels": 92
+        },
+        {
+          "layer": 20,
+          "span_ms": 2.367745,
+          "busy_ms": 0.86844,
+          "busy_pct": 36.677936179782876,
+          "kernels": 71
+        },
+        {
+          "layer": 21,
+          "span_ms": 3.843082,
+          "busy_ms": 0.860536,
+          "busy_pct": 22.391819898716708,
+          "kernels": 74
+        },
+        {
+          "layer": 22,
+          "span_ms": 2.153723,
+          "busy_ms": 0.855832,
+          "busy_pct": 39.73732926657699,
+          "kernels": 74
+        },
+        {
+          "layer": 23,
+          "span_ms": 1.640269,
+          "busy_ms": 1.107392,
+          "busy_pct": 67.51282868846512,
+          "kernels": 95
+        },
+        {
+          "layer": 24,
+          "span_ms": 1.110079,
+          "busy_ms": 0.866454,
+          "busy_pct": 78.05336376960558,
+          "kernels": 71
+        },
+        {
+          "layer": 25,
+          "span_ms": 1.109854,
+          "busy_ms": 0.867285,
+          "busy_pct": 78.14406219196398,
+          "kernels": 74
+        },
+        {
+          "layer": 26,
+          "span_ms": 1.118047,
+          "busy_ms": 0.860283,
+          "busy_pct": 76.94515525733712,
+          "kernels": 74
+        },
+        {
+          "layer": 27,
+          "span_ms": 1.22925,
+          "busy_ms": 0.86633,
+          "busy_pct": 70.4763066910718,
+          "kernels": 92
+        },
+        {
+          "layer": 28,
+          "span_ms": 2.467843,
+          "busy_ms": 0.868053,
+          "busy_pct": 35.17456337376405,
+          "kernels": 71
+        },
+        {
+          "layer": 29,
+          "span_ms": 3.450335,
+          "busy_ms": 0.867832,
+          "busy_pct": 25.152108418457917,
+          "kernels": 71
+        },
+        {
+          "layer": 30,
+          "span_ms": 1.150432,
+          "busy_ms": 0.869593,
+          "busy_pct": 75.58838766654613,
+          "kernels": 74
+        },
+        {
+          "layer": 31,
+          "span_ms": 1.843058,
+          "busy_ms": 0.86828,
+          "busy_pct": 47.110834276512186,
+          "kernels": 95
+        },
+        {
+          "layer": 32,
+          "span_ms": 2.263199,
+          "busy_ms": 0.875319,
+          "busy_pct": 38.676183579084295,
+          "kernels": 74
+        },
+        {
+          "layer": 33,
+          "span_ms": 2.081209,
+          "busy_ms": 1.110464,
+          "busy_pct": 53.356678738175745,
+          "kernels": 74
+        },
+        {
+          "layer": 34,
+          "span_ms": 2.349056,
+          "busy_ms": 0.858134,
+          "busy_pct": 36.5310150119878,
+          "kernels": 74
+        },
+        {
+          "layer": 35,
+          "span_ms": 1.215266,
+          "busy_ms": 0.877109,
+          "busy_pct": 72.17424004292064,
+          "kernels": 95
+        },
+        {
+          "layer": 36,
+          "span_ms": 1.135935,
+          "busy_ms": 0.868727,
+          "busy_pct": 76.47682305765734,
+          "kernels": 74
+        },
+        {
+          "layer": 37,
+          "span_ms": 1.079165,
+          "busy_ms": 0.844696,
+          "busy_pct": 78.27310930209931,
+          "kernels": 71
+        },
+        {
+          "layer": 38,
+          "span_ms": 1.124127,
+          "busy_ms": 0.861336,
+          "busy_pct": 76.62265918352642,
+          "kernels": 74
+        },
+        {
+          "layer": 39,
+          "span_ms": 1.729712,
+          "busy_ms": 0.880922,
+          "busy_pct": 50.92882514545774,
+          "kernels": 95
+        },
+        {
+          "layer": 40,
+          "span_ms": 2.083865,
+          "busy_ms": 0.867512,
+          "busy_pct": 41.629952036240354,
+          "kernels": 71
+        },
+        {
+          "layer": 41,
+          "span_ms": 2.264094,
+          "busy_ms": 0.851799,
+          "busy_pct": 37.62206869502768,
+          "kernels": 74
+        },
+        {
+          "layer": 42,
+          "span_ms": 3.521857,
+          "busy_ms": 1.074076,
+          "busy_pct": 30.497433598240928,
+          "kernels": 71
+        },
+        {
+          "layer": 43,
+          "span_ms": 1.253602,
+          "busy_ms": 0.879385,
+          "busy_pct": 70.148659622432,
+          "kernels": 95
+        },
+        {
+          "layer": 44,
+          "span_ms": 1.094494,
+          "busy_ms": 0.859705,
+          "busy_pct": 78.54816929101484,
+          "kernels": 71
+        },
+        {
+          "layer": 45,
+          "span_ms": 1.103775,
+          "busy_ms": 0.854614,
+          "busy_pct": 77.42646825666463,
+          "kernels": 71
+        },
+        {
+          "layer": 46,
+          "span_ms": 1.120703,
+          "busy_ms": 0.857016,
+          "busy_pct": 76.47128632652897,
+          "kernels": 74
+        },
+        {
+          "layer": 47,
+          "span_ms": 3.309946,
+          "busy_ms": 0.882933,
+          "busy_pct": 26.675148174622787,
+          "kernels": 98
+        }
+      ]
+    },
+    {
+      "token": 3,
+      "start_ns": 27481181734,
+      "end_ns": 27709468421,
+      "span_ms": 228.286687,
+      "gpu_busy_ms": 43.668432,
+      "gpu_busy_pct": 19.1287685558291,
+      "idle_ms": 184.618255,
+      "kernels": 3756,
+      "kernel_time_ms": {
+        "sabah gate+up": 18.002382,
+        "elementwise/router": 2.506167,
+        "sabah down": 9.695532,
+        "dense matmul": 12.641639,
+        "ple/embedding": 0.423245,
+        "other": 0.045312,
+        "ssm": 0.229702,
+        "attention": 0.124453
+      },
+      "kernel_count": {
+        "sabah gate+up": 96,
+        "elementwise/router": 2556,
+        "sabah down": 48,
+        "dense matmul": 770,
+        "ple/embedding": 98,
+        "other": 58,
+        "ssm": 70,
+        "attention": 60
+      },
+      "kernel_time_top": {
+        "k_mul_mat_id(const void *const *, const float *, float *, int, int, int, int, unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long, int)": 27.697914,
+        "void mul_mat_vec_q<(ggml_type)14, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 4.631363,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)160, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 2.95467,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)256, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 2.840851,
+        "void mul_mat_vec_q<(ggml_type)13, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.897335,
+        "void mul_mat_vec_q<(ggml_type)12, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.53061,
+        "void k_bin_bcast<&op_add, float, float, float, const float *>(const T2 *, const T3 *, T4 *, unsigned int, unsigned int, unsigned int, uint3, uint3, uint3, uint3, uint3, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, T5...)": 0.500108,
+        "void mul_mat_vec_q<(ggml_type)23, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.449324,
+        "void k_get_rows_float_vec<float>(const T1 *, const int *, T1 *, long long, long long, uint3, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long)": 0.308362,
+        "scale_f32(const float *, float *, float, float, long long)": 0.30804,
+        "void rms_norm_f32<(int)1024, (bool)1, (bool)0>(const float *, float *, int, long long, long long, long long, float, const float *, long long, long long, long long, uint3, uint3, uint3, uint3, const float *, long long, long long, long long, uint3, uint3, uint3, uint3)": 0.279428,
+        "quantize_q8_1(const float *, void *, long long, long long, long long, long long, long long, unsigned int, uint3)": 0.209729,
+        "void topk_moe_cuda<(int)512, (bool)0>(const float *, float *, int *, float *, int, int, float, float, topk_moe_config)": 0.204741,
+        "void gated_delta_net_cuda<(int)128, (bool)0, (bool)0>(const float *, const float *, const float *, const float *, const float *, const float *, float *, float *, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, uint3, uint3, float, long long, int)": 0.176326,
+        "void mul_mat_vec_q<(ggml_type)20, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.174311
+      },
+      "launch_calls": 3756,
+      "runtime_calls": 5124,
+      "stream_sync_calls": 80,
+      "stream_sync_ms": 2.579591,
+      "stream_sync_max_ms": 1.597859,
+      "memcpy": {
+        "kind1": 0.431437,
+        "kind8": 0.018946,
+        "kind2": 0.042208
+      },
+      "memcpy_n": {
+        "kind1": 14,
+        "kind8": 36,
+        "kind2": 48
+      },
+      "layers": [
+        {
+          "layer": 0,
+          "span_ms": 11.146963,
+          "busy_ms": 1.895252,
+          "busy_pct": 17.002406843908965,
+          "kernels": 35
+        },
+        {
+          "layer": 1,
+          "span_ms": 12.624282,
+          "busy_ms": 1.072191,
+          "busy_pct": 8.493084992873259,
+          "kernels": 110
+        },
+        {
+          "layer": 2,
+          "span_ms": 8.700303,
+          "busy_ms": 0.924251,
+          "busy_pct": 10.623204732065078,
+          "kernels": 74
+        },
+        {
+          "layer": 3,
+          "span_ms": 9.36685,
+          "busy_ms": 0.844596,
+          "busy_pct": 9.016862659271794,
+          "kernels": 95
+        },
+        {
+          "layer": 4,
+          "span_ms": 9.12793,
+          "busy_ms": 0.87849,
+          "busy_pct": 9.624197381005333,
+          "kernels": 74
+        },
+        {
+          "layer": 5,
+          "span_ms": 12.57513,
+          "busy_ms": 0.862907,
+          "busy_pct": 6.862012559711112,
+          "kernels": 74
+        },
+        {
+          "layer": 6,
+          "span_ms": 11.478619,
+          "busy_ms": 0.859351,
+          "busy_pct": 7.486536490147465,
+          "kernels": 74
+        },
+        {
+          "layer": 7,
+          "span_ms": 10.045556,
+          "busy_ms": 0.860885,
+          "busy_pct": 8.56980937640485,
+          "kernels": 95
+        },
+        {
+          "layer": 8,
+          "span_ms": 9.321888,
+          "busy_ms": 0.863831,
+          "busy_pct": 9.266695759485632,
+          "kernels": 71
+        },
+        {
+          "layer": 9,
+          "span_ms": 5.844672,
+          "busy_ms": 0.849047,
+          "busy_pct": 14.52685454376225,
+          "kernels": 74
+        },
+        {
+          "layer": 10,
+          "span_ms": 11.018863,
+          "busy_ms": 0.872505,
+          "busy_pct": 7.918285216904866,
+          "kernels": 74
+        },
+        {
+          "layer": 11,
+          "span_ms": 5.352211,
+          "busy_ms": 0.847289,
+          "busy_pct": 15.830635227198629,
+          "kernels": 92
+        },
+        {
+          "layer": 12,
+          "span_ms": 8.821714,
+          "busy_ms": 0.851382,
+          "busy_pct": 9.650981657306051,
+          "kernels": 74
+        },
+        {
+          "layer": 13,
+          "span_ms": 10.671846,
+          "busy_ms": 0.850933,
+          "busy_pct": 7.973625181622748,
+          "kernels": 71
+        },
+        {
+          "layer": 14,
+          "span_ms": 8.009851,
+          "busy_ms": 0.856563,
+          "busy_pct": 10.693869336645587,
+          "kernels": 74
+        },
+        {
+          "layer": 15,
+          "span_ms": 8.113279,
+          "busy_ms": 0.856664,
+          "busy_pct": 10.558788869457096,
+          "kernels": 92
+        },
+        {
+          "layer": 16,
+          "span_ms": 3.833706,
+          "busy_ms": 0.857463,
+          "busy_pct": 22.366425594450906,
+          "kernels": 74
+        },
+        {
+          "layer": 17,
+          "span_ms": 1.176704,
+          "busy_ms": 0.875292,
+          "busy_pct": 74.38506200369847,
+          "kernels": 71
+        },
+        {
+          "layer": 18,
+          "span_ms": 2.732043,
+          "busy_ms": 1.291297,
+          "busy_pct": 47.26488565516721,
+          "kernels": 74
+        },
+        {
+          "layer": 19,
+          "span_ms": 3.930732,
+          "busy_ms": 0.869211,
+          "busy_pct": 22.11320944801121,
+          "kernels": 92
+        },
+        {
+          "layer": 20,
+          "span_ms": 2.113882,
+          "busy_ms": 0.86796,
+          "busy_pct": 41.060002403161576,
+          "kernels": 71
+        },
+        {
+          "layer": 21,
+          "span_ms": 1.724239,
+          "busy_ms": 0.855223,
+          "busy_pct": 49.60002644644971,
+          "kernels": 74
+        },
+        {
+          "layer": 22,
+          "span_ms": 2.446468,
+          "busy_ms": 0.853625,
+          "busy_pct": 34.892138380718656,
+          "kernels": 74
+        },
+        {
+          "layer": 23,
+          "span_ms": 2.418562,
+          "busy_ms": 0.872375,
+          "busy_pct": 36.069987041886876,
+          "kernels": 95
+        },
+        {
+          "layer": 24,
+          "span_ms": 1.154208,
+          "busy_ms": 0.870612,
+          "busy_pct": 75.42938534475589,
+          "kernels": 71
+        },
+        {
+          "layer": 25,
+          "span_ms": 1.468584,
+          "busy_ms": 0.877049,
+          "busy_pct": 59.72072418057122,
+          "kernels": 74
+        },
+        {
+          "layer": 26,
+          "span_ms": 1.109855,
+          "busy_ms": 0.86108,
+          "busy_pct": 77.5849097404616,
+          "kernels": 74
+        },
+        {
+          "layer": 27,
+          "span_ms": 2.546149,
+          "busy_ms": 0.864695,
+          "busy_pct": 33.96089545427232,
+          "kernels": 92
+        },
+        {
+          "layer": 28,
+          "span_ms": 3.538146,
+          "busy_ms": 0.867834,
+          "busy_pct": 24.527930729822906,
+          "kernels": 71
+        },
+        {
+          "layer": 29,
+          "span_ms": 2.452259,
+          "busy_ms": 0.865048,
+          "busy_pct": 35.27555613008251,
+          "kernels": 71
+        },
+        {
+          "layer": 30,
+          "span_ms": 3.597795,
+          "busy_ms": 0.867195,
+          "busy_pct": 24.1035134019587,
+          "kernels": 74
+        },
+        {
+          "layer": 31,
+          "span_ms": 1.950069,
+          "busy_ms": 0.874073,
+          "busy_pct": 44.8226703773046,
+          "kernels": 95
+        },
+        {
+          "layer": 32,
+          "span_ms": 2.311072,
+          "busy_ms": 1.130144,
+          "busy_pct": 48.901289098738594,
+          "kernels": 74
+        },
+        {
+          "layer": 33,
+          "span_ms": 1.744016,
+          "busy_ms": 0.851958,
+          "busy_pct": 48.8503545839029,
+          "kernels": 74
+        },
+        {
+          "layer": 34,
+          "span_ms": 2.145275,
+          "busy_ms": 0.855961,
+          "busy_pct": 39.89982636258755,
+          "kernels": 74
+        },
+        {
+          "layer": 35,
+          "span_ms": 1.852147,
+          "busy_ms": 0.875994,
+          "busy_pct": 47.29613794153488,
+          "kernels": 95
+        },
+        {
+          "layer": 36,
+          "span_ms": 2.075961,
+          "busy_ms": 0.86732,
+          "busy_pct": 41.77920490799201,
+          "kernels": 74
+        },
+        {
+          "layer": 37,
+          "span_ms": 1.099902,
+          "busy_ms": 0.844566,
+          "busy_pct": 76.7855681688005,
+          "kernels": 71
+        },
+        {
+          "layer": 38,
+          "span_ms": 1.712335,
+          "busy_ms": 0.862709,
+          "busy_pct": 50.38202220943916,
+          "kernels": 74
+        },
+        {
+          "layer": 39,
+          "span_ms": 3.034963,
+          "busy_ms": 0.882774,
+          "busy_pct": 29.086812590466508,
+          "kernels": 95
+        },
+        {
+          "layer": 40,
+          "span_ms": 2.33392,
+          "busy_ms": 1.116768,
+          "busy_pct": 47.849454994172895,
+          "kernels": 71
+        },
+        {
+          "layer": 41,
+          "span_ms": 1.718191,
+          "busy_ms": 0.851705,
+          "busy_pct": 49.5698673779574,
+          "kernels": 74
+        },
+        {
+          "layer": 42,
+          "span_ms": 2.87864,
+          "busy_ms": 0.855,
+          "busy_pct": 29.701525720479115,
+          "kernels": 71
+        },
+        {
+          "layer": 43,
+          "span_ms": 2.405154,
+          "busy_ms": 0.880311,
+          "busy_pct": 36.601024300315075,
+          "kernels": 95
+        },
+        {
+          "layer": 44,
+          "span_ms": 1.739215,
+          "busy_ms": 0.856532,
+          "busy_pct": 49.24819530650322,
+          "kernels": 71
+        },
+        {
+          "layer": 45,
+          "span_ms": 2.137979,
+          "busy_ms": 0.855256,
+          "busy_pct": 40.00301219048457,
+          "kernels": 71
+        },
+        {
+          "layer": 46,
+          "span_ms": 1.721615,
+          "busy_ms": 0.857272,
+          "busy_pct": 49.79464049743991,
+          "kernels": 74
+        },
+        {
+          "layer": 47,
+          "span_ms": 6.962944,
+          "busy_ms": 0.887993,
+          "busy_pct": 12.75312568936358,
+          "kernels": 98
+        }
+      ]
+    },
+    {
+      "token": 4,
+      "start_ns": 27709468421,
+      "end_ns": 27920586027,
+      "span_ms": 211.117606,
+      "gpu_busy_ms": 42.861616,
+      "gpu_busy_pct": 20.30224613289713,
+      "idle_ms": 168.25599,
+      "kernels": 3756,
+      "kernel_time_ms": {
+        "sabah gate+up": 17.103992,
+        "elementwise/router": 2.499302,
+        "sabah down": 9.637129,
+        "dense matmul": 12.799635,
+        "ple/embedding": 0.421992,
+        "other": 0.045282,
+        "ssm": 0.229674,
+        "attention": 0.12461
+      },
+      "kernel_count": {
+        "sabah gate+up": 96,
+        "elementwise/router": 2556,
+        "sabah down": 48,
+        "dense matmul": 770,
+        "ple/embedding": 98,
+        "other": 58,
+        "ssm": 70,
+        "attention": 60
+      },
+      "kernel_time_top": {
+        "k_mul_mat_id(const void *const *, const float *, float *, int, int, int, int, unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long, int)": 26.741121,
+        "void mul_mat_vec_q<(ggml_type)14, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 4.590464,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)160, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 2.944557,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)256, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 2.83546,
+        "void mul_mat_vec_q<(ggml_type)13, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 1.10573,
+        "void mul_mat_vec_q<(ggml_type)12, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.538704,
+        "void k_bin_bcast<&op_add, float, float, float, const float *>(const T2 *, const T3 *, T4 *, unsigned int, unsigned int, unsigned int, uint3, uint3, uint3, uint3, uint3, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, T5...)": 0.497644,
+        "void mul_mat_vec_q<(ggml_type)23, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.449962,
+        "void k_get_rows_float_vec<float>(const T1 *, const int *, T1 *, long long, long long, uint3, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long)": 0.30711,
+        "scale_f32(const float *, float *, float, float, long long)": 0.30612,
+        "void rms_norm_f32<(int)1024, (bool)1, (bool)0>(const float *, float *, int, long long, long long, long long, float, const float *, long long, long long, long long, uint3, uint3, uint3, uint3, const float *, long long, long long, long long, uint3, uint3, uint3, uint3)": 0.278021,
+        "quantize_q8_1(const float *, void *, long long, long long, long long, long long, long long, unsigned int, uint3)": 0.211881,
+        "void topk_moe_cuda<(int)512, (bool)0>(const float *, float *, int *, float *, int, int, float, float, topk_moe_config)": 0.2042,
+        "void gated_delta_net_cuda<(int)128, (bool)0, (bool)0>(const float *, const float *, const float *, const float *, const float *, const float *, float *, float *, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, uint3, uint3, float, long long, int)": 0.176617,
+        "void mul_mat_vec_q<(ggml_type)20, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.171747
+      },
+      "launch_calls": 3756,
+      "runtime_calls": 5144,
+      "stream_sync_calls": 80,
+      "stream_sync_ms": 2.789805,
+      "stream_sync_max_ms": 1.589609,
+      "memcpy": {
+        "kind1": 0.724885,
+        "kind8": 0.019105,
+        "kind2": 0.043106
+      },
+      "memcpy_n": {
+        "kind1": 28,
+        "kind8": 36,
+        "kind2": 48
+      },
+      "layers": [
+        {
+          "layer": 0,
+          "span_ms": 12.510359,
+          "busy_ms": 1.897174,
+          "busy_pct": 15.164824606552058,
+          "kernels": 35
+        },
+        {
+          "layer": 1,
+          "span_ms": 4.413209,
+          "busy_ms": 1.072606,
+          "busy_pct": 24.30444603915201,
+          "kernels": 110
+        },
+        {
+          "layer": 2,
+          "span_ms": 6.131433,
+          "busy_ms": 0.844632,
+          "busy_pct": 13.775442054084257,
+          "kernels": 74
+        },
+        {
+          "layer": 3,
+          "span_ms": 9.162331,
+          "busy_ms": 0.849945,
+          "busy_pct": 9.276514895608988,
+          "kernels": 95
+        },
+        {
+          "layer": 4,
+          "span_ms": 8.830451,
+          "busy_ms": 0.870168,
+          "busy_pct": 9.854173926110908,
+          "kernels": 74
+        },
+        {
+          "layer": 5,
+          "span_ms": 10.481984,
+          "busy_ms": 0.863159,
+          "busy_pct": 8.234691066118781,
+          "kernels": 74
+        },
+        {
+          "layer": 6,
+          "span_ms": 5.746526,
+          "busy_ms": 0.858646,
+          "busy_pct": 14.942001480546681,
+          "kernels": 74
+        },
+        {
+          "layer": 7,
+          "span_ms": 5.662395,
+          "busy_ms": 0.854745,
+          "busy_pct": 15.095114346491194,
+          "kernels": 95
+        },
+        {
+          "layer": 8,
+          "span_ms": 7.28068,
+          "busy_ms": 0.858359,
+          "busy_pct": 11.789544383216953,
+          "kernels": 71
+        },
+        {
+          "layer": 9,
+          "span_ms": 4.703361,
+          "busy_ms": 0.848794,
+          "busy_pct": 18.046541611413627,
+          "kernels": 74
+        },
+        {
+          "layer": 10,
+          "span_ms": 4.15045,
+          "busy_ms": 1.080092,
+          "busy_pct": 26.023491428640266,
+          "kernels": 74
+        },
+        {
+          "layer": 11,
+          "span_ms": 3.350268,
+          "busy_ms": 0.850136,
+          "busy_pct": 25.375164016729407,
+          "kernels": 92
+        },
+        {
+          "layer": 12,
+          "span_ms": 6.888542,
+          "busy_ms": 0.849174,
+          "busy_pct": 12.327340096060967,
+          "kernels": 74
+        },
+        {
+          "layer": 13,
+          "span_ms": 8.204929,
+          "busy_ms": 0.852472,
+          "busy_pct": 10.389754743764389,
+          "kernels": 71
+        },
+        {
+          "layer": 14,
+          "span_ms": 2.91784,
+          "busy_ms": 0.843991,
+          "busy_pct": 28.925198091739095,
+          "kernels": 74
+        },
+        {
+          "layer": 15,
+          "span_ms": 4.786788,
+          "busy_ms": 0.856344,
+          "busy_pct": 17.889741513515954,
+          "kernels": 92
+        },
+        {
+          "layer": 16,
+          "span_ms": 3.809832,
+          "busy_ms": 0.854649,
+          "busy_pct": 22.432721442835273,
+          "kernels": 74
+        },
+        {
+          "layer": 17,
+          "span_ms": 3.395421,
+          "busy_ms": 0.87727,
+          "busy_pct": 25.836854987938167,
+          "kernels": 71
+        },
+        {
+          "layer": 18,
+          "span_ms": 3.54589,
+          "busy_ms": 0.865366,
+          "busy_pct": 24.404761569027805,
+          "kernels": 74
+        },
+        {
+          "layer": 19,
+          "span_ms": 1.256738,
+          "busy_ms": 0.870938,
+          "busy_pct": 69.3014773166722,
+          "kernels": 92
+        },
+        {
+          "layer": 20,
+          "span_ms": 1.155104,
+          "busy_ms": 0.867639,
+          "busy_pct": 75.11349627392858,
+          "kernels": 71
+        },
+        {
+          "layer": 21,
+          "span_ms": 2.336352,
+          "busy_ms": 0.854966,
+          "busy_pct": 36.5940577447234,
+          "kernels": 74
+        },
+        {
+          "layer": 22,
+          "span_ms": 2.920753,
+          "busy_ms": 0.853525,
+          "busy_pct": 29.222772346720177,
+          "kernels": 74
+        },
+        {
+          "layer": 23,
+          "span_ms": 1.765488,
+          "busy_ms": 0.873334,
+          "busy_pct": 49.467002890985384,
+          "kernels": 95
+        },
+        {
+          "layer": 24,
+          "span_ms": 2.704874,
+          "busy_ms": 0.869464,
+          "busy_pct": 32.144343877016084,
+          "kernels": 71
+        },
+        {
+          "layer": 25,
+          "span_ms": 3.428862,
+          "busy_ms": 0.877014,
+          "busy_pct": 25.577407314730078,
+          "kernels": 74
+        },
+        {
+          "layer": 26,
+          "span_ms": 4.587806,
+          "busy_ms": 0.862204,
+          "busy_pct": 18.793384027136284,
+          "kernels": 74
+        },
+        {
+          "layer": 27,
+          "span_ms": 4.629632,
+          "busy_ms": 0.865978,
+          "busy_pct": 18.705115222981007,
+          "kernels": 92
+        },
+        {
+          "layer": 28,
+          "span_ms": 4.724161,
+          "busy_ms": 0.872059,
+          "busy_pct": 18.45955292378901,
+          "kernels": 71
+        },
+        {
+          "layer": 29,
+          "span_ms": 4.023631,
+          "busy_ms": 0.869045,
+          "busy_pct": 21.598526306214463,
+          "kernels": 71
+        },
+        {
+          "layer": 30,
+          "span_ms": 3.278426,
+          "busy_ms": 0.864697,
+          "busy_pct": 26.375370375905998,
+          "kernels": 74
+        },
+        {
+          "layer": 31,
+          "span_ms": 3.130038,
+          "busy_ms": 0.866805,
+          "busy_pct": 27.69311426890025,
+          "kernels": 95
+        },
+        {
+          "layer": 32,
+          "span_ms": 1.672302,
+          "busy_ms": 0.868344,
+          "busy_pct": 51.92507095010351,
+          "kernels": 74
+        },
+        {
+          "layer": 33,
+          "span_ms": 3.753575,
+          "busy_ms": 0.850643,
+          "busy_pct": 22.662208694378027,
+          "kernels": 74
+        },
+        {
+          "layer": 34,
+          "span_ms": 5.244304,
+          "busy_ms": 0.863957,
+          "busy_pct": 16.474197529357564,
+          "kernels": 74
+        },
+        {
+          "layer": 35,
+          "span_ms": 2.821069,
+          "busy_ms": 0.877178,
+          "busy_pct": 31.09381585491174,
+          "kernels": 95
+        },
+        {
+          "layer": 36,
+          "span_ms": 2.684586,
+          "busy_ms": 0.868474,
+          "busy_pct": 32.350388477031466,
+          "kernels": 74
+        },
+        {
+          "layer": 37,
+          "span_ms": 3.080885,
+          "busy_ms": 0.84748,
+          "busy_pct": 27.50768042299534,
+          "kernels": 71
+        },
+        {
+          "layer": 38,
+          "span_ms": 4.194291,
+          "busy_ms": 0.866363,
+          "busy_pct": 20.655767565960492,
+          "kernels": 74
+        },
+        {
+          "layer": 39,
+          "span_ms": 2.362753,
+          "busy_ms": 0.88668,
+          "busy_pct": 37.52740976310262,
+          "kernels": 95
+        },
+        {
+          "layer": 40,
+          "span_ms": 1.149151,
+          "busy_ms": 0.866773,
+          "busy_pct": 75.42725020471636,
+          "kernels": 71
+        },
+        {
+          "layer": 41,
+          "span_ms": 1.1416,
+          "busy_ms": 0.852467,
+          "busy_pct": 74.67300280308339,
+          "kernels": 74
+        },
+        {
+          "layer": 42,
+          "span_ms": 2.262718,
+          "busy_ms": 0.855099,
+          "busy_pct": 37.79078966092991,
+          "kernels": 71
+        },
+        {
+          "layer": 43,
+          "span_ms": 4.573694,
+          "busy_ms": 0.880054,
+          "busy_pct": 19.241645811897342,
+          "kernels": 95
+        },
+        {
+          "layer": 44,
+          "span_ms": 4.023054,
+          "busy_ms": 0.858679,
+          "busy_pct": 21.343959091774558,
+          "kernels": 71
+        },
+        {
+          "layer": 45,
+          "span_ms": 2.96693,
+          "busy_ms": 0.859352,
+          "busy_pct": 28.96435035541789,
+          "kernels": 71
+        },
+        {
+          "layer": 46,
+          "span_ms": 3.940556,
+          "busy_ms": 0.858579,
+          "busy_pct": 21.788270487717977,
+          "kernels": 74
+        },
+        {
+          "layer": 47,
+          "span_ms": 9.331584,
+          "busy_ms": 0.886104,
+          "busy_pct": 9.495751203654171,
+          "kernels": 98
+        }
+      ]
+    },
+    {
+      "token": 5,
+      "start_ns": 27920586027,
+      "end_ns": 28214169355,
+      "span_ms": 293.583328,
+      "gpu_busy_ms": 43.550522,
+      "gpu_busy_pct": 14.834126411973912,
+      "idle_ms": 250.032806,
+      "kernels": 3756,
+      "kernel_time_ms": {
+        "sabah gate+up": 17.537566,
+        "elementwise/router": 2.511625,
+        "sabah down": 9.969167,
+        "dense matmul": 12.70897,
+        "ple/embedding": 0.425936,
+        "other": 0.04509,
+        "ssm": 0.229191,
+        "attention": 0.122977
+      },
+      "kernel_count": {
+        "sabah gate+up": 96,
+        "elementwise/router": 2556,
+        "sabah down": 48,
+        "dense matmul": 770,
+        "ple/embedding": 98,
+        "other": 58,
+        "ssm": 70,
+        "attention": 60
+      },
+      "kernel_time_top": {
+        "k_mul_mat_id(const void *const *, const float *, float *, int, int, int, int, unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long, int)": 27.506733,
+        "void mul_mat_vec_q<(ggml_type)14, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 4.641664,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)160, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 2.968211,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)256, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 2.845173,
+        "void mul_mat_vec_q<(ggml_type)13, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.925916,
+        "void mul_mat_vec_q<(ggml_type)12, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.541645,
+        "void k_bin_bcast<&op_add, float, float, float, const float *>(const T2 *, const T3 *, T4 *, unsigned int, unsigned int, unsigned int, uint3, uint3, uint3, uint3, uint3, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, T5...)": 0.496717,
+        "void mul_mat_vec_q<(ggml_type)23, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.449805,
+        "void k_get_rows_float_vec<float>(const T1 *, const int *, T1 *, long long, long long, uint3, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long)": 0.308008,
+        "scale_f32(const float *, float *, float, float, long long)": 0.307466,
+        "void rms_norm_f32<(int)1024, (bool)1, (bool)0>(const float *, float *, int, long long, long long, long long, float, const float *, long long, long long, long long, uint3, uint3, uint3, uint3, const float *, long long, long long, long long, uint3, uint3, uint3, uint3)": 0.279786,
+        "quantize_q8_1(const float *, void *, long long, long long, long long, long long, long long, unsigned int, uint3)": 0.218695,
+        "void topk_moe_cuda<(int)512, (bool)0>(const float *, float *, int *, float *, int, int, float, float, topk_moe_config)": 0.205413,
+        "void gated_delta_net_cuda<(int)128, (bool)0, (bool)0>(const float *, const float *, const float *, const float *, const float *, const float *, float *, float *, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, uint3, uint3, float, long long, int)": 0.17658,
+        "void mul_mat_vec_q<(ggml_type)20, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.171751
+      },
+      "launch_calls": 3756,
+      "runtime_calls": 5379,
+      "stream_sync_calls": 80,
+      "stream_sync_ms": 2.698916,
+      "stream_sync_max_ms": 1.768022,
+      "memcpy": {
+        "kind1": 1.089819,
+        "kind8": 0.018913,
+        "kind2": 0.049601
+      },
+      "memcpy_n": {
+        "kind1": 42,
+        "kind8": 36,
+        "kind2": 48
+      },
+      "layers": [
+        {
+          "layer": 0,
+          "span_ms": 17.104758,
+          "busy_ms": 1.993174,
+          "busy_pct": 11.652745978633547,
+          "kernels": 35
+        },
+        {
+          "layer": 1,
+          "span_ms": 14.938746,
+          "busy_ms": 1.075041,
+          "busy_pct": 7.196326920613015,
+          "kernels": 110
+        },
+        {
+          "layer": 2,
+          "span_ms": 9.917393,
+          "busy_ms": 0.856535,
+          "busy_pct": 8.636695147605828,
+          "kernels": 74
+        },
+        {
+          "layer": 3,
+          "span_ms": 10.229753,
+          "busy_ms": 0.843607,
+          "busy_pct": 8.246601848549032,
+          "kernels": 95
+        },
+        {
+          "layer": 4,
+          "span_ms": 7.285352,
+          "busy_ms": 0.8774,
+          "busy_pct": 12.043343959221188,
+          "kernels": 74
+        },
+        {
+          "layer": 5,
+          "span_ms": 6.033125,
+          "busy_ms": 0.852024,
+          "busy_pct": 14.122432404433855,
+          "kernels": 74
+        },
+        {
+          "layer": 6,
+          "span_ms": 6.9664,
+          "busy_ms": 0.871032,
+          "busy_pct": 12.503330271015159,
+          "kernels": 74
+        },
+        {
+          "layer": 7,
+          "span_ms": 10.225817,
+          "busy_ms": 0.854231,
+          "busy_pct": 8.353669931703257,
+          "kernels": 95
+        },
+        {
+          "layer": 8,
+          "span_ms": 11.552381,
+          "busy_ms": 0.859286,
+          "busy_pct": 7.438172269422208,
+          "kernels": 71
+        },
+        {
+          "layer": 9,
+          "span_ms": 7.695123,
+          "busy_ms": 0.858906,
+          "busy_pct": 11.161692932003817,
+          "kernels": 74
+        },
+        {
+          "layer": 10,
+          "span_ms": 6.721753,
+          "busy_ms": 0.867993,
+          "busy_pct": 12.913193924263506,
+          "kernels": 74
+        },
+        {
+          "layer": 11,
+          "span_ms": 8.0111,
+          "busy_ms": 0.846714,
+          "busy_pct": 10.569260151539739,
+          "kernels": 92
+        },
+        {
+          "layer": 12,
+          "span_ms": 7.746101,
+          "busy_ms": 0.858809,
+          "busy_pct": 11.086984277638518,
+          "kernels": 74
+        },
+        {
+          "layer": 13,
+          "span_ms": 6.71212,
+          "busy_ms": 0.844662,
+          "busy_pct": 12.584131392168198,
+          "kernels": 71
+        },
+        {
+          "layer": 14,
+          "span_ms": 5.854401,
+          "busy_ms": 1.113467,
+          "busy_pct": 19.019315554230058,
+          "kernels": 74
+        },
+        {
+          "layer": 15,
+          "span_ms": 5.643675,
+          "busy_ms": 0.857047,
+          "busy_pct": 15.185973678498495,
+          "kernels": 92
+        },
+        {
+          "layer": 16,
+          "span_ms": 3.115957,
+          "busy_ms": 0.855511,
+          "busy_pct": 27.45580250305123,
+          "kernels": 74
+        },
+        {
+          "layer": 17,
+          "span_ms": 5.189679,
+          "busy_ms": 0.881017,
+          "busy_pct": 16.97632936449441,
+          "kernels": 71
+        },
+        {
+          "layer": 18,
+          "span_ms": 7.653906,
+          "busy_ms": 0.867193,
+          "busy_pct": 11.330071208086434,
+          "kernels": 74
+        },
+        {
+          "layer": 19,
+          "span_ms": 8.28122,
+          "busy_ms": 0.870296,
+          "busy_pct": 10.50927278830897,
+          "kernels": 92
+        },
+        {
+          "layer": 20,
+          "span_ms": 4.270069,
+          "busy_ms": 0.878615,
+          "busy_pct": 20.576131205373965,
+          "kernels": 71
+        },
+        {
+          "layer": 21,
+          "span_ms": 5.361075,
+          "busy_ms": 0.860024,
+          "busy_pct": 16.04200650056192,
+          "kernels": 74
+        },
+        {
+          "layer": 22,
+          "span_ms": 7.64917,
+          "busy_ms": 0.856313,
+          "busy_pct": 11.1948485914158,
+          "kernels": 74
+        },
+        {
+          "layer": 23,
+          "span_ms": 4.13653,
+          "busy_ms": 0.880728,
+          "busy_pct": 21.29146893652409,
+          "kernels": 95
+        },
+        {
+          "layer": 24,
+          "span_ms": 3.868586,
+          "busy_ms": 0.870107,
+          "busy_pct": 22.49160287505564,
+          "kernels": 71
+        },
+        {
+          "layer": 25,
+          "span_ms": 5.22248,
+          "busy_ms": 0.869943,
+          "busy_pct": 16.657660728236394,
+          "kernels": 74
+        },
+        {
+          "layer": 26,
+          "span_ms": 2.715914,
+          "busy_ms": 0.863161,
+          "busy_pct": 31.781602804801626,
+          "kernels": 74
+        },
+        {
+          "layer": 27,
+          "span_ms": 3.515265,
+          "busy_ms": 1.300324,
+          "busy_pct": 36.99078163381708,
+          "kernels": 92
+        },
+        {
+          "layer": 28,
+          "span_ms": 4.9522,
+          "busy_ms": 0.868759,
+          "busy_pct": 17.542890028674126,
+          "kernels": 71
+        },
+        {
+          "layer": 29,
+          "span_ms": 3.982125,
+          "busy_ms": 0.863481,
+          "busy_pct": 21.6839250400226,
+          "kernels": 71
+        },
+        {
+          "layer": 30,
+          "span_ms": 3.3559,
+          "busy_ms": 0.867963,
+          "busy_pct": 25.86379212729819,
+          "kernels": 74
+        },
+        {
+          "layer": 31,
+          "span_ms": 4.428474,
+          "busy_ms": 0.878296,
+          "busy_pct": 19.83292664696688,
+          "kernels": 95
+        },
+        {
+          "layer": 32,
+          "span_ms": 2.099866,
+          "busy_ms": 0.873654,
+          "busy_pct": 41.60522623824568,
+          "kernels": 74
+        },
+        {
+          "layer": 33,
+          "span_ms": 2.370081,
+          "busy_ms": 0.852533,
+          "busy_pct": 35.97062716421928,
+          "kernels": 74
+        },
+        {
+          "layer": 34,
+          "span_ms": 5.335794,
+          "busy_ms": 0.859385,
+          "busy_pct": 16.10603782679766,
+          "kernels": 74
+        },
+        {
+          "layer": 35,
+          "span_ms": 8.054109,
+          "busy_ms": 0.891164,
+          "busy_pct": 11.064712434361144,
+          "kernels": 95
+        },
+        {
+          "layer": 36,
+          "span_ms": 4.764931,
+          "busy_ms": 0.867162,
+          "busy_pct": 18.19883645744293,
+          "kernels": 74
+        },
+        {
+          "layer": 37,
+          "span_ms": 3.414494,
+          "busy_ms": 0.848439,
+          "busy_pct": 24.84816198241965,
+          "kernels": 71
+        },
+        {
+          "layer": 38,
+          "span_ms": 8.654286,
+          "busy_ms": 0.877909,
+          "busy_pct": 10.144210625810148,
+          "kernels": 74
+        },
+        {
+          "layer": 39,
+          "span_ms": 7.377258,
+          "busy_ms": 0.880666,
+          "busy_pct": 11.937578975820013,
+          "kernels": 95
+        },
+        {
+          "layer": 40,
+          "span_ms": 3.920172,
+          "busy_ms": 0.868248,
+          "busy_pct": 22.148211864173305,
+          "kernels": 71
+        },
+        {
+          "layer": 41,
+          "span_ms": 3.016595,
+          "busy_ms": 0.86671,
+          "busy_pct": 28.731400801234503,
+          "kernels": 74
+        },
+        {
+          "layer": 42,
+          "span_ms": 3.313851,
+          "busy_ms": 0.856793,
+          "busy_pct": 25.854904158334215,
+          "kernels": 71
+        },
+        {
+          "layer": 43,
+          "span_ms": 3.742695,
+          "busy_ms": 0.878392,
+          "busy_pct": 23.469505262918833,
+          "kernels": 95
+        },
+        {
+          "layer": 44,
+          "span_ms": 2.33488,
+          "busy_ms": 0.860056,
+          "busy_pct": 36.835126430480365,
+          "kernels": 71
+        },
+        {
+          "layer": 45,
+          "span_ms": 4.365208,
+          "busy_ms": 0.855769,
+          "busy_pct": 19.604312096926424,
+          "kernels": 71
+        },
+        {
+          "layer": 46,
+          "span_ms": 2.835502,
+          "busy_ms": 0.866613,
+          "busy_pct": 30.562947936555855,
+          "kernels": 74
+        },
+        {
+          "layer": 47,
+          "span_ms": 7.647058,
+          "busy_ms": 0.88537,
+          "busy_pct": 11.577916631467945,
+          "kernels": 98
+        }
+      ]
+    },
+    {
+      "token": 6,
+      "start_ns": 28214169355,
+      "end_ns": 28420483245,
+      "span_ms": 206.31389,
+      "gpu_busy_ms": 43.250817,
+      "gpu_busy_pct": 20.963599203136543,
+      "idle_ms": 163.063073,
+      "kernels": 3662,
+      "kernel_time_ms": {
+        "sabah gate+up": 17.789061,
+        "elementwise/router": 2.445826,
+        "sabah down": 9.845362,
+        "dense matmul": 12.370356,
+        "ple/embedding": 0.417673,
+        "other": 0.042177,
+        "ssm": 0.227656,
+        "attention": 0.112706
+      },
+      "kernel_count": {
+        "sabah gate+up": 96,
+        "elementwise/router": 2494,
+        "sabah down": 48,
+        "dense matmul": 752,
+        "ple/embedding": 93,
+        "other": 54,
+        "ssm": 70,
+        "attention": 55
+      },
+      "kernel_time_top": {
+        "k_mul_mat_id(const void *const *, const float *, float *, int, int, int, int, unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long, int)": 27.634423,
+        "void mul_mat_vec_q<(ggml_type)14, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 4.511419,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)160, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 2.880138,
+        "void mul_mat_vec_f<__nv_bfloat16, float, (int)1, (int)256, (bool)0, (bool)0>(const T1 *, const float *, const int *, ggml_cuda_mm_fusion_args_device, float *, int, uint3, int, int, int, uint3, int, int, int, uint3, int, int, int, int)": 2.771825,
+        "void mul_mat_vec_q<(ggml_type)13, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.897242,
+        "void mul_mat_vec_q<(ggml_type)12, (int)1, (bool)0, (bool)0, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.534001,
+        "void k_bin_bcast<&op_add, float, float, float, const float *>(const T2 *, const T3 *, T4 *, unsigned int, unsigned int, unsigned int, uint3, uint3, uint3, uint3, uint3, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, T5...)": 0.481518,
+        "void mul_mat_vec_q<(ggml_type)23, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.448428,
+        "void k_get_rows_float_vec<float>(const T1 *, const int *, T1 *, long long, long long, uint3, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long)": 0.307301,
+        "scale_f32(const float *, float *, float, float, long long)": 0.300071,
+        "void rms_norm_f32<(int)1024, (bool)1, (bool)0>(const float *, float *, int, long long, long long, long long, float, const float *, long long, long long, long long, uint3, uint3, uint3, uint3, const float *, long long, long long, long long, uint3, uint3, uint3, uint3)": 0.274823,
+        "quantize_q8_1(const float *, void *, long long, long long, long long, long long, long long, unsigned int, uint3)": 0.213991,
+        "void topk_moe_cuda<(int)512, (bool)0>(const float *, float *, int *, float *, int, int, float, float, topk_moe_config)": 0.199878,
+        "void gated_delta_net_cuda<(int)128, (bool)0, (bool)0>(const float *, const float *, const float *, const float *, const float *, const float *, float *, float *, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, long long, uint3, uint3, float, long long, int)": 0.1753,
+        "void mul_mat_vec_q<(ggml_type)20, (int)1, (bool)0, (bool)1, (bool)0>(const void *, const void *, const int *, ggml_cuda_mm_fusion_args_device, float *, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, uint3, unsigned int, unsigned int, unsigned int, unsigned int)": 0.167617
+      },
+      "launch_calls": 3696,
+      "runtime_calls": 5022,
+      "stream_sync_calls": 79,
+      "stream_sync_ms": 2.616256,
+      "stream_sync_max_ms": 1.733492,
+      "memcpy": {
+        "kind1": 0.282152,
+        "kind8": 0.017248,
+        "kind2": 0.046625
+      },
+      "memcpy_n": {
+        "kind1": 10,
+        "kind8": 33,
+        "kind2": 47
+      },
+      "layers": [
+        {
+          "layer": 0,
+          "span_ms": 20.216395,
+          "busy_ms": 1.909205,
+          "busy_pct": 9.44384495851016,
+          "kernels": 35
+        },
+        {
+          "layer": 1,
+          "span_ms": 17.92414,
+          "busy_ms": 1.067742,
+          "busy_pct": 5.957005468602678,
+          "kernels": 110
+        },
+        {
+          "layer": 2,
+          "span_ms": 11.022159,
+          "busy_ms": 0.84524,
+          "busy_pct": 7.6685520504648865,
+          "kernels": 74
+        },
+        {
+          "layer": 3,
+          "span_ms": 6.685048,
+          "busy_ms": 0.843737,
+          "busy_pct": 12.621255673856044,
+          "kernels": 95
+        },
+        {
+          "layer": 4,
+          "span_ms": 5.364467,
+          "busy_ms": 1.095741,
+          "busy_pct": 20.42590624567175,
+          "kernels": 74
+        },
+        {
+          "layer": 5,
+          "span_ms": 10.149527,
+          "busy_ms": 0.852247,
+          "busy_pct": 8.396913471928297,
+          "kernels": 74
+        },
+        {
+          "layer": 6,
+          "span_ms": 11.483771,
+          "busy_ms": 0.858555,
+          "busy_pct": 7.476246260918996,
+          "kernels": 74
+        },
+        {
+          "layer": 7,
+          "span_ms": 9.013944,
+          "busy_ms": 0.853687,
+          "busy_pct": 9.470737781375167,
+          "kernels": 95
+        },
+        {
+          "layer": 8,
+          "span_ms": 8.896884,
+          "busy_ms": 0.853623,
+          "busy_pct": 9.594628861070909,
+          "kernels": 71
+        },
+        {
+          "layer": 9,
+          "span_ms": 2.923792,
+          "busy_ms": 0.851765,
+          "busy_pct": 29.13220229072383,
+          "kernels": 74
+        },
+        {
+          "layer": 10,
+          "span_ms": 4.200628,
+          "busy_ms": 0.862553,
+          "busy_pct": 20.533905882644213,
+          "kernels": 74
+        },
+        {
+          "layer": 11,
+          "span_ms": 1.993814,
+          "busy_ms": 0.858487,
+          "busy_pct": 43.05752693079695,
+          "kernels": 92
+        },
+        {
+          "layer": 12,
+          "span_ms": 2.845775,
+          "busy_ms": 0.850774,
+          "busy_pct": 29.896038864632658,
+          "kernels": 74
+        },
+        {
+          "layer": 13,
+          "span_ms": 4.404217,
+          "busy_ms": 0.842072,
+          "busy_pct": 19.11967552915762,
+          "kernels": 71
+        },
+        {
+          "layer": 14,
+          "span_ms": 1.089502,
+          "busy_ms": 0.840019,
+          "busy_pct": 77.10118935073089,
+          "kernels": 74
+        },
+        {
+          "layer": 15,
+          "span_ms": 1.709102,
+          "busy_ms": 0.852278,
+          "busy_pct": 49.867006182193926,
+          "kernels": 92
+        },
+        {
+          "layer": 16,
+          "span_ms": 2.087514,
+          "busy_ms": 0.854966,
+          "busy_pct": 40.95618041364034,
+          "kernels": 74
+        },
+        {
+          "layer": 17,
+          "span_ms": 1.851219,
+          "busy_ms": 0.879193,
+          "busy_pct": 47.49265213894196,
+          "kernels": 71
+        },
+        {
+          "layer": 18,
+          "span_ms": 5.397844,
+          "busy_ms": 1.10768,
+          "busy_pct": 20.520785706293104,
+          "kernels": 74
+        },
+        {
+          "layer": 19,
+          "span_ms": 7.070978,
+          "busy_ms": 0.870905,
+          "busy_pct": 12.316613062577765,
+          "kernels": 92
+        },
+        {
+          "layer": 20,
+          "span_ms": 2.023096,
+          "busy_ms": 0.869685,
+          "busy_pct": 42.98782657866953,
+          "kernels": 71
+        },
+        {
+          "layer": 21,
+          "span_ms": 2.488516,
+          "busy_ms": 0.85996,
+          "busy_pct": 34.557141686049036,
+          "kernels": 74
+        },
+        {
+          "layer": 22,
+          "span_ms": 6.260652,
+          "busy_ms": 0.862841,
+          "busy_pct": 13.781967117801788,
+          "kernels": 74
+        },
+        {
+          "layer": 23,
+          "span_ms": 7.647538,
+          "busy_ms": 0.872154,
+          "busy_pct": 11.404376153475798,
+          "kernels": 95
+        },
+        {
+          "layer": 24,
+          "span_ms": 1.193441,
+          "busy_ms": 0.866808,
+          "busy_pct": 72.63098888005356,
+          "kernels": 71
+        },
+        {
+          "layer": 25,
+          "span_ms": 1.151295,
+          "busy_ms": 0.873306,
+          "busy_pct": 75.85423371073443,
+          "kernels": 74
+        },
+        {
+          "layer": 26,
+          "span_ms": 1.386151,
+          "busy_ms": 1.10579,
+          "busy_pct": 79.77413716110294,
+          "kernels": 74
+        },
+        {
+          "layer": 27,
+          "span_ms": 1.240802,
+          "busy_ms": 0.864407,
+          "busy_pct": 69.66518429209495,
+          "kernels": 92
+        },
+        {
+          "layer": 28,
+          "span_ms": 1.91762,
+          "busy_ms": 0.867285,
+          "busy_pct": 45.227156579510016,
+          "kernels": 71
+        },
+        {
+          "layer": 29,
+          "span_ms": 2.191772,
+          "busy_ms": 0.862359,
+          "busy_pct": 39.34528773978315,
+          "kernels": 71
+        },
+        {
+          "layer": 30,
+          "span_ms": 1.136864,
+          "busy_ms": 0.862841,
+          "busy_pct": 75.89658921383736,
+          "kernels": 74
+        },
+        {
+          "layer": 31,
+          "span_ms": 1.210209,
+          "busy_ms": 0.866873,
+          "busy_pct": 71.63002423548329,
+          "kernels": 95
+        },
+        {
+          "layer": 32,
+          "span_ms": 1.114495,
+          "busy_ms": 0.870133,
+          "busy_pct": 78.0741950390087,
+          "kernels": 74
+        },
+        {
+          "layer": 33,
+          "span_ms": 1.107166,
+          "busy_ms": 0.85087,
+          "busy_pct": 76.85116775623528,
+          "kernels": 74
+        },
+        {
+          "layer": 34,
+          "span_ms": 1.604972,
+          "busy_ms": 0.855513,
+          "busy_pct": 53.30392056683855,
+          "kernels": 74
+        },
+        {
+          "layer": 35,
+          "span_ms": 2.304319,
+          "busy_ms": 0.879163,
+          "busy_pct": 38.152833874129406,
+          "kernels": 95
+        },
+        {
+          "layer": 36,
+          "span_ms": 1.16864,
+          "busy_ms": 0.880537,
+          "busy_pct": 75.34715566812706,
+          "kernels": 74
+        },
+        {
+          "layer": 37,
+          "span_ms": 2.613384,
+          "busy_ms": 1.072702,
+          "busy_pct": 41.04647460916574,
+          "kernels": 71
+        },
+        {
+          "layer": 38,
+          "span_ms": 5.564441,
+          "busy_ms": 0.862267,
+          "busy_pct": 15.496021972377818,
+          "kernels": 74
+        },
+        {
+          "layer": 39,
+          "span_ms": 6.770074,
+          "busy_ms": 0.882871,
+          "busy_pct": 13.040788032745285,
+          "kernels": 95
+        },
+        {
+          "layer": 40,
+          "span_ms": 4.040335,
+          "busy_ms": 0.880088,
+          "busy_pct": 21.7825502093267,
+          "kernels": 71
+        },
+        {
+          "layer": 41,
+          "span_ms": 2.816109,
+          "busy_ms": 0.856634,
+          "busy_pct": 30.41906403480831,
+          "kernels": 74
+        },
+        {
+          "layer": 42,
+          "span_ms": 2.078169,
+          "busy_ms": 0.856504,
+          "busy_pct": 41.2143574463867,
+          "kernels": 71
+        },
+        {
+          "layer": 43,
+          "span_ms": 1.88706,
+          "busy_ms": 0.88156,
+          "busy_pct": 46.716055663306946,
+          "kernels": 95
+        },
+        {
+          "layer": 44,
+          "span_ms": 2.605768,
+          "busy_ms": 0.86124,
+          "busy_pct": 33.05129236371005,
+          "kernels": 71
+        },
+        {
+          "layer": 45,
+          "span_ms": 1.228738,
+          "busy_ms": 0.856917,
+          "busy_pct": 69.73960274688339,
+          "kernels": 71
+        },
+        {
+          "layer": 46,
+          "span_ms": 1.712815,
+          "busy_ms": 0.856178,
+          "busy_pct": 49.986601004778684,
+          "kernels": 74
+        },
+        {
+          "layer": 47,
+          "span_ms": 1.518729,
+          "busy_ms": 0.562862,
+          "busy_pct": 37.06138488170042,
+          "kernels": 4
+        }
+      ]
+    }
+  ]
+}

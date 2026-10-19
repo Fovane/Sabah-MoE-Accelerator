@@ -1,0 +1,21 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16283 MiB):
+  Device 0: NVIDIA GeForce RTX 5060 Ti, compute capability 12.0, VMM: yes, VRAM: 16283 MiB
+0.00.870.224 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+0.02.180.744 I cmn          init: llama threadpool init, n_threads = 8
+sabah-diag: prompt step 0 argmax 1596 fed 1596  12720.7 ms
+sabah-diag: prompt step 1 argmax 1144 fed 1144  397.1 ms
+sabah-diag: prompt step 2 argmax 310 fed 310  218.5 ms
+sabah-diag: prompt step 3 argmax 5707 fed 5707  187.7 ms
+sabah-diag: prompt step 4 argmax 310 fed 310  250.7 ms
+sabah-diag: prompt step 5 argmax 1156 fed 1156  222.7 ms
+sabah-diag: prompt step 6 argmax 25 fed 25  310.9 ms
+sabah-diag: prompt step 7 argmax 328 fed 328  218.9 ms
+SABAH_DIAG calls=1152 tokens=8484 lookups=84840 overflow=449 verify_ok=0 verify_fail=0
+SABAH_DISK unbuffered_reads=21842 bytes=14790835200 waves=3269 mapped_fallbacks=0 staging_bytes=0 direct_io=1 depth=8 lanes=8 lane_reads=21842 sync=0 pending=0
+SABAH_IO read_ms=46990.0 wave_ms=10983.5 overlap=4.28 reads_per_wave=6.68
+SABAH_PHASE calls=1152 ids=1945.6ms fetch=11201.5ms wait=10983.5ms slot=430.8ms ptr=13.4ms prime=15.1ms | per_call us: ids=1689 fetch=9724 wait=9534 slot=374 ptr=12 prime=13 | accounting=13606.3ms
+SABAH_IDS reused=768 group_max=3 check=0 check_ok=0 check_fail=0
+SABAH_MERGE enabled=0 reserved=0
+SABAH_PREFETCH enabled=0 reads=0 read_bytes=0 used=0 used_bytes=0 dropped=0 stale=0 queued=0 waits=0 wait_ms=0.0 wait_timeouts=0
+SABAH_SNAPSHOT {"calls":1152,"empty_calls":0,"tokens":8484,"lookups":84840,"hits":62998,"misses":21842,"evictions":7767,"bytes_fetched":14790835200,"resident_bytes":9799833600,"overflow":449,"verify_ok":0,"verify_fail":0,"selfcheck_k":0,"selfcheck_ok":0,"selfcheck_fail":0,"selfcheck_max_rel_l2":0.000000e+00,"selfcheck_multi_token":0,"selfcheck_tensors":0,"selfcheck_slots":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"sentinel":0}
+SABAH_METRICS hits=62998 misses=21842 evictions=7767 bytes_fetched=14790835200 resident_bytes=9799833600
