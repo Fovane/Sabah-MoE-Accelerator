@@ -131,10 +131,28 @@ the same bytes, 2.5x slower within 300 MiB of the ceiling. At a 6.0 GB slab the
 run reads 149.5 objects/token instead of 131.6 (14% more bytes) and is still full
 speed - the extra reads overlap, the pressure does not.
 
+The counters say why (`tools/gpu_mem_probe.ps1` samples
+`\GPU Adapter Memory(*)\Dedicated Usage` / `Shared Usage` and the per-process
+`\GPU Process Memory(*)\Dedicated/Shared Usage`). Per-process medians at
+`-c 131072`:
+
+| slab | dedicated | shared | steady |
+|---|---|---|---|
+| 6.0e9 | 14,916 MiB | 304 MiB | 58.2 ms |
+| 7.0e9 | 15,479 MiB | 750 MiB | 63.3 ms |
+| 8.0e9 | 15,471 MiB | 1,824 MiB | 71.5 ms |
+| 9.8e9 | 15,469 MiB | 3,623 MiB | 88.4 ms |
+
+(The same 9.8e9 slab at `-c 512` holds 110 MiB shared and runs at 58.3 ms.)
+Dedicated saturates at ~15.47 GB of the adapter's 15.99 GB used; the rest of the
+budget is not resident. That excess is WDDM oversubscription into shared system
+memory, read over PCIe - so the rule is about the whole footprint, not the slab:
+model 3,983 + slab + compute 976 + KV 384 + context must fit in ~15.4 GB.
+
 So 128K is affordable in KV and is paid for in slab: **6.0e9 is the value that
-keeps this workload at full speed at `-c 131072`**; 9.8e9 costs 34%. The
-mechanism (WDDM eviction, driver bookkeeping, or the runtime's over-budget
-allocations) is not separated, only the effect is measured.
+keeps this workload at full speed at `-c 131072`**; 9.8e9 costs 34% because 3.3 GB
+of it lives in system RAM. Other processes hold 728-731 MiB of dedicated, so
+closing them would move the safe slab to ~6.7e9, not remove the oversubscription.
 
 The 32K KV cache costs less than the header arithmetic suggests. From the GGUF:
 48 blocks, 2 KV heads, key/value length 256, f16 — 2 KB per token per block, i.e.

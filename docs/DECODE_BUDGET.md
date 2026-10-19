@@ -397,9 +397,15 @@ Two things follow, and they are the Phase 1/2 split:
   costs ~8.7 ms of host time.
 
 So removing the exposed submission (a queue that stays deep, or a device-side id
-path) is worth 58.6 -> ~43.4 ms = 23.0 tok/s on its own, and it is a precondition
-for a kernel win to show up in the token: with the host gap still additive, a
-halved Sabah kernel would land near 40 ms, not 30 ms.
+path) is worth 58.6 -> 44.4 ms = 22.5 tok/s on its own. It is also a precondition
+for a kernel win: halving Sabah's 27.3 ms removes 13.65 ms, which lands at
+44.95 ms (22.2 tok/s) with the host gap still additive but at 30.75 ms
+(32.5 tok/s) once the queue stays deep. The two are multiplicative.
+
+The dense matmul is already bandwidth-bound: the non-expert matmul weights on
+CUDA0 are 3,979 MiB, read once per token, so 4.17 GB in 12.6 ms = **331 GB/s,
+74% of the card's 448 GB/s**. Its header is 3.3 ms, and the lever there is more
+positions per weight read, not a faster kernel.
 
 ## Lever 3, closed: batch verification and speculative decoding are dead here
 

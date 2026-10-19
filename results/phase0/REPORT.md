@@ -134,29 +134,68 @@ The 128K run at a 6.0 GB slab reads 149.5 objects/token instead of 131.6
 (+14% bytes) and is still full speed: the extra reads overlap, the VRAM pressure
 does not.
 
-Mechanism is not established beyond this: what is measured is that throughput is
-flat until the plateau passes ~15.4 GB and then degrades smoothly, and that the
-plateau saturates at ~16.0 GB for every slab at or above 7.0e9. Whether that is
-WDDM eviction, driver bookkeeping at the ceiling, or the runtime's over-budget
-allocations is not separated here.
+The mechanism is now measured. Windows exposes both halves of the footprint
+(`\GPU Adapter Memory(*)\Dedicated Usage` and `\Shared Usage`, plus the same
+counters per process); sampling them through the run (`tools/gpu_mem_probe.ps1`)
+shows that once dedicated usage pins at the ceiling, every further slab byte is
+backed by **shared system memory**, and the slowdown follows it:
 
-## 5. Decision
+| `-c` | slab | our dedicated | our shared | steady |
+|---|---|---|---|---|
+| 512 | 9.8e9 | 14,894 MiB | 110 MiB | 58.3 ms |
+| 131072 | 6.0e9 | 14,916 MiB | 304 MiB | 58.2 ms |
+| 131072 | 7.0e9 | 15,479 MiB | 750 MiB | 63.3 ms |
+| 131072 | 8.0e9 | 15,471 MiB | 1,824 MiB | 71.5 ms |
+| 131072 | 9.8e9 | 15,469 MiB | 3,623 MiB | 88.4 ms |
+
+Dedicated usage saturates at ~15.47 GB (adapter total 15.99 GB of 16,283 MiB);
+the allocated-but-not-resident remainder of the slab is placed in shared memory
+and read over PCIe. That is the 188 -> 465 us `k_mul_mat_id`. It is WDDM
+oversubscription, not driver bookkeeping: the per-process `shared` counter
+carries exactly the excess slab budget (9.8e9 -> 6.0e9 is 3.62 GB, and shared
+falls by 3.32 GB).
+
+Other processes hold 728-731 MiB of dedicated and ~17 MiB of shared (28 GPU
+instances, all small; the desktop baseline is ~540 MiB). Closing them would raise
+the dedicated ceiling by ~0.73 GB, which buys ~0.7 GB of slab at 128K, i.e. it
+moves the safe slab from 6.0e9 to ~6.7e9. It cannot remove the 3.3 GB of shared
+memory while the slab stays at 9.8e9.
+
+So the safe rule for 128K is: the **whole footprint** (model 3,983 + slab +
+compute 976 + KV 384 + context) must fit in ~15.4 GB, not the slab alone. At
+`-c 131072` that is a slab of ~6.0e9; the table above is the measured penalty for
+exceeding it.
+
+## 5. Decision and projections
 
 GPU busy is 74%, so **Phase 2 (kernel efficiency) is the primary lever**, per the
 plan's own rule. But the plan's rule prices only the GPU side; this measurement
-shows a second, equally mechanical lever:
+shows a second, equally mechanical lever. Arithmetic on the measured numbers
+(43.4 GPU = 27.3 Sabah + 12.6 dense + 3.5 other; 15.2 host; 58.6 total):
 
-- Phase 1 (remove the exposed host submission): 58.6 -> ~43.4 ms = 23.0 tok/s.
-  This is the ceiling of any host-side fix, and it needs the per-layer drain to
-  stop emptying the queue.
-- Phase 2 (kernel efficiency): 43.4 -> ~25 ms of GPU work (Sabah 27.5 -> 12,
-  dense 12.6 -> 8.5) would give ~25-28 ms/token = 36-40 tok/s **only if** the
-  host gap is also gone. With the host gap still additive, the same kernel work
-  lands at ~40 ms = 25 tok/s.
+| step | GPU | host | ms/token | tok/s |
+|---|---|---|---|---|
+| today | 43.40 | 15.20 | 58.60 | 17.07 |
+| (a) host submission removed, queue stays deep | 43.40 | ~1.0 | 44.40 | 22.52 |
+| (b) Sabah gate+up+down halved (27.3 -> 13.65), host still additive | 29.75 | 15.20 | 44.95 | 22.24 |
+| (a)+(b) | 29.75 | ~1.0 | 30.75 | 32.52 |
+| (a)+(b)+dense at memory peak (12.6 -> 9.3) | 26.45 | ~1.0 | 27.45 | 36.43 |
 
-So the 30-35 tok/s target needs both, in this order: Phase 2 first (it is 74% of
-the token and has the clearer headroom - 37 GB/s effective against a 448 GB/s
-class part), then Phase 1 (the queue must stay deep or the kernel win is hidden).
+So halving the Sabah kernels is worth 22.2 tok/s on its own only if the host gap
+stays additive, and 32.5 tok/s once the queue stays deep. The host fix and the
+kernel fix are multiplicative, not alternatives, and the order matters: (a) is
+cheap relative to its 5.5 tok/s and it un-hides (b).
+
+Dense matmul (llama.cpp's own): the non-expert matmul weights on CUDA0 are
+**3,979 MiB** (measured from the GGUF; the token embedding is a row gather and is
+excluded), i.e. 4.17 GB read per token. In 12.6 ms that is **331 GB/s, 74% of the
+card's 448 GB/s**. It is bandwidth-bound already; the remaining 26% is worth
+3.3 ms, and the real lever there is more positions per weight read (MTP or
+self-speculation), not a faster kernel. That is not in the current plan.
+
+Next, in order: (a) per-layer graph segments to remove the exposed submission,
+(b) the `down` kernel increment in parallel, (c) device-side residency with the
+drain kept behind an env var.
 
 For 128K: run the slab at 6.0e9 with `-c 131072`, or accept 11.3 tok/s at 9.8e9.
 The KV type is worth 180-276 MiB and is not the deciding factor.
@@ -170,5 +209,6 @@ The KV type is worth 180-276 MiB and is not the deciding factor.
   friendlier than a shifting conversation.
 - The 128K + 6.0e9 configuration was run to 255 decodes, not to a full 128K
   prefill. Prefill at 131,072 cells was not exercised.
-- The VRAM-ceiling mechanism (section 4) is an observation, not a diagnosis.
+- The VRAM-ceiling mechanism is measured at the counter level (section 4:
+  oversubscription into shared system memory), not inside the driver.
 - No kernel change has been made; Phase 2 is still to be implemented and gated.
