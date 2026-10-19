@@ -212,3 +212,68 @@ The KV type is worth 180-276 MiB and is not the deciding factor.
 - The VRAM-ceiling mechanism is measured at the counter level (section 4:
   oversubscription into shared system memory), not inside the driver.
 - No kernel change has been made; Phase 2 is still to be implemented and gated.
+
+## 7. Regression triage (Oct 20): steady-state 58.6 ms -> 88.9 ms at `-c 512`
+
+Same DLL, same context, same slab (9.8e9), same flags as Phase 0. The token time
+rose from 58.6 ms (17.1 tok/s) to 88.9 ms (11.2 tok/s), identical with the rebuilt
+DLL and with the untouched Phase-0 DLL, so it is not a code change.
+
+Measured environment:
+- Driver: NVIDIA 32.0.16.1742, dated 9/30/2026; nvidia-smi 617.42, CUDA UMD 13.4.
+- Windows 11 Pro, build 26300. Windows Updates KB5127694, KB5121794, KB5127648
+  (10/14/2026) and KB5127647 (10/13/2026) installed recently; no driver-file change
+  confirmed on Oct 20.
+
+Slab sweep at `-c 512`, `-n 256`, 3 runs each (min/median/max ms):
+
+| slab | run0 | run1 | run2 | median | tok/s |
+|---|---|---|---|---|---|
+| 6.0e9 | 88.90 | 88.89 | 88.90 | 88.90 | 11.25 |
+| 7.0e9 | 88.85 | 88.85 | 88.85 | 88.85 | 11.25 |
+| 8.0e9 | 87.86 | 87.86 | 87.86 | 87.86 | 11.38 |
+| 9.8e9 | 89.58 | 89.54 | 89.23 | 89.54 | 11.17 |
+
+**Slab does not explain the regression:** every slab lands at ~88-89 ms at `-c 512`,
+whereas Phase 0 measured 58.3 ms at `-c 512`/9.8e9. The slab only matters at
+`-c 131072` (where 9.8e9 oversubscribes VRAM).
+
+Windows GPU-memory counters during the run (`\GPU Adapter Memory(*)` and per-process
+`\GPU Process Memory(*)`), median:
+
+| counter | value |
+|---|---|
+| adapter dedicated | 15,361 MiB |
+| adapter shared | 130 MiB |
+| our dedicated | 14,894 MiB |
+| our shared | 110 MiB |
+| other-process dedicated | 642 MiB |
+
+Shared usage is 110 MiB — **not** the VRAM cliff (the cliff is the 3.6 GB of shared
+seen at `-c 131072`/9.8e9). Other processes hold ~642 MiB dedicated (dwm 356, OpenCode
+92, msedge 85, Twinkle Tray 40, plus smaller), so closing them frees at most ~0.6 GB
+and dwm cannot be closed; VRAM headroom is not the binding constraint at `-c 512`.
+
+Root-cause elimination:
+- GPU clocks: boost to ~1.4-1.5 GHz / ~30 W during decode; not stuck at P8 (idle). Not power/throttle.
+- VRAM pressure at `-c 512`: none (shared 110 MiB). Not the cliff.
+- Launch submission cost: `launch_latency.cu` re-measured = 3.42 us/launch (GPU busy),
+  48x(empty+D2H+sync) = 812 us/token — identical to Phase 0. Not host launch cost.
+- misses/token: 135.1, identical to Phase 0's 135.7; bytes fetched identical (23.4 GB).
+  Tier behavior unchanged.
+- CPU load during decode: ~12-15% (not pegged). Not host-CPU contention on submissions.
+
+What remains: **GPU-side**. With CPU idle, clocks boosted, and launch cost unchanged,
+the extra ~30 ms/token is stretched kernel wall-clock time. The machine now runs
+several concurrent GPU users (dwm, msedge, OpenCode, explorer, ShellExperienceHost — all
+C+G). WDDM time-slices the GPU among them, so Sabah's expert kernels take longer
+wall-clock per call than when Phase 0 was measured. nsys cannot confirm this directly
+because Sabah loads `sabah_rt.dll` via `LoadLibrary` after process start, so nsys's
+CUDA interposition misses the runtime's calls.
+
+No driver rollback was performed (driver changes require asking). No other processes
+were closed. The 88.9 ms is treated as the current baseline; Phase 2 projections
+(section 5) are restated against it: host submission removal (a) targets the ~15 ms
+host gap, and kernel efficiency (b) is contract-blocked on bit-exact greedy equality
+(tiling the `k_mul_mat_id` reduction is 30% faster but changes FP rounding and breaks
+greedy-token equality, so it is not enabled).
