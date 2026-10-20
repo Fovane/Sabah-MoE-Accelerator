@@ -74,16 +74,23 @@ def build_status(lines: list[str]) -> bool:
         return False
     cpu = sum(float(p.get("CPU") or 0) for p in procs if p["Name"] != "cmake")
     names = sorted({p["Name"] for p in procs})
+    archs = "?"
+    cache = BUILD / "CMakeCache.txt"
+    if cache.exists():
+        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("CMAKE_CUDA_ARCHITECTURES:"):
+                archs = line.split("=", 1)[1]
+                break
     lines.append(
         f"build   active {','.join(names)}  cpu={cpu/60:.1f} min  "
-        f"ggml-cuda.cu.obj={'fresh' if fresh else 'not yet'}"
+        f"arch={archs}  ggml-cuda.cu.obj={'fresh' if fresh else 'not yet'}"
     )
     if fresh:
         lines.append("        TU finished; remaining TUs and link are next")
     else:
         stale = (f" (stale object from {time.strftime('%Y-%m-%d %H:%M', time.localtime(obj.stat().st_mtime))})"
                  if obj.exists() else "")
-        lines.append("        1 nvcc TU for 2 arches (compute_120a + compute_61)" + stale +
+        lines.append("        1 nvcc TU holds the whole build" + stale +
                      "; no percentage exists, CPU time is the only signal")
     return True
 

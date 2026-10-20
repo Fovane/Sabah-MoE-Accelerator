@@ -1,0 +1,1142 @@
+{
+  "context": 131072,
+  "tokens": 512,
+  "n": 3,
+  "slabs": [
+    "6000000000",
+    "7000000000",
+    "8000000000",
+    "9800000000"
+  ],
+  "summary": [
+    {
+      "slab": "6000000000",
+      "n": 3,
+      "steady_ms": {
+        "n": 3,
+        "min": 200.1964,
+        "median": 209.5898,
+        "max": 212.2113
+      },
+      "steady_tok_s": {
+        "n": 3,
+        "min": 4.71228440709802,
+        "median": 4.771224553866648,
+        "max": 4.9950948168898135
+      },
+      "bytes_per_token": {
+        "n": 3,
+        "min": 262853435.61643836,
+        "median": 262853435.61643836,
+        "max": 262853435.61643836
+      },
+      "misses_per_token": {
+        "n": 3,
+        "min": 386.6829745596869,
+        "median": 386.6829745596869,
+        "max": 386.6829745596869
+      },
+      "vram_peak_mib": {
+        "n": 3,
+        "min": 15758,
+        "median": 15781,
+        "max": 15791
+      },
+      "dedicated_peak_mib": {
+        "n": 3,
+        "min": 14994.078125,
+        "median": 14994.078125,
+        "max": 14994.078125
+      },
+      "shared_peak_mib": {
+        "n": 3,
+        "min": 304.0,
+        "median": 304.0,
+        "max": 304.0
+      },
+      "clock_valid_all": true,
+      "rows": [
+        {
+          "label": "sweep-ctx128k-B-6000000000-r1",
+          "slab": "6000000000",
+          "rep": 1,
+          "wall_s": 138.7,
+          "exit": 0,
+          "fill_s": 13.33,
+          "warm_ms": 284.25800000000004,
+          "steady_ms": 212.2113,
+          "steady_tok_s": 4.71228440709802,
+          "bytes_per_token": 262853435.61643836,
+          "misses_per_token": 386.6829745596869,
+          "hits": 631335,
+          "misses": 197595,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15758,
+          "dedicated_peak_mib": 14994.078125,
+          "shared_peak_mib": 304.0,
+          "resident_bytes": 5999590400,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 13801.0,
+              "mean": 13801.0,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 239
+            },
+            "power_w": {
+              "max": 87.0,
+              "mean": 38.461,
+              "median": 35.35,
+              "min": 29.86,
+              "n": 239
+            },
+            "pstates": {
+              "P1": 239
+            },
+            "samples": 239,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2827.757,
+              "median": 2827.0,
+              "min": 2812.0,
+              "n": 239
+            },
+            "span_s": 121.33,
+            "temp_c": {
+              "max": 46.0,
+              "mean": 40.791,
+              "median": 40.0,
+              "min": 37.0,
+              "n": 239
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 74.0,
+              "mean": 17.649,
+              "median": 14.0,
+              "min": 0.0,
+              "n": 239
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        },
+        {
+          "label": "sweep-ctx128k-B-6000000000-r2",
+          "slab": "6000000000",
+          "rep": 2,
+          "wall_s": 134.9,
+          "exit": 0,
+          "fill_s": 12.61,
+          "warm_ms": 277.46725,
+          "steady_ms": 209.5898,
+          "steady_tok_s": 4.771224553866648,
+          "bytes_per_token": 262853435.61643836,
+          "misses_per_token": 386.6829745596869,
+          "hits": 631335,
+          "misses": 197595,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15791,
+          "dedicated_peak_mib": 14994.078125,
+          "shared_peak_mib": 304.0,
+          "resident_bytes": 5999590400,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 13801.0,
+              "mean": 13801.0,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 234
+            },
+            "power_w": {
+              "max": 86.22,
+              "mean": 37.691,
+              "median": 34.33,
+              "min": 29.67,
+              "n": 234
+            },
+            "pstates": {
+              "P1": 234
+            },
+            "samples": 234,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2829.547,
+              "median": 2827.0,
+              "min": 2812.0,
+              "n": 234
+            },
+            "span_s": 118.48,
+            "temp_c": {
+              "max": 43.0,
+              "mean": 37.094,
+              "median": 37.0,
+              "min": 35.0,
+              "n": 234
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 75.0,
+              "mean": 17.59,
+              "median": 14.0,
+              "min": 0.0,
+              "n": 234
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        },
+        {
+          "label": "sweep-ctx128k-B-6000000000-r3",
+          "slab": "6000000000",
+          "rep": 3,
+          "wall_s": 134.0,
+          "exit": 0,
+          "fill_s": 12.65,
+          "warm_ms": 273.68255,
+          "steady_ms": 200.1964,
+          "steady_tok_s": 4.9950948168898135,
+          "bytes_per_token": 262853435.61643836,
+          "misses_per_token": 386.6829745596869,
+          "hits": 631335,
+          "misses": 197595,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15781,
+          "dedicated_peak_mib": 14994.078125,
+          "shared_peak_mib": 304.0,
+          "resident_bytes": 5999590400,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 14001.0,
+              "mean": 13801.862,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 232
+            },
+            "power_w": {
+              "max": 85.92,
+              "mean": 37.406,
+              "median": 34.06,
+              "min": 26.2,
+              "n": 232
+            },
+            "pstates": {
+              "P0": 1,
+              "P1": 231
+            },
+            "samples": 232,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2828.263,
+              "median": 2827.0,
+              "min": 2812.0,
+              "n": 232
+            },
+            "span_s": 117.26,
+            "temp_c": {
+              "max": 43.0,
+              "mean": 36.272,
+              "median": 36.0,
+              "min": 35.0,
+              "n": 232
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 75.0,
+              "mean": 17.733,
+              "median": 14.0,
+              "min": 0.0,
+              "n": 232
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        }
+      ]
+    },
+    {
+      "slab": "7000000000",
+      "n": 3,
+      "steady_ms": {
+        "n": 3,
+        "min": 195.6458,
+        "median": 217.9898,
+        "max": 220.9003
+      },
+      "steady_tok_s": {
+        "n": 3,
+        "min": 4.526929116891195,
+        "median": 4.587370601743752,
+        "max": 5.1112776251777445
+      },
+      "bytes_per_token": {
+        "n": 3,
+        "min": 238442407.82778865,
+        "median": 238442407.82778865,
+        "max": 238442407.82778865
+      },
+      "misses_per_token": {
+        "n": 3,
+        "min": 350.89432485322897,
+        "median": 350.89432485322897,
+        "max": 350.89432485322897
+      },
+      "vram_peak_mib": {
+        "n": 3,
+        "min": 15982,
+        "median": 15987,
+        "max": 16037
+      },
+      "dedicated_peak_mib": {
+        "n": 3,
+        "min": 15532.5625,
+        "median": 15576.49609375,
+        "max": 15624.4140625
+      },
+      "shared_peak_mib": {
+        "n": 3,
+        "min": 808.0,
+        "median": 848.0,
+        "max": 890.0
+      },
+      "clock_valid_all": true,
+      "rows": [
+        {
+          "label": "sweep-ctx128k-B-7000000000-r1",
+          "slab": "7000000000",
+          "rep": 1,
+          "wall_s": 142.0,
+          "exit": 0,
+          "fill_s": 13.87,
+          "warm_ms": 290.33025,
+          "steady_ms": 220.9003,
+          "steady_tok_s": 4.526929116891195,
+          "bytes_per_token": 238442407.82778865,
+          "misses_per_token": 350.89432485322897,
+          "hits": 649623,
+          "misses": 179307,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 16037,
+          "dedicated_peak_mib": 15532.5625,
+          "shared_peak_mib": 890.0,
+          "resident_bytes": 6999705600,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 13801.0,
+              "mean": 13801.0,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 244
+            },
+            "power_w": {
+              "max": 66.0,
+              "mean": 37.904,
+              "median": 35.075,
+              "min": 29.81,
+              "n": 244
+            },
+            "pstates": {
+              "P1": 244
+            },
+            "samples": 244,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2834.484,
+              "median": 2835.0,
+              "min": 2820.0,
+              "n": 244
+            },
+            "span_s": 123.58,
+            "temp_c": {
+              "max": 41.0,
+              "mean": 36.242,
+              "median": 36.0,
+              "min": 35.0,
+              "n": 244
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 84.0,
+              "mean": 29.811,
+              "median": 24.0,
+              "min": 0.0,
+              "n": 244
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        },
+        {
+          "label": "sweep-ctx128k-B-7000000000-r2",
+          "slab": "7000000000",
+          "rep": 2,
+          "wall_s": 141.6,
+          "exit": 0,
+          "fill_s": 13.55,
+          "warm_ms": 288.80215,
+          "steady_ms": 217.9898,
+          "steady_tok_s": 4.587370601743752,
+          "bytes_per_token": 238442407.82778865,
+          "misses_per_token": 350.89432485322897,
+          "hits": 649623,
+          "misses": 179307,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15982,
+          "dedicated_peak_mib": 15576.49609375,
+          "shared_peak_mib": 848.0,
+          "resident_bytes": 6999705600,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 14001.0,
+              "mean": 13801.823,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 243
+            },
+            "power_w": {
+              "max": 66.43,
+              "mean": 38.009,
+              "median": 35.18,
+              "min": 28.68,
+              "n": 243
+            },
+            "pstates": {
+              "P0": 1,
+              "P1": 242
+            },
+            "samples": 243,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2834.51,
+              "median": 2835.0,
+              "min": 2820.0,
+              "n": 243
+            },
+            "span_s": 123.23,
+            "temp_c": {
+              "max": 40.0,
+              "mean": 36.111,
+              "median": 36.0,
+              "min": 35.0,
+              "n": 243
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 86.0,
+              "mean": 28.844,
+              "median": 24.0,
+              "min": 0.0,
+              "n": 243
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        },
+        {
+          "label": "sweep-ctx128k-B-7000000000-r3",
+          "slab": "7000000000",
+          "rep": 3,
+          "wall_s": 129.5,
+          "exit": 0,
+          "fill_s": 13.6,
+          "warm_ms": 265.83065,
+          "steady_ms": 195.6458,
+          "steady_tok_s": 5.1112776251777445,
+          "bytes_per_token": 238442407.82778865,
+          "misses_per_token": 350.89432485322897,
+          "hits": 649623,
+          "misses": 179307,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15987,
+          "dedicated_peak_mib": 15624.4140625,
+          "shared_peak_mib": 808.0,
+          "resident_bytes": 6999705600,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 14001.0,
+              "mean": 13801.905,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 221
+            },
+            "power_w": {
+              "max": 83.22,
+              "mean": 38.24,
+              "median": 35.07,
+              "min": 26.1,
+              "n": 221
+            },
+            "pstates": {
+              "P0": 2,
+              "P1": 219
+            },
+            "samples": 221,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2831.611,
+              "median": 2827.0,
+              "min": 2820.0,
+              "n": 221
+            },
+            "span_s": 111.84,
+            "temp_c": {
+              "max": 43.0,
+              "mean": 36.104,
+              "median": 36.0,
+              "min": 35.0,
+              "n": 221
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 75.0,
+              "mean": 21.502,
+              "median": 18.0,
+              "min": 0.0,
+              "n": 221
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        }
+      ]
+    },
+    {
+      "slab": "8000000000",
+      "n": 3,
+      "steady_ms": {
+        "n": 3,
+        "min": 201.8197,
+        "median": 203.2733,
+        "max": 204.4944
+      },
+      "steady_tok_s": {
+        "n": 3,
+        "min": 4.890109460210157,
+        "median": 4.919485244741931,
+        "max": 4.954917681475099
+      },
+      "bytes_per_token": {
+        "n": 3,
+        "min": 221941554.59882584,
+        "median": 221941554.59882584,
+        "max": 221941554.59882584
+      },
+      "misses_per_token": {
+        "n": 3,
+        "min": 326.6771037181996,
+        "median": 326.6771037181996,
+        "max": 326.6771037181996
+      },
+      "vram_peak_mib": {
+        "n": 3,
+        "min": 15984,
+        "median": 15986,
+        "max": 15990
+      },
+      "dedicated_peak_mib": {
+        "n": 3,
+        "min": 15666.24609375,
+        "median": 15682.21484375,
+        "max": 15696.5625
+      },
+      "shared_peak_mib": {
+        "n": 3,
+        "min": 1634.0,
+        "median": 1652.0,
+        "max": 1676.0
+      },
+      "clock_valid_all": true,
+      "rows": [
+        {
+          "label": "sweep-ctx128k-B-8000000000-r1",
+          "slab": "8000000000",
+          "rep": 1,
+          "wall_s": 138.0,
+          "exit": 0,
+          "fill_s": 14.33,
+          "warm_ms": 261.4827,
+          "steady_ms": 204.4944,
+          "steady_tok_s": 4.890109460210157,
+          "bytes_per_token": 221941554.59882584,
+          "misses_per_token": 326.6771037181996,
+          "hits": 661998,
+          "misses": 166932,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15986,
+          "dedicated_peak_mib": 15666.24609375,
+          "shared_peak_mib": 1676.0,
+          "resident_bytes": 7999897600,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 13801.0,
+              "mean": 13801.0,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 235
+            },
+            "power_w": {
+              "max": 60.89,
+              "mean": 39.992,
+              "median": 37.57,
+              "min": 30.92,
+              "n": 235
+            },
+            "pstates": {
+              "P1": 235
+            },
+            "samples": 235,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2844.306,
+              "median": 2850.0,
+              "min": 2820.0,
+              "n": 235
+            },
+            "span_s": 118.97,
+            "temp_c": {
+              "max": 40.0,
+              "mean": 36.591,
+              "median": 36.0,
+              "min": 35.0,
+              "n": 235
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 88.0,
+              "mean": 39.272,
+              "median": 33.0,
+              "min": 1.0,
+              "n": 235
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        },
+        {
+          "label": "sweep-ctx128k-B-8000000000-r2",
+          "slab": "8000000000",
+          "rep": 2,
+          "wall_s": 137.5,
+          "exit": 0,
+          "fill_s": 14.22,
+          "warm_ms": 263.15605,
+          "steady_ms": 203.2733,
+          "steady_tok_s": 4.919485244741931,
+          "bytes_per_token": 221941554.59882584,
+          "misses_per_token": 326.6771037181996,
+          "hits": 661998,
+          "misses": 166932,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15990,
+          "dedicated_peak_mib": 15682.21484375,
+          "shared_peak_mib": 1652.0,
+          "resident_bytes": 7999897600,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 14001.0,
+              "mean": 13801.858,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 233
+            },
+            "power_w": {
+              "max": 60.99,
+              "mean": 40.063,
+              "median": 37.49,
+              "min": 29.1,
+              "n": 233
+            },
+            "pstates": {
+              "P0": 1,
+              "P1": 232
+            },
+            "samples": 233,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2844.197,
+              "median": 2850.0,
+              "min": 2820.0,
+              "n": 233
+            },
+            "span_s": 117.97,
+            "temp_c": {
+              "max": 40.0,
+              "mean": 36.717,
+              "median": 36.0,
+              "min": 35.0,
+              "n": 233
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 88.0,
+              "mean": 39.695,
+              "median": 32.0,
+              "min": 0.0,
+              "n": 233
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        },
+        {
+          "label": "sweep-ctx128k-B-8000000000-r3",
+          "slab": "8000000000",
+          "rep": 3,
+          "wall_s": 136.6,
+          "exit": 0,
+          "fill_s": 14.1,
+          "warm_ms": 260.34114999999997,
+          "steady_ms": 201.8197,
+          "steady_tok_s": 4.954917681475099,
+          "bytes_per_token": 221941554.59882584,
+          "misses_per_token": 326.6771037181996,
+          "hits": 661998,
+          "misses": 166932,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15984,
+          "dedicated_peak_mib": 15696.5625,
+          "shared_peak_mib": 1634.0,
+          "resident_bytes": 7999897600,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 14001.0,
+              "mean": 13801.855,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 234
+            },
+            "power_w": {
+              "max": 61.08,
+              "mean": 39.927,
+              "median": 37.21,
+              "min": 26.98,
+              "n": 234
+            },
+            "pstates": {
+              "P0": 1,
+              "P1": 233
+            },
+            "samples": 234,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2843.607,
+              "median": 2850.0,
+              "min": 2820.0,
+              "n": 234
+            },
+            "span_s": 118.55,
+            "temp_c": {
+              "max": 41.0,
+              "mean": 36.671,
+              "median": 36.0,
+              "min": 35.0,
+              "n": 234
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 88.0,
+              "mean": 38.932,
+              "median": 32.0,
+              "min": 0.0,
+              "n": 234
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        }
+      ]
+    },
+    {
+      "slab": "9800000000",
+      "n": 3,
+      "steady_ms": {
+        "n": 3,
+        "min": 224.3373,
+        "median": 225.5161,
+        "max": 240.6552
+      },
+      "steady_tok_s": {
+        "n": 3,
+        "min": 4.155322635870739,
+        "median": 4.4342732071014,
+        "max": 4.457573484213281
+      },
+      "bytes_per_token": {
+        "n": 3,
+        "min": 191217571.81996086,
+        "median": 191217571.81996086,
+        "max": 191217571.81996086
+      },
+      "misses_per_token": {
+        "n": 3,
+        "min": 281.6399217221135,
+        "median": 281.6399217221135,
+        "max": 281.6399217221135
+      },
+      "vram_peak_mib": {
+        "n": 3,
+        "min": 15981,
+        "median": 15981,
+        "max": 15986
+      },
+      "dedicated_peak_mib": {
+        "n": 3,
+        "min": 15698.30859375,
+        "median": 15703.69140625,
+        "max": 15737.625
+      },
+      "shared_peak_mib": {
+        "n": 3,
+        "min": 3488.0,
+        "median": 3510.0,
+        "max": 3514.0
+      },
+      "clock_valid_all": true,
+      "rows": [
+        {
+          "label": "sweep-ctx128k-B-9800000000-r1",
+          "slab": "9800000000",
+          "rep": 1,
+          "wall_s": 152.7,
+          "exit": 0,
+          "fill_s": 16.98,
+          "warm_ms": 283.20105,
+          "steady_ms": 224.3373,
+          "steady_tok_s": 4.457573484213281,
+          "bytes_per_token": 191217571.81996086,
+          "misses_per_token": 281.6399217221135,
+          "hits": 685012,
+          "misses": 143918,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15981,
+          "dedicated_peak_mib": 15698.30859375,
+          "shared_peak_mib": 3514.0,
+          "resident_bytes": 9799628800,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 14001.0,
+              "mean": 13801.775,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 258
+            },
+            "power_w": {
+              "max": 50.67,
+              "mean": 41.145,
+              "median": 39.61,
+              "min": 26.13,
+              "n": 258
+            },
+            "pstates": {
+              "P0": 1,
+              "P1": 257
+            },
+            "samples": 258,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2850.38,
+              "median": 2850.0,
+              "min": 2850.0,
+              "n": 258
+            },
+            "span_s": 130.75,
+            "temp_c": {
+              "max": 39.0,
+              "mean": 37.078,
+              "median": 37.0,
+              "min": 36.0,
+              "n": 258
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 94.0,
+              "mean": 60.624,
+              "median": 57.0,
+              "min": 0.0,
+              "n": 258
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        },
+        {
+          "label": "sweep-ctx128k-B-9800000000-r2",
+          "slab": "9800000000",
+          "rep": 2,
+          "wall_s": 152.8,
+          "exit": 0,
+          "fill_s": 16.51,
+          "warm_ms": 287.55775,
+          "steady_ms": 225.5161,
+          "steady_tok_s": 4.4342732071014,
+          "bytes_per_token": 191217571.81996086,
+          "misses_per_token": 281.6399217221135,
+          "hits": 685012,
+          "misses": 143918,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15981,
+          "dedicated_peak_mib": 15703.69140625,
+          "shared_peak_mib": 3510.0,
+          "resident_bytes": 9799628800,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 14001.0,
+              "mean": 13801.772,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 259
+            },
+            "power_w": {
+              "max": 50.77,
+              "mean": 41.048,
+              "median": 39.52,
+              "min": 26.32,
+              "n": 259
+            },
+            "pstates": {
+              "P0": 1,
+              "P1": 258
+            },
+            "samples": 259,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2850.32,
+              "median": 2850.0,
+              "min": 2842.0,
+              "n": 259
+            },
+            "span_s": 131.3,
+            "temp_c": {
+              "max": 39.0,
+              "mean": 37.224,
+              "median": 37.0,
+              "min": 36.0,
+              "n": 259
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 94.0,
+              "mean": 59.977,
+              "median": 56.0,
+              "min": 0.0,
+              "n": 259
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        },
+        {
+          "label": "sweep-ctx128k-B-9800000000-r3",
+          "slab": "9800000000",
+          "rep": 3,
+          "wall_s": 159.3,
+          "exit": 0,
+          "fill_s": 16.41,
+          "warm_ms": 288.9752,
+          "steady_ms": 240.6552,
+          "steady_tok_s": 4.155322635870739,
+          "bytes_per_token": 191217571.81996086,
+          "misses_per_token": 281.6399217221135,
+          "hits": 685012,
+          "misses": 143918,
+          "calls_per_token": 144.28180039138942,
+          "vram_peak_mib": 15986,
+          "dedicated_peak_mib": 15737.625,
+          "shared_peak_mib": 3488.0,
+          "resident_bytes": 9799628800,
+          "clock_valid": true,
+          "clock_steady": {
+            "display_active": [
+              "Enabled"
+            ],
+            "dominant_pstate": "P1",
+            "mem_mhz": {
+              "max": 14001.0,
+              "mean": 13801.735,
+              "median": 13801.0,
+              "min": 13801.0,
+              "n": 272
+            },
+            "power_w": {
+              "max": 49.36,
+              "mean": 40.876,
+              "median": 39.525,
+              "min": 26.36,
+              "n": 272
+            },
+            "pstates": {
+              "P0": 1,
+              "P1": 271
+            },
+            "samples": 272,
+            "sm_mhz": {
+              "max": 2857.0,
+              "mean": 2850.54,
+              "median": 2850.0,
+              "min": 2850.0,
+              "n": 272
+            },
+            "span_s": 137.92,
+            "temp_c": {
+              "max": 39.0,
+              "mean": 37.305,
+              "median": 37.0,
+              "min": 36.0,
+              "n": 272
+            },
+            "throttle": [
+              "0x0000000000000400"
+            ],
+            "util_pct": {
+              "max": 94.0,
+              "mean": 62.721,
+              "median": 59.0,
+              "min": 0.0,
+              "n": 272
+            }
+          },
+          "machine": {
+            "hags_HwSchMode": "absent (HAGS off)",
+            "nvidia_registry": {},
+            "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+            "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+            "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+          }
+        }
+      ]
+    }
+  ],
+  "generated": "2026-10-20T16:21:51"
+}

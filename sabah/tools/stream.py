@@ -105,8 +105,10 @@ def parse_driver(text):
     """Everything the driver and the runtime printed, as plain numbers."""
     out = {}
     # Step 0 is the prefill: it must not be counted or timed as a decoded token.
+    # Single-prompt mode prints "prompt step N", manifest mode prints
+    # "<id> step N" for the same event; both mean one decode step.
     steps = [float(m.group(2)) for m in
-             re.finditer(r"prompt step (\d+) .*?([\d.]+) ms", text)
+             re.finditer(r"[\w.-]+ step (\d+) .*?([\d.]+) ms", text)
              if int(m.group(1)) >= 1]
     out["n_decodes"] = len(steps)
     if steps:

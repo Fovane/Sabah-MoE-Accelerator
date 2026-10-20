@@ -559,3 +559,224 @@ where that plateau comes from and section 12 re-runs the slab sweep pinned.
 
 
 
+
+## 11. Item 5 (static half): the dense path already runs at 73% of peak
+
+Decode at batch 1 has no reuse: every dense weight is read exactly once per
+token. From the GGUF tensor table (`tools/dense_static.py`), the dense working
+set a token must stream is **4.111 GB**; the expert pool is counted separately
+(Sabah, ~1.01 GB/token) and `token_embd`/`ple_*` are row gathers, not streams.
+
+At the card's ~448 GB/s peak (128-bit GDDR7 at 14,001 MHz) that is a 9.18 ms
+floor. Measured dense time is 12.4-12.8 ms, i.e. **326 GB/s, 73% of peak**, and
+the whole remaining slack is **3.4 ms/token**.
+
+| class | streams/token | GB/token | share of dense bytes | floor @448 GB/s |
+|---|---|---|---|---|
+| linear attention (36 layers: qkv, gate, ssm_out) | 324 | 1.557 | 37.9% | 3.48 ms |
+| hyper-connections (hc_attn/ffn up/down, K=320) | 384 | 1.270 | 30.9% | 2.84 ms |
+| output matmul (K=2560, N=248320) | 1 | 0.521 | 12.7% | 1.16 ms |
+| full attention (12 layers + indexer) | 96 | 0.477 | 11.6% | 1.07 ms |
+| shared expert (K=N=640, 48 layers) | 192 | 0.146 | 3.5% | 0.33 ms |
+| router (`ffn_gate_inp`, K=2560, N=512) | 48 | 0.126 | 3.1% | 0.28 ms |
+| **dense total** | **1,045** | **4.111** | 100% | **9.18 ms** |
+
+The three big-K classes (37.9 + 12.7 + 11.6 = 62% of the bytes) are the ones
+that can stream at peak: `output` is one 521 MB matmul, `attn_qkv` is 36
+677 MB-class matmuls with K=2560.
+
+The classes that are structurally far from peak are the narrow ones:
+
+* **hyper-connections** (K=320 = two IQ3_S blocks per row, 6.25 MiB per tensor,
+  192 launches/token): at 6.25 MiB a kernel would need ~14 us at peak just to
+  stream, against a ~1-2 us dispatch floor, and K=320 leaves almost no ILP for
+  the dequant path. 30.9% of the bytes with the worst shape for the kernel.
+* **router** (2.5 MiB per layer, 48 launches) and **shared expert** (3 MiB per
+  layer): same argument at 512-640 columns.
+
+These are launch/occupancy-bound, not bandwidth-bound, which is why they belong
+to the same fix as the elementwise class (section 12) rather than to a kernel
+rewrite.
+
+### The non-matmul classes are pure dispatch cost
+
+| class | ms/token | kernels/token | us/kernel | traffic/kernel |
+|---|---|---|---|---|
+| elementwise / router | 2.45-2.51 | 2,494-2,556 | 0.96 | ~20 KB |
+| PLE / embedding (n-gram table path) | 0.42 | 93-98 | 4.3 | one 5,120 B row |
+| SSM | 0.23 | 70 | 3.3 | small |
+| attention | 0.11-0.12 | 55-60 | 2.0 | KV row + 4 GB cache |
+
+The **n-gram table path** in this artifact is `blk.1.ple_key` (2560 x 10240,
+50 MiB) and `blk.1.ple_value` (2560 x 2560, 12.5 MiB): one row per token per
+tensor, 5,120 B each, plus a 4-tap conv and two norms, 2 kernels per layer x 48.
+Measured cost 0.42 ms/token = 4.3 us per kernel, i.e. **~0.02 GB/s effective,
+0.005% of peak**. It is entirely host/launch cost; the 28.8 GB IQ4_NL n-gram
+table described in `sabah/runtime/ngram_prefetch.py` is not part of this GGUF
+or this run, so there are no table bytes to amortise here.
+
+The 2,556 elementwise/router launches at ~0.96 us each are likewise not moving
+data: they are the 2.5 ms GPU half of the dispatch cost whose host half is the
+12.85 ms/launch-submission item in section 3. One graph capture removes both.
+
+## 12. Item 3: the 128K slab sweep, pinned, and the fill that hid it
+
+`tools/slab_sweep.py --context 131072 --tokens 512 --slabs 6.0e9,7.0e9,8.0e9,9.8e9
+--n 3`, prompt B, clocks pinned (`-lgc 2800,3090 -lmc 13000,14001`; SM
+2790-2857 MHz, mem 13,801 MHz throughout, every run `clock_valid true`).
+
+**The harness's own `steady_ms_median` is wrong at 128K and the first table shows
+why.** A 512-token run at this context spends steps 0-385 filling the slab
+(~300 ms/step) and only the tail in steady state (~43 ms/step). The report's
+regime split starts its steady window too early, so it reports the fill:
+
+| slab | `steady_ms_median` (fill-weighted) | tail steady (steps > fill) | tok/s | MB/tok | miss/tok |
+|---|---|---|---|---|---|
+| 6.0e9 | 200.2 / 209.6 / 212.2 | **43.52 / 42.68 / 43.49** | **23.0** | 263 | 387 |
+| 7.0e9 | 195.6 / 218.0 / 220.9 | 71.38 / 73.28 / 45.07 | 14.0 | 238 | 351 |
+| 8.0e9 | 201.8 / 203.3 / 204.5 | 88.53 / 88.35 / 87.81 | 11.3 | 222 | 327 |
+| 9.8e9 | 224.3 / 225.5 / 240.7 | 152.91 / 153.29 / 170.55 | 6.5 | 191 | 282 |
+
+`tools/steady_tail.py` recovers the tail: it walks back from the last 32 steps
+and stops when a 32-step window leaves the final median by more than 10%. It
+finds the fill ending at step 366-422 in all twelve runs, i.e. the same place
+regardless of slab, which is what makes the tail comparable. The 1024-token
+runs from section 10 show the same shape (fill ends at 414-542, steady 44.2 /
+58.6 ms for TILE3 on/off).
+
+| slab | VRAM peak | dedicated | shared | vs 6.0e9 |
+|---|---|---|---|---|
+| 6.0e9 | 15,781 | 14,994 | 304 | - |
+| 7.0e9 | 15,987 | 15,576 | 848 | +64% |
+| 8.0e9 | 15,986 | 15,682 | 1,652 | +103% |
+| 9.8e9 | 15,981 | 15,704 | 3,510 | +252% |
+
+Findings:
+
+1. **There is no slab-dependent cliff left inside the safe region, and 6.0e9 is
+   the edge of it.** Time rises monotonically with every slab byte past 6 GB,
+   and the rise tracks the shared-memory column (304 -> 3,510 MiB), exactly the
+   WDDM-oversubscription mechanism of section 4.
+2. **The cost is per-miss latency, not miss count.** Misses/token *fall* from
+   387 to 282 as the slab grows (more of the expert set is resident), while the
+   token gets 3.5x slower: the extra bytes are read over PCIe from shared
+   memory instead of from the slab.
+3. **The best steady decode at 128K is 43.5 ms = 23.0 tok/s**, not the 30-35
+   tok/s target. The target was last seen at 6.0e9 with a 512-token run whose
+   steady window was actually the fill.
+4. Not verified: slabs below 6.0e9. 6.0 may be past the knee rather than on it,
+   and a 5 GB slab could be faster or slower; the sweep's four points do not
+   answer that.
+
+## 13. Item 2: does a CUDA graph buy us anything? A standalone replay
+
+`tools/launch_latency.cu --token-probe` replays one decode token's launch shape
+(48 layers, 78 launches each: 3 Sabah calls at 80/80/73 us, 15 dense matmuls at
+~17 us, 60 elementwise kernels at ~1 us) with kernels calibrated to those
+durations, and compares four submission patterns. No llama.cpp build involved.
+Clocks pinned 2800-3090 / 13000-14001, SM 2805-2827 MHz, 87 W, 53 C, no
+throttling. N=3 process runs x 30 tokens per variant.
+
+| variant | run 1 | run 2 | run 3 | median | submit/token |
+|---|---|---|---|---|---|
+| A eager, 3 drains/layer (today's runtime) | 39.19 | 39.96 | 38.88 | **39.19** | 12.0-12.6 ms |
+| A1 eager, 1 drain/layer | 39.67 | 39.23 | 38.36 | 39.23 | 14.5-17.2 ms |
+| B_split, 4 graphs/layer + eager Sabah | 26.46 | 26.35 | 26.01 | **26.35** | 0.75 ms |
+| B_ideal, 1 graph/layer (Sabah captured too) | 24.87 | 24.84 | 24.54 | 24.84 | 0.18 ms |
+
+GPU busy for the same kernel set is 26.4-27.4 ms/token (dense 12.4-13.2, Sabah
+11.1-11.3, elementwise 2.9 from the nsys count at 0.96 us each).
+
+**Saving: 12.8 ms/token for the realistic split (A -> B_split), 14.4 ms for the
+capture-everything upper bound (A1 -> B_ideal).** B_split lands exactly on the
+GPU busy time, i.e. the host disappears completely.
+
+The replay reproduces the real token's host exposure: A exposes 12.8-13.6 ms
+against GPU busy, and the real runtime exposes 15.2 ms (58.6 measured, 43.4
+busy, section 2). Two independent structures, same number.
+
+Costs that come with it, measured:
+
+| item | cost |
+|---|---|
+| graph launch, 78 nodes | 3.7-4.0 us per launch (0.18 ms/token for 48) |
+| `cudaGraphExecKernelNodeSetParams`, 1 node | 0.20 us (p50), 0.19-0.20 across runs |
+| `cudaGraphExecUpdate`, whole 78-node graph | 1.7 us |
+| per-token pointer refresh, 78 nodes x 48 layers | 0.75 ms if done node by node, 0.08 ms via ExecUpdate |
+
+Net projection: **12.0 ms/token** (12.8 minus 0.75 of parameter refresh), on a
+run that currently takes 58.6 ms. Decision rule: >= 8 ms/token -> implement.
+It passes.
+
+Two measurement traps found and fixed on the way, both worth recording because
+they would have produced a wrong answer:
+
+1. The first version used compute-bound spin kernels. Sustained FMA at 2805 MHz
+   hits the 180 W cap, the clock drifts, and variant A came out bimodal
+   (min 32 ms, p50 65 ms) with the class table swinging 2x between runs. The
+   kernels are now memory-bound reads of a 64 MiB buffer, which matches the real
+   kernels' power profile: 87 W, clock stable, run-to-run spread 3%.
+2. The elementwise class cannot be timed in isolation: 2,880 back-to-back 1 us
+   kernels measure the host's submission rate (5.8-6.5 us/launch), not the
+   device. Its GPU cost is taken from the nsys count instead (2,494-2,556
+   kernels at 0.96 us). The graph variants landing on that total is the check.
+
+Log: `results/phase0/token-probe.log`.
+
+## 14. Item 1 (build): where the 75 minutes go
+
+Diagnosis, from the build tree itself, not from another long build:
+
+| fact | value |
+|---|---|
+| generator | Ninja, persistent dir `third_party/llama.cpp/build` |
+| `CMAKE_CUDA_ARCHITECTURES` | 120 (was `120;61`; every CUDA unit was compiled twice for a Pascal arch this card cannot run) |
+| codegen actually used | `--generate-code=arch=compute_120a,code=[compute_120a,sm_120a]` - PTX *and* SASS |
+| `GGML_CUDA_FA_ALL_QUANTS` | OFF |
+| `GGML_CUDA_COMPRESSION_MODE` | size (acts in `fatbinary`, after the compiler) |
+| `CMAKE_CUDA_FLAGS_RELEASE` | `-Xcompiler="-O2 -Ob2" -DNDEBUG`, `-use_fast_math`, `-extended-lambda` |
+| jobs | `-j 8` on a 6-core / 12-thread Ryzen 5 7600 |
+| ccache / sccache / clcache | none installed |
+| Defender | real-time protection **on**, no exclusion for the build tree |
+
+The 75+ minutes was **incremental, one file**: 142 of 148 objects were cached
+and `ggml-cuda.cu` was the only edge that never finished. `.ninja_log` (833
+edges, including past full builds) has no completed entry for it, and its ten
+slowest *completed* edges are all 60-137 s:
+
+| s | file |
+|---|---|
+| 136.8 / 130.4 | argsort.cu (two builds) |
+| 99.9 / 67.9 | mmvq.cu |
+| 95.9 | fattn-tile-instance-dkq256-dv256.cu |
+| 69.0 | fattn-tile-instance-dkq128-dv128.cu |
+| 68.3 | mmq-instance-q2_k.cu |
+
+So a cold *full* build of this tree is ~10-20 min wall (the log spans 8.2 min at
+`-j 8` for the 833-edge graph), and the problem is one translation unit, not the
+project. `ggml-cuda.cu` is the unity TU that pulls in every kernel template; the
+`*-instance-*.cu` files exist to split exactly this work, and it is the one file
+that still instantiates a large set inline.
+
+Calibration for how abnormal that is: `tools/launch_latency.cu` (300 lines, one
+arch, same `nvcc`) compiles in **4-5 s**. The compiler is not slow; that TU is.
+
+What this means for the plan:
+
+* `CMAKE_CUDA_ARCHITECTURES=120` and FA_ALL_QUANTS=OFF are already in place;
+  `-j 8` should be `-j 6` (physical cores).
+* ccache would only help when `ggml-cuda.cu` is unchanged, which is exactly the
+  case it is not for item 4. It is still worth having for every other rebuild
+  (installing it is a system change, so it needs a decision).
+* A Defender exclusion for the build tree is the one cheap lever that touches
+  every compile; real-time scanning is on and nothing is excluded. **This needs
+  approval - I did not change any AV setting.**
+* The only structural fix that makes incremental iteration fast is to keep the
+  item 4 change out of `ggml-cuda.cu`. A scheduler-level split in
+  `ggml-backend.cpp` is a seconds-long rebuild; anything that edits
+  `ggml-cuda.cu` costs the full TU.
+
+Per the instruction to stop before retrying a >15 min build, item 4 is not
+started. `nvcc` has no `-fsyntax-only` (it forwards to the host compiler and
+fails on the CUDA headers), so the proposed pre-check has to be `--ptx`, which
+is most of the same work; that is another reason not to fire a build blindly.

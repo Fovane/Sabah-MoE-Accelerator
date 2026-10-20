@@ -16,6 +16,7 @@ import ctypes
 import ctypes.wintypes as wt
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -107,6 +108,11 @@ def main():
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--hot-bytes", default="9.8e9")
     ap.add_argument("--prompt", default="Hello")
+    ap.add_argument("--prompt-file", default="",
+                    help="read the prompt from a file and pass it through the "
+                         "diag's manifest (a 128K-token prompt does not fit on "
+                         "the Windows command line). Results land in "
+                         "<out>/<id>/ and are read from there.")
     ap.add_argument("--out-root", default=os.path.join(ROOT, "results", "phase0"))
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     ap.add_argument("--flag", action="append", default=[], metavar="ARG")
@@ -123,6 +129,16 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     log_path = os.path.join(out_dir, "driver.log")
     json_path = os.path.join(out_dir, "measurement.json")
+    data_dir = out_dir
+    manifest = ""
+    prompt_text = args.prompt
+    if args.prompt_file:
+        with open(args.prompt_file, "r", encoding="utf-8", errors="replace") as fh:
+            prompt_text = fh.read()
+        manifest = os.path.join(out_dir, "manifest.jsonl")
+        with open(manifest, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps({"id": "main", "text": prompt_text, "raw": True}) + "\n")
+        data_dir = os.path.join(out_dir, "main")
 
     env = dict(os.environ)
     env.update(stream.BASE_ENV)
@@ -135,14 +151,22 @@ def main():
     for item in args.set:
         k, v = item.split("=", 1)
         env[k] = v
+    if manifest:
+        env["SABAH_DIAG_MANIFEST"] = manifest
+    else:
+        env.pop("SABAH_DIAG_MANIFEST", None)
 
     argv = [os.path.abspath(args.diag), "-m", os.path.abspath(args.model)]
     argv += stream.BASE_FLAGS
     argv += ["-t", str(args.threads), "-c", str(args.context),
-             "-n", str(args.tokens), "-p", args.prompt]
+             "-n", str(args.tokens)]
+    if not manifest:
+        argv += ["-p", prompt_text]
     argv += list(args.flag)
 
     stream.clean_run_dir(out_dir)
+    if manifest and os.path.isdir(data_dir):
+        shutil.rmtree(data_dir, ignore_errors=True)
     samples = {"vram_mib": [], "avail_phys": [], "ws": []}
     stop = threading.Event()
 
@@ -229,6 +253,9 @@ def main():
     rec["exit_code"] = proc.returncode
     rec["wall_s"] = wall
     rec["argv"] = argv
+    if args.prompt_file:
+        rec["prompt_file"] = os.path.abspath(args.prompt_file)
+        rec["prompt_chars"] = len(prompt_text)
     rec["env"] = {k: env.get(k) for k in (
         "SABAH_LLAMA", "SABAH_LLAMA_HOT_BYTES", "SABAH_LLAMA_DIRECT_IO",
         "SABAH_LLAMA_IO_DEPTH", "SABAH_LLAMA_TRACE", "SABAH_LLAMA_PREFETCH",
@@ -257,7 +284,7 @@ def main():
     }
     if gpu_mem:
         rec["gpu_memory"] = gpu_mem
-    reg = stream.regimes(out_dir, fill_ms=rec.get("prefill_ms"))
+    reg = stream.regimes(data_dir, fill_ms=rec.get("prefill_ms"))
     if reg:
         rec["regimes"] = reg
         rec["fill_ms"] = reg.get("fill_ms")
@@ -267,7 +294,7 @@ def main():
         if reg.get("steady"):
             rec["steady_ms_median"] = reg["steady"]["median_ms"]
             rec["steady_tok_per_s"] = reg["steady"]["tok_per_s"]
-    pt = stream.prompt_tokens(out_dir)
+    pt = stream.prompt_tokens(data_dir)
     if pt:
         rec["prompt_tokens_count"] = len(pt)
     if rec.get("read_bytes") and rec.get("n_decodes"):
