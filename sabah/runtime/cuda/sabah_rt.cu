@@ -165,16 +165,44 @@ static bool sb_tile2_on() {
     return g_tile2_enabled;
 }
 
+// TILE3 shape constants. SB_T3_V is the widest reduction the staged tree can
+// hold (three virtual warps); anything wider falls back to k_mul_mat_id.
+#define SB_T3_ROWS 16
+#define SB_T3_LANES 8
+#define SB_T3_V 96
+
 static bool                 g_tile3_enabled = false;
 static bool                 g_tile3_checked = false;
+static int                  g_tile3_maxnsub = -1;
 
+// On by default. Byte-identical output against the reference reduction is
+// proven by tools/tile_exact.cu (260,000 rows, raw bits) and by whole-file
+// logits comparisons (REPORT.md 8). SABAH_LLAMA_TILE3=0 is the escape hatch to
+// the original kernel; SABAH_LLAMA_TILE3_MAXNSUB exists so the fallback branch
+// can be exercised on a model that is otherwise inside the guard.
 static bool sb_tile3_on() {
     if (!g_tile3_checked) {
         g_tile3_checked = true;
         const char * v = std::getenv("SABAH_LLAMA_TILE3");
-        g_tile3_enabled = v != nullptr && v[0] != 0 && v[0] != '0';
+        g_tile3_enabled = true;
+        if (v != nullptr && (v[0] == '0' || v[0] == 'n' || v[0] == 'N' || v[0] == 'f' || v[0] == 'F')) {
+            g_tile3_enabled = false;
+        }
     }
     return g_tile3_enabled;
+}
+
+static int sb_tile3_maxnsub() {
+    if (g_tile3_maxnsub < 0) {
+        g_tile3_maxnsub = SB_T3_V;
+        if (const char * v = std::getenv("SABAH_LLAMA_TILE3_MAXNSUB")) {
+            const int n = std::atoi(v);
+            if (n > 0) {
+                g_tile3_maxnsub = n;
+            }
+        }
+    }
+    return g_tile3_maxnsub;
 }
 
 struct sb_phase_timer {
@@ -2890,16 +2918,14 @@ __global__ void k_mul_mat_id_tile(const void * const * __restrict__ weights,
     }
 }
 
-// Bit-exact tile, second shape (SABAH_LLAMA_TILE3=1). The reduction tree is the
+// Bit-exact tile, second shape (default path; SABAH_LLAMA_TILE3=0 disables). The reduction tree is the
 // authoritative order, but the 32-element dots that feed it are independent of
 // each other. So the dots are computed 8 lanes per row (ten per thread, which is
 // where the latency hiding comes from), their exact float bits are staged in
 // shared memory indexed by virtual lane, and then a full warp replays the
 // original shfl_down 16,8,4,2,1 tree and the original serial warp-sum order.
-// Sixteen rows per 128-thread block.
-#define SB_T3_ROWS 16
-#define SB_T3_LANES 8
-#define SB_T3_V 96      /* 3 virtual warps: nsub <= 96 */
+// Sixteen rows per 128-thread block. SB_T3_* are defined with the launch-side
+// globals so the dispatch guard can share them.
 __global__ void k_mul_mat_id_tile3(const void * const * __restrict__ weights,
                                    const float * __restrict__ x,
                                    float * __restrict__ dst,
@@ -3114,7 +3140,7 @@ static void sb_report_diag() {
         const double dcalls = g_ev_calls > 0 ? (double) g_ev_calls : 1.0;
         const double dtok = dcalls / 144.0;
         std::fprintf(stderr,
-                     "SABAH_EV tile2=%d tile3=%d decode_calls=%llu kernel_ms=%.1f launch_ms=%.1f "
+                     "SABAH_EV tile2=%d tile3=%d maxnsub=%d decode_calls=%llu kernel_ms=%.1f launch_ms=%.1f "
                      "| per_decode_token ms: kernel=%.2f launch=%.2f "
                      "| per_call us: kernel=%.1f launch=%.1f "
                      "| gu calls=%llu kernel_ms=%.1f per_token=%.2f per_call_us=%.1f "
@@ -3122,6 +3148,7 @@ static void sb_report_diag() {
                      "| all_calls=%llu kernel_ms=%.1f launch_ms=%.1f\n",
                      sb_tile2_on() ? 1 : 0,
                      sb_tile3_on() ? 1 : 0,
+                     sb_tile3_maxnsub(),
                      (unsigned long long) g_ev_calls, g_ev_kernel_ms, g_ev_launch_ms,
                      g_ev_kernel_ms / dtok, g_ev_launch_ms / dtok,
                      g_ev_kernel_ms / dcalls * 1000.0, g_ev_launch_ms / dcalls * 1000.0,
@@ -3734,7 +3761,7 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
                    std::chrono::steady_clock::now() - t_ptr0).count();
 
     dim3 grid((unsigned) rows, (unsigned) n_ids, (unsigned) n_tokens);
-    const bool tile3 = sb_tile3_on() && (k / 32) <= SB_T3_V;
+    const bool tile3 = sb_tile3_on() && (k / 32) <= sb_tile3_maxnsub();
     const bool tile2 = !tile3 && sb_tile2_on();
     if (tile3) {
         grid.x = (unsigned) ((rows + SB_T3_ROWS - 1) / SB_T3_ROWS);
