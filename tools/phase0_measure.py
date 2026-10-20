@@ -17,6 +17,7 @@ import ctypes.wintypes as wt
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import threading
@@ -294,6 +295,26 @@ def main():
         if reg.get("steady"):
             rec["steady_ms_median"] = reg["steady"]["median_ms"]
             rec["steady_tok_per_s"] = reg["steady"]["tok_per_s"]
+    # Prefill chunks: their times and the disk bytes each one pulled. Without
+    # this the "does a 128K prefill re-stream the pool per chunk" question can
+    # only be answered by guessing.
+    pre = {}
+    try:
+        with open(os.path.join(data_dir, "prefill_ms.f64"), "rb") as f:
+            raw = f.read()
+        n = len(raw) // 8
+        pre["chunk_ms"] = list(struct.unpack("<%dd" % n, raw[: 8 * n]))
+        with open(os.path.join(data_dir, "prefill_bytes.i64"), "rb") as f:
+            raw = f.read()
+        m = len(raw) // 8
+        pre["chunk_bytes"] = list(struct.unpack("<%dq" % m, raw[: 8 * m]))
+    except OSError:
+        pre = {}
+    if pre:
+        pre["chunks"] = len(pre["chunk_ms"])
+        pre["ms"] = sum(pre["chunk_ms"])
+        pre["bytes"] = sum(pre["chunk_bytes"])
+        rec["prefill"] = pre
     pt = stream.prompt_tokens(data_dir)
     if pt:
         rec["prompt_tokens_count"] = len(pt)

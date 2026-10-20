@@ -1,0 +1,42 @@
+device=NVIDIA GeForce RTX 5060 Ti sm_120  sched=auto prio=normal  busy_kernel_iters=4096  busy_kernel_us=34.6
+class           us/launch  launches/token   ms/token
+dense matmul        7.25             720       5.22
+elementwise         7.80            2880      22.47
+sabah              78.39             144      11.29
+total GPU busy                                           38.98
+
+token probe: 48 layers, 15 dense (17.5 us) + 60 elementwise (~0.9 us) + 3 sabah (80/80/73 us) per layer = 78 launches, busy 38.98 ms/token
+A eager                  wall p50  35.865 ms  min  35.574  max  40.956  |  submit p50 21.560 ms  |  gpu busy 38.980 ms  |  idle -3.115 ms  (-8.7%)
+A1 eager, 1 drain/layer  wall p50  32.802 ms  min  32.036  max  35.866  |  submit p50 19.896 ms  |  gpu busy 38.980 ms  |  idle -6.178 ms  (-18.8%)
+B_split (4 graphs/layer) wall p50  16.389 ms  min  16.142  max  16.674  |  submit p50  0.687 ms  |  gpu busy 38.980 ms  |  idle -22.590 ms  (-137.8%)
+B_ideal (1 graph/layer)  wall p50  14.530 ms  min  14.278  max  14.579  |  submit p50  0.174 ms  |  gpu busy 38.980 ms  |  idle -24.450 ms  (-168.3%)
+SetParams 1 node         p50   0.200 us  mean   0.186 us  (graph has 78 nodes)
+ExecUpdate whole graph   p50   1.700 us  mean   1.772 us  (78 nodes, all updated)
+device=NVIDIA GeForce RTX 5060 Ti sm_120  sched=auto prio=normal  busy_kernel_iters=4096  busy_kernel_us=52.7
+class           us/launch  launches/token   ms/token
+dense matmul       16.16             720      11.63
+elementwise        12.97            2880      37.34
+sabah              75.35             144      10.85
+total GPU busy                                           59.82
+
+token probe: 48 layers, 15 dense (17.5 us) + 60 elementwise (~0.9 us) + 3 sabah (80/80/73 us) per layer = 78 launches, busy 59.82 ms/token
+A eager                  wall p50  60.717 ms  min  41.526  max  70.338  |  submit p50 43.495 ms  |  gpu busy 59.825 ms  |  idle  0.892 ms  (1.5%)
+A1 eager, 1 drain/layer  wall p50  43.055 ms  min  42.358  max  43.766  |  submit p50 34.468 ms  |  gpu busy 59.825 ms  |  idle -16.769 ms  (-38.9%)
+B_split (4 graphs/layer) wall p50  27.411 ms  min  25.526  max  27.650  |  submit p50  0.938 ms  |  gpu busy 59.825 ms  |  idle -32.414 ms  (-118.2%)
+B_ideal (1 graph/layer)  wall p50  23.568 ms  min  23.458  max  23.842  |  submit p50  0.251 ms  |  gpu busy 59.825 ms  |  idle -36.257 ms  (-153.8%)
+SetParams 1 node         p50   0.200 us  mean   0.193 us  (graph has 78 nodes)
+ExecUpdate whole graph   p50   1.700 us  mean   1.811 us  (78 nodes, all updated)
+device=NVIDIA GeForce RTX 5060 Ti sm_120  sched=auto prio=normal  busy_kernel_iters=4096  busy_kernel_us=60.9
+class           us/launch  launches/token   ms/token
+dense matmul       17.45             720      12.57
+elementwise        12.92            2880      37.20
+sabah              74.80             144      10.77
+total GPU busy                                           60.54
+
+token probe: 48 layers, 15 dense (17.5 us) + 60 elementwise (~0.9 us) + 3 sabah (80/80/73 us) per layer = 78 launches, busy 60.54 ms/token
+A eager                  wall p50  60.572 ms  min  43.096  max  63.026  |  submit p50 42.947 ms  |  gpu busy 60.538 ms  |  idle  0.035 ms  (0.1%)
+A1 eager, 1 drain/layer  wall p50  42.615 ms  min  42.163  max  47.783  |  submit p50 34.651 ms  |  gpu busy 60.538 ms  |  idle -17.923 ms  (-42.1%)
+B_split (4 graphs/layer) wall p50  26.866 ms  min  24.660  max  27.077  |  submit p50  0.918 ms  |  gpu busy 60.538 ms  |  idle -33.672 ms  (-125.3%)
+B_ideal (1 graph/layer)  wall p50  22.871 ms  min  22.795  max  23.350  |  submit p50  0.247 ms  |  gpu busy 60.538 ms  |  idle -37.666 ms  (-164.7%)
+SetParams 1 node         p50   0.200 us  mean   0.202 us  (graph has 78 nodes)
+ExecUpdate whole graph   p50   1.700 us  mean   1.791 us  (78 nodes, all updated)

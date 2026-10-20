@@ -127,6 +127,11 @@ def parse_driver(text):
 
     grab("calls", r"SABAH_DIAG calls=(\d+)", int)
     grab("tokens", r"SABAH_DIAG calls=\d+ tokens=(\d+)", int)
+    # The driver times the prompt as chunks and records their total separately,
+    # so step_ms holds decoded tokens only.
+    grab("prefill_ms", r"sabah-diag: \S+ prefill total_ms=([\d.]+)")
+    grab("prefill_chunks", r"prefill total_ms=[\d.]+ chunks=(\d+)", int)
+    grab("prefill_bytes", r"prefill total_ms=[\d.]+ chunks=\d+ n=\d+ n_batch=\d+ bytes=(\d+)", int)
     grab("lookups", r"SABAH_DIAG calls=\d+ tokens=\d+ lookups=(\d+)", int)
     grab("overflow", r"overflow=(\d+)", int)
     grab("verify_ok", r"verify_ok=(\d+)", int)
@@ -144,6 +149,8 @@ def parse_driver(text):
     grab("phase_ptr_ms", r"slot=[\d.]+ms ptr=([\d.]+)ms")
     grab("phase_prime_ms", r"ptr=[\d.]+ms prime=([\d.]+)ms")
     grab("id_reuse", r"SABAH_IDS reused=(\d+)", int)
+    grab("compute_buffer_mib", r"compute buffer size\s*=\s*([\d.]+) MiB")
+    grab("graph_nodes", r"graph nodes\s*=\s*(\d+)", int)
     grab("id_group_max", r"SABAH_IDS reused=\d+ group_max=(\d+)", int)
     grab("id_check", r"SABAH_IDS reused=\d+ group_max=\d+ check=(\d+)", int)
     grab("id_check_ok", r"check=\d+ check_ok=(\d+)", int)
@@ -224,10 +231,17 @@ def regimes(out_dir, warm_tokens=128, fill_ms=None):
     against a 67 ms steady state. Quoting either one alone is a mis-measurement.
     """
     ms = step_ms(out_dir)
-    if len(ms) < 2:
-        return {}
-    fill = ms[0] if fill_ms is None else fill_ms
-    dec = ms[1:]
+    if fill_ms is None:
+        if len(ms) < 2:
+            return {}
+        fill = ms[0]
+        dec = ms[1:]
+    else:
+        # The driver measured the prompt directly, so every step is a decode.
+        if not ms:
+            return {}
+        fill = fill_ms
+        dec = ms
     warm = dec[:warm_tokens]
     steady = dec[warm_tokens:]
     out = {

@@ -1,0 +1,20 @@
+<|im_start|>system
+Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.<|im_end|>
+<|im_start|>user
+This PowerShell 7 deployment script works on the build server but fails on the release server with "Cannot bind argument to parameter 'Path' because it is null" and then leaves a locked file behind.
+
+```powershell
+param([string]$Root = $env:DEPLOY_ROOT, [string]$Version)
+Get-ChildItem -Path $Root -Recurse -Filter *.dll | ForEach-Object {
+    $target = Join-Path $ReleaseDir $_.Name
+    Copy-Item $_.FullName $target -Force
+}
+$zip = Join-Path $Root "artifacts\app-$Version.zip"
+Compress-Archive -Path (Join-Path $ReleaseDir '*') -DestinationPath $zip -Force
+Invoke-WebRequest -Uri $env:UPLOAD_URL -Method Put -InFile $zip
+Remove-Item $Root -Recurse -Force
+```
+
+The environment variables are set at machine scope, the script runs as a scheduled task under a service account, and $ReleaseDir is never assigned. Find every bug, including the failure mode on an empty directory, and give a corrected script with error handling and idempotent retries.<|im_end|>
+<|im_start|>assistant
+<think>

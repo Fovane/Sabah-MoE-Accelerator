@@ -1,4 +1,4 @@
-# Progress
+﻿# Progress
 
 Updated after each step. Percentage is weighted by the size of the item in the
 brief (weights in the last column), not by wall time.
@@ -6,35 +6,49 @@ brief (weights in the last column), not by wall time.
 ```
 item                                              state      done   weight  points
 1  TILE3 default + byte-exact + fallback + gate   DONE       100%     20     20.0
-2  clock state, validity rule, pinning, trace     commit     90%     20     18.0
-3  pinned slab sweep at -c 131072, N=3            tooling    15%     15      2.3
-4  CUDA-graph split, one-layer PoC, >=8 ms gate   code only  30%     20      6.0
-5  dense op time/bytes/GB/s + n-gram lookup       code only  25%     10      2.5
-6  real chat + coding at 128K, real 64K/128K prefill  not started 5%  15      0.8
-                                                                   ---    -----
-                                                                   100     49.6
+2  clock state, validity rule, pinning, trace     DONE       100%     20     20.0
+   + graph replay probe (item 4's gate)           DONE       100%
+3  pinned slab sweep at -c 131072, N=3            DONE       100%     15     15.0
+4  CUDA-graph split, one-layer PoC, >=8 ms gate   DONE       100%     20     20.0
+5  dense op time/bytes/GB/s + n-gram lookup       static done, per-op needs build     60%     10      6.0
+6  real chat + coding at 128K, real 64K/128K prefill  DONE   100%     15     15.0
+                                                                    ---    -----
+                                                                     100     96.0
 ```
 
+## Commits
+
+| branch | commit | what |
+|---|---|---|
+| `phase-c-tile3-default` | `a2de373` | TILE3 default, byte-exact at 2 contexts x 2 prompts, fallback proved |
+| `phase-d-clock-hygiene` | `e313435` | clocks.py, invalidity rule, pinning evidence, docs/CLOCK_HYGIENE.md, REPORT §9-10 |
+| `phase-d-clock-hygiene` | `3393333` | tools/status.py, PROGRESS.md, fallback-test metadata |
+| `phase-e-item3-5` | `f2b9354` | item 3 sweep + tail steady, item 5 byte model, graph replay probe, REPORT §11-14 |
+| `phase-e-item4-graphs` | `5c313f7` | item 4: segmented CUDA graphs, default on, acceptance matrix, patch 0003, REPORT 16 |
 ## What "done" means per item
 
 1. DONE. Four byte-identical pairs (2 prompts x `-c 2048` / `-c 131072`, 1024
    tokens), guard `maxnsub=16` proved to take the fallback branch, `sabah gate`
-   PASS, committed `a2de373`. Report section 10 written.
-2. Code and measurements are finished (0.5 s sampler, valid/invalid rule at
-   2400/10000 MHz, `-lgc`/`-lmc` finding, 1 s idle->decode->idle trace,
-   `docs/CLOCK_HYGIENE.md`, report section 9). Only the commit is missing.
-3. Tooling finished (`tools/slab_sweep.py` with clock guard and
-   Dedicated/Shared sampling). Two 6.0e9 anchor points measured at 128K
-   (prompt A 176.0 ms, prompt B 47.4 ms). The 4-slab x N=3 sweep has not run.
-4. `ggml-cuda.cu` split-graph implementation is written but not yet compiled
-   or measured. Build is the gate for both 4 and 5.
-5. Per-node CUDA-event hook (`GGML_CUDA_OP_TIMES`) written, not compiled. No
-   bytes/GB/s numbers yet.
-6. Needs a real multi-turn and a real coding prompt plus a 64K and a 128K
-   prefill; nothing measured yet.
-
+   PASS, committed `a2de373`. Report section 10.
+2. DONE. 0.5 s sampler, valid/invalid rule at 2400/10000 MHz, `-lgc`/`-lmc`
+   finding, 1 s idle->decode->idle trace, docs, report section 9.
+3. DONE. 4 slabs x N=3, pinned, `clock_valid` on all twelve. Tail-recomputed
+   steady: 43.5 / 71.4 / 88.4 / 153.3 ms; the harness steady window was the fill
+   at 128K. Report section 12.
+4. DONE. Segmented CUDA graphs around every Sabah node, default on,
+   SABAH_CUDA_GRAPH_SEG=0 disables. Fusion decisions identical 10/10;
+   byte-identical at -c 131072 (1024 tok) and across n_kv 256/512;
+   128K chat tail 42.74 -> 30.36 ms/token (-12.38). Report 16.
+5. Static half done (4.111 GB/token, 9.18 ms floor, 326 GB/s = 73% of peak,
+   n-gram path 0.42 ms = 0.02 GB/s). Per-op achieved GB/s still needs the
+   op-time hook or an nsys export.
+6. DONE. Chat 2048 steps: tail 42.74 ms = 23.40 tok/s, 1.9 MiB/token.
+   Coding never steady (last 256 = 251.12 ms, 240.3 MiB/token). Prefill
+   91.0 s/94.37 GB and 76.3 s/78.58 GB; 2048-token chunks re-stream the
+   pool each time (113-134 GB per chunk). Report 15.
 ## Gate
 
-The llama.cpp rebuild (item 4 + 5) is a single shared gate: if it compiles, both
-items proceed; if the split does not project 8 ms/token, item 4 stops at the PoC
-by design.
+The llama.cpp rebuild is the gate for items 4 and 5. It was restarted with
+`CMAKE_CUDA_ARCHITECTURES=120`; the cached default (`120;61`) compiled every
+CUDA unit twice, once for Pascal, which this GPU cannot run.
+

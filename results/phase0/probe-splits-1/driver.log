@@ -1,0 +1,18 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16283 MiB):
+  Device 0: NVIDIA GeForce RTX 5060 Ti, compute capability 12.0, VMM: yes, VRAM: 16283 MiB
+0.00.847.442 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+0.02.219.461 I cmn          init: llama threadpool init, n_threads = 8
+sabah-diag: prompt prefill chunk 0 off=0 n=53  10986.0 ms bytes=13257139200
+sabah-diag: prompt prefill total_ms=10986.0 chunks=1 n=53 n_batch=512 bytes=13257139200
+sabah-diag: prompt step 0 argmax 1596 fed 1596  0.0 ms
+SABAH_DIAG calls=144 tokens=7476 lookups=74760 overflow=790 verify_ok=0 verify_fail=0
+SABAH_DISK unbuffered_reads=19551 bytes=13257139200 waves=2505 mapped_fallbacks=0 staging_bytes=0 direct_io=1 depth=8 lanes=8 lane_reads=19551 sync=0 pending=0
+SABAH_IO read_ms=43300.9 wave_ms=9721.5 overlap=4.45 reads_per_wave=7.80
+SABAH_PHASE calls=144 ids=247.3ms fetch=9895.3ms wait=9721.5ms slot=392.0ms ptr=2.3ms prime=0.0ms | per_call us: ids=1718 fetch=68718 wait=67511 slot=2722 ptr=16 prime=0 | accounting=10536.9ms
+SABAH_IDS reused=96 group_max=3 check=0 check_ok=0 check_fail=0
+SABAH_MERGE enabled=0 reserved=0
+SABAH_PREFETCH enabled=0 reads=0 read_bytes=0 used=0 used_bytes=0 dropped=0 stale=0 queued=0 waits=0 wait_ms=0.0 wait_timeouts=0
+SABAH_SNAPSHOT {"calls":144,"empty_calls":0,"tokens":7476,"lookups":74760,"hits":55209,"misses":19551,"evictions":11167,"bytes_fetched":13257139200,"resident_bytes":5999897600,"overflow":790,"verify_ok":0,"verify_fail":0,"selfcheck_k":0,"selfcheck_ok":0,"selfcheck_fail":0,"selfcheck_max_rel_l2":0.000000e+00,"selfcheck_multi_token":0,"selfcheck_tensors":0,"selfcheck_slots":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"sentinel":0}
+SABAH_METRICS hits=55209 misses=19551 evictions=11167 bytes_fetched=13257139200 resident_bytes=5999897600
+SABAH_SEG splits=5 moe_splits=4 splits_per_token=1.25 segments_per_token=24.0 launches_per_token=0.0 captures=0 captures_per_token=0.000 eager_per_token=60.0 fusions_per_token=114.25
+SABAH_SEG host ms per token: props=0.686 launch=0.000 capture=0.000 eager=2165.778 | per launch us=0.00 per eager us=45120.38 | worst token host_ms=9652.47 captures=0, all per graph compute

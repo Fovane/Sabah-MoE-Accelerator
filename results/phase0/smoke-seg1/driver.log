@@ -1,0 +1,65 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16283 MiB):
+  Device 0: NVIDIA GeForce RTX 5060 Ti, compute capability 12.0, VMM: yes, VRAM: 16283 MiB
+0.00.849.719 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+0.02.235.715 I cmn          init: llama threadpool init, n_threads = 8
+sabah-diag: prompt prefill chunk 0 off=0 n=53  11059.0 ms bytes=13257139200
+sabah-diag: prompt prefill total_ms=11059.0 chunks=1 n=53 n_batch=512 bytes=13257139200
+sabah-diag: prompt step 0 argmax 1596 fed 1596  0.0 ms
+sabah-diag: prompt step 1 argmax 1144 fed 1144  560.6 ms
+sabah-diag: prompt step 2 argmax 310 fed 310  283.6 ms
+sabah-diag: prompt step 3 argmax 5707 fed 5707  213.8 ms
+sabah-diag: prompt step 4 argmax 310 fed 310  311.6 ms
+sabah-diag: prompt step 5 argmax 1156 fed 1156  278.3 ms
+sabah-diag: prompt step 6 argmax 25 fed 25  348.5 ms
+sabah-diag: prompt step 7 argmax 328 fed 328  217.5 ms
+sabah-diag: prompt step 8 argmax 9419 fed 9419  342.6 ms
+sabah-diag: prompt step 9 argmax 3158 fed 3158  337.4 ms
+sabah-diag: prompt step 10 argmax 14235 fed 14235  307.2 ms
+sabah-diag: prompt step 11 argmax 1534 fed 1534  190.1 ms
+sabah-diag: prompt step 12 argmax 4087 fed 4087  314.5 ms
+sabah-diag: prompt step 13 argmax 13 fed 13  199.3 ms
+sabah-diag: prompt step 14 argmax 8722 fed 8722  125.9 ms
+sabah-diag: prompt step 15 argmax 40719 fed 40719  309.8 ms
+sabah-diag: prompt step 16 argmax 13 fed 13  286.3 ms
+sabah-diag: prompt step 17 argmax 28320 fed 28320  111.8 ms
+sabah-diag: prompt step 18 argmax 3992 fed 3992  269.3 ms
+sabah-diag: prompt step 19 argmax 1788 fed 1788  363.0 ms
+sabah-diag: prompt step 20 argmax 30 fed 30  313.3 ms
+sabah-diag: prompt step 21 argmax 2570 fed 2570  187.4 ms
+sabah-diag: prompt step 22 argmax 6163 fed 6163  310.3 ms
+sabah-diag: prompt step 23 argmax 13 fed 13  246.0 ms
+sabah-diag: prompt step 24 argmax 12650 fed 12650  112.1 ms
+sabah-diag: prompt step 25 argmax 61446 fed 61446  108.2 ms
+sabah-diag: prompt step 26 argmax 13 fed 13  144.2 ms
+sabah-diag: prompt step 27 argmax 198 fed 198  124.6 ms
+sabah-diag: prompt step 28 argmax 248069 fed 248069  370.9 ms
+sabah-diag: prompt step 29 argmax 271 fed 271  320.5 ms
+sabah-diag: prompt step 30 argmax 9419 fed 9419  185.9 ms
+sabah-diag: prompt step 31 argmax 0 fed 0  344.0 ms
+sabah-diag: prompt step 32 argmax 2500 fed 2500  109.7 ms
+sabah-diag: prompt step 33 argmax 628 fed 628  310.9 ms
+sabah-diag: prompt step 34 argmax 353 fed 353  308.1 ms
+sabah-diag: prompt step 35 argmax 1438 fed 1438  215.9 ms
+sabah-diag: prompt step 36 argmax 488 fed 488  290.2 ms
+sabah-diag: prompt step 37 argmax 3242 fed 3242  236.3 ms
+sabah-diag: prompt step 38 argmax 30 fed 30  265.4 ms
+sabah-diag: prompt step 39 argmax 248046 fed 248046  184.3 ms
+sabah-diag: prompt step 40 argmax 198 fed 198  282.6 ms
+sabah-diag: prompt step 41 argmax 248044 fed 248044  267.9 ms
+sabah-diag: prompt step 42 argmax 248045 fed 248045  325.6 ms
+sabah-diag: prompt step 43 argmax 248045 fed 248045  208.4 ms
+sabah-diag: prompt step 44 argmax 248045 fed 248045  254.8 ms
+sabah-diag: prompt step 45 argmax 248045 fed 248045  199.6 ms
+sabah-diag: prompt step 46 argmax 248045 fed 248045  141.4 ms
+sabah-diag: prompt step 47 argmax 248045 fed 248045  153.1 ms
+SABAH_DIAG calls=6912 tokens=14244 lookups=142440 overflow=1848 verify_ok=0 verify_fail=0
+SABAH_DISK unbuffered_reads=37356 bytes=25331123200 waves=8323 mapped_fallbacks=0 staging_bytes=0 direct_io=1 depth=8 lanes=8 lane_reads=37356 sync=0 pending=0
+SABAH_IO read_ms=66413.4 wave_ms=18596.8 overlap=3.57 reads_per_wave=4.49
+SABAH_PHASE calls=6912 ids=669.3ms fetch=18946.3ms wait=18596.8ms slot=1022.5ms ptr=51.0ms prime=45.7ms | per_call us: ids=97 fetch=2741 wait=2691 slot=148 ptr=7 prime=7 | accounting=20734.8ms
+SABAH_IDS reused=4608 group_max=3 check=0 check_ok=0 check_fail=0
+SABAH_MERGE enabled=0 reserved=0
+SABAH_PREFETCH enabled=0 reads=0 read_bytes=0 used=0 used_bytes=0 dropped=0 stale=0 queued=0 waits=0 wait_ms=0.0 wait_timeouts=0
+SABAH_SNAPSHOT {"calls":6912,"empty_calls":0,"tokens":14244,"lookups":142440,"hits":105084,"misses":37356,"evictions":28580,"bytes_fetched":25331123200,"resident_bytes":5999385600,"overflow":1848,"verify_ok":0,"verify_fail":0,"selfcheck_k":0,"selfcheck_ok":0,"selfcheck_fail":0,"selfcheck_max_rel_l2":0.000000e+00,"selfcheck_multi_token":0,"selfcheck_tensors":0,"selfcheck_slots":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"sentinel":0}
+SABAH_METRICS hits=105084 misses=37356 evictions=28580 bytes_fetched=25331123200 resident_bytes=5999385600
+SABAH_SEG splits=240 moe_splits=192 splits_per_token=1.25 segments_per_token=2.0 launches_per_token=1.9 captures=8 captures_per_token=0.042 eager_per_token=3.6 fusions_per_token=125.47
+SABAH_SEG host ms per token: props=0.022 launch=0.019 capture=0.007 eager=93.773 | per launch us=12.92 per eager us=32428.56 | worst token host_ms=9726.03 captures=0, all per graph compute

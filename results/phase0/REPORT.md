@@ -780,3 +780,334 @@ Per the instruction to stop before retrying a >15 min build, item 4 is not
 started. `nvcc` has no `-fsyntax-only` (it forwards to the host compiler and
 fails on the CUDA headers), so the proposed pre-check has to be `--ptx`, which
 is most of the same work; that is another reason not to fire a build blindly.
+
+## 15. Item 6 re-run on the repaired harness (Oct 20)
+
+### 15.1 What the harness now measures
+
+The old harness averaged the 91 s prefill together with decode and called the
+result ms/token. Four changes, all in `tools/sabah-diag/sabah-diag.cpp`:
+
+* step 0 is a pure decode step. `t0` is set after the prefill chunk, so
+  `step_ms[0]` is the first decode, not the prefill.
+* prefill is chunked by `n_batch`/`n_ubatch`, and each chunk records its own
+  wall time and its own disk bytes. The total goes to
+  `prefill_ms.f64` + `prefill_bytes.i64` and to `run.json:prefill`.
+* every decode step records `step_bytes.i64` and `step_misses.i64` (delta of
+  `sabah_rt_get_metrics` around `llama_decode`). Step 0 is 0: its work is the
+  last prefill chunk, already counted there.
+* `tools/steady_tail.py` finds the tail window from `step_ms` with the same
+  rule as before (32-step windows within 10% of the final median) and reports
+  bytes and misses over that window only.
+
+Every number below is from one binary, driver 32.0.16.1742 (nvidia-smi 617.42),
+RTX 5060 Ti 16283 MiB, clocks pinned `-lgc 2800,3090 -lmc 13000,14001`
+(measured SM 2805/2827/2842 MHz, mem 13801 MHz, P1, 180 W cap, clock_valid
+true in all runs).
+
+### 15.2 Chunked prefill re-streams the expert pool per chunk
+
+This is the answer to the question the harness was built for. Six consecutive
+chunks of a 64K prefill, 2048 tokens each, slab 6.0e9, real chat prompt:
+
+| chunk | ms | GB read | ms/token |
+|---|---|---|---|
+| 0 | 117985.9 | 113.17 | 57.6 |
+| 1 | 120313.5 | 117.75 | 58.7 |
+| 2 | 120926.2 | 118.17 | 59.0 |
+| 3 | 124585.6 | 123.27 | 60.8 |
+| 4 | 130988.9 | 131.88 | 64.0 |
+| 5 | 132512.7 | 134.04 | 64.7 |
+
+Each 2048-token chunk reads ~113-134 GB, i.e. 55-65 MB per token, and the
+whole 83.6 GB expert pool moves once per chunk. Chunking does not amortise the
+pool: it re-streams it. The per-chunk cost also rises monotonically as the slab
+fills, so a full 64K prefill is projected at 63-71 min from these six chunks,
+and a 128K prefill at 126-142 min.
+
+Consequence: the full 64K and 128K prefill runs are **not** measured end to
+end (2 h per run, N=2 would be 4-5 h). The projection above, from six measured
+chunks, is what the report can support.
+
+Log: `results/phase0/item6b-prefill64k-r1/driver.log`.
+
+### 15.3 Chat at 128K, slab 6.0e9, 2048 decode steps
+
+Prompt `prompts/chat_multiturn.txt`, 1630 tokens, `-c 131072`.
+
+| regime | steps | ms/token (min/median/max) | tok/s | MiB/token | misses/token |
+|---|---|---|---|---|---|
+| prefill | 1630 tok, 1 chunk | 91005.7 | - | 90000 total | - |
+| fill | 0-1568 | 0.0 / 283.87 / 803.16 | 3.5 | 280.9 | 435.0 |
+| tail | 1569-2047 | 40.1 / **42.74** / 132.40 | **23.40** | 1.9 | 3.0 |
+| tail, last 192 | 1856-2047 | 40.11 / 42.68 / 132.40 | 23.43 | 1.8 | 3.0 |
+
+* prefill: 91.0 s, 94.37 GB read = 57.9 MB/token (a single 2048-token chunk)
+* end to end: 570.7 s for 2048 tokens = **3.59 tok/s** (dominated by prefill and
+  by the 1569-step fill)
+* decode only: 4.36 tok/s over the whole run, 23.40 tok/s in the tail
+* I/O: 565.5 GB over the run, of which 447.6 GB is the fill and 1.7 GB the
+  479-step tail. The 6 GB slab holds the chat working set once it is warm:
+  **1.9 MiB and 3 misses per token in the tail**
+* cache: 5,246,010 lookups, 4,412,182 hits (84.1%), 825,176 evictions,
+  id_check 0, mapped_fallbacks 0, io_overlap 3.14
+* peak VRAM 15745 MiB of 16283; process working set peak 8.94 GB
+* compute buffer (CUDA0) 964.07 MiB, CUDA_Host 208.55 MiB, graph nodes 8020
+  (`sched_reserve`, `-v` probe at the same `-c 131072`)
+
+The important shape: the fill is I/O bound at 281 MiB/token and the tail is not
+I/O bound at all (1.9 MiB/token). Steady decode at 128K on this workload is
+compute + dispatch bound.
+
+### 15.4 Coding at 128K, slab 6.0e9, 2048 decode steps
+
+Prompt `prompts/coding_session.txt`, 1092 tokens, `-c 131072`.
+
+| regime | steps | ms/token (min/median/max) | tok/s | MiB/token | misses/token |
+|---|---|---|---|---|---|
+| prefill | 1092 tok, 1 chunk | 76275.2 | - | 74943 total | - |
+| first 1024 | 0-1023 | 0.0 / 278.40 / 803.16 | 3.6 | 273.0 | 420.0 |
+| 1024-1535 | 1024-1535 | 61.7 / 263.85 / 469.1 | 3.8 | 252.9 | 393.0 |
+| last 256 | 1792-2047 | 85.6 / 251.12 / 469.1 | 3.98 | 240.3 | 373.5 |
+
+* prefill: 76.3 s, 78.58 GB read = 72.0 MB/token
+* end to end: 670.2 s for 2048 tokens = **3.06 tok/s**
+* I/O: 682.0 GB over the run, 240 MiB/token and 374 misses/token still in the
+  last 256 steps. **This run never reaches steady state**: the 6 GB slab is
+  smaller than the coding workload's working set.
+* peak VRAM 15859 MiB; process working set 8.82 GB
+
+So the slab result is workload dependent, and the two prompts bracket it: chat
+fits in 6 GB after ~1569 steps, code does not fit at all within 2048 steps.
+
+### 15.5 What this means for the 30-35 tok/s target
+
+* Chat at 128K: 42.74 ms/token steady, with almost no disk traffic. The 12 ms
+  the graph replay microbenchmark promised (section 13) would land at ~30.7 ms
+  = 32.6 tok/s, inside the target. That is the item 4 test.
+* Coding at 128K: 251 ms/token and still falling, at 240 MiB/token. No graph
+  work changes this; it is bounded by slab size against a wider working set.
+* Projection, chat only, measured numbers only: 42.74 - 12 = 30.7 ms/token.
+
+### 15.6 Unverified
+
+* Full 64K and 128K prefill runs (projected from 6 measured chunks).
+* N=1 for both decode runs (the user allowed N>=2 "where time allows"; a second
+  run of each is another ~10 min and was not spent here).
+* Chat tail is steady by the harness rule; code has no steady tail, so no
+  steady ms/token exists for it.
+
+## 16. Item 4: segmented CUDA graphs, measured (Oct 20)
+
+### 16.1 What was built
+
+| file | role |
+|---|---|
+| `ggml/src/ggml-cuda/sabah-seg.{h,cpp}` | host-only: segment table, props compare, capture, replay, SEG_STATS |
+| `ggml-cuda.cu` | `sabah_cuda_run_nodes`, split predicate, capture lock, hook, op times |
+| `ggml/src/ggml-cuda/CMakeLists.txt` | one line, the new TU |
+
+This split is what unblocked the build: the same edit inside `ggml-cuda.cu`
+(the STL block) never finished in 75 min; with the host code in a `.cpp`,
+`sabah-seg.cpp` + relink is **2.2-6.6 s** and the diag-only rebuild is 4.2 s.
+
+Rules kept: no `cudaMalloc`/`cudaFree` inside capture (`cudaStreamCaptureModeRelaxed`,
+all buffers preallocated); two eager passes per segment before capture; a
+capture failure demotes that segment to eager for good and logs once; cache key
+`(cgraph, first COMPUTE node, segment ordinal)`; `SABAH_CUDA_GRAPH_SEG` unset/0
+leaves the native path untouched.
+
+### 16.2 The architecture, measured, not assumed
+
+`llama_decode` hands the CUDA backend **5 graph computes**, not one:
+
+| compute | Sabah nodes | identity |
+|---|---|---|
+| 1 | 0 | split before the PLE gather (CPU, `-ot`) |
+| 2-5 | 36 each | 4 MoE splits, 12 layers each |
+
+Per token that is 144 Sabah nodes (48 layers x 3) and **96 graph segments**
+(adjacent Sabah nodes leave no work between them). The per-token host cost of
+the old path was therefore paid 4 times, not once.
+
+### 16.3 `-c 512`, 400 tokens, crossing n_kv 256 (byte-identical)
+
+Same binary, only `SABAH_CUDA_GRAPH_SEG` differs. Clocks pinned, SM 2805/2827/2842,
+mem 13801 MHz, P1, 180 W, driver 32.0.16.1742.
+
+| run | median ms | tail-256 ms | tok/s | MiB/token | byte check |
+|---|---|---|---|---|---|
+| SEG=0 (native) | 43.52 | 41.81 | 23.92 | 1.6 | reference |
+| SEG=1 | - | 46.18 (128 tok) | 21.65 | 7.1 | logits/argmax/fed SAME |
+| SEG=48 | 31.01 | **29.87** | **33.48** | 1.6 | logits/argmax/fed SAME |
+
+* saving: **-11.94 ms/token (-28.6%)** on 400 steps that cross n_kv 256
+* `logits.f32` `9dd26e50c9ad2fae`, `argmax`/`fed` `0e397d6008bc22ce` on both sides
+* worst step is index 1 (565 ms segmented, 557 ms native): the first decode,
+  where the 96 segments are captured. Steps 248-262 (the n_kv 256 crossing)
+  are 28.1-33.9 ms segmented vs 39.7-44.3 ms native, with no spike.
+* SEG=1 is neutral as designed (2 segments per split, budget 3 nodes).
+
+`SEG_STATS` for the SEG=48 run (400 tokens):
+
+```
+calls=2000 moe_calls=1600 native_calls=400 | segments=38400 split_nodes=57600
+launches=38090 captures=108 eager=57910 fusions=2519
+per moe call: segments=24.0 split_nodes=36.0 launches=23.8 captures=0.068 eager=36.2
+host ms per call: props=0.153 launch=0.137 capture=0.016 | per launch 7.19 us
+```
+
+* 96 segments/token, 144 split nodes/token, 23.8 launches per MoE call
+* captures = 96 (one rebuild at the prefill-to-decode transition) + 12 at the
+  n_kv 256 boundary = 108. **0.03 captures/token**, not 0.57 and not 0.375.
+* props: 0.153 ms per graph compute, ~0.77 ms/token
+* launch: 7.19 us each, 0.137 ms per call, ~0.69 ms/token; the saving is GPU
+  side, not launch overhead
+
+### 16.4 Why the transition recaptures, and the props fix
+
+`SABAH_SEG_DEBUG` named the nodes: `ffn_moe_weighted-0` and its views change
+`ne[1]` from 53 (prefill) to 1 (decode). That is the batch dimension, and it
+happens once per graph change, not per token.
+
+The first version compared **every** node in the range, including nodes the
+scheduler gave to another split; their buffers move and every token recaptured.
+Comparing only COMPUTE nodes of the split fixed it: 108 captures for 400 tokens
+instead of ~96 per token.
+
+### 16.5 Fusion: guard and unit check
+
+`try_fuse` refuses any pattern within 8 nodes of a Sabah node, and segment ends
+are Sabah nodes or the split end, so no pattern can cross a boundary;
+`sabah_cuda_run_nodes` asserts `i + nodes_to_skip < i1` on every fused node.
+
+The `fusions` counter is **not** comparable between paths (a captured pattern is
+counted once, at capture). The unit check is `SABAH_FUSE_TRACE=1`, which prints
+one line per visited node with its decision plus one per scheduler split, and
+`tools/fuse_diff.py`, which compares the ordered decision lists per split
+between SEG=0 and SEG=48 over one token.
+
+Result: at `-c 512`, 2 tokens (53-token prefill + 1 decode, 10 graph computes),
+**10/10 split blocks identical**, i.e. the same (name, op, nodes_to_skip)
+sequence in both paths. The splits are 118 / 236 / 347 / 7254 / 61 nodes, all
+with `first_compute=0`, and the four Sabah splits run 36 Sabah nodes each.
+
+Note that `try_fuse` uses `cgraph->n_nodes` for its Sabah lookahead, not the
+segment bounds, so the lookahead is a property of the whole split in both
+paths. A pattern that crossed a segment end would trip the
+`GGML_ASSERT(i + nodes_to_skip < i1)` in `sabah_cuda_run_nodes`; 640 tokens at
+`-c 2048` and 1024 tokens at `-c 131072` cross thousands of segment ends without
+tripping it.
+
+### 16.5.1 Why the COMPUTE-only property check cannot miss a change
+
+`ggml_cuda_graph_update_required` (this version) compares **every** node of the
+split view, without a flag test, and does not skip views:
+
+```
+2784:    for (int i = 0; i < cgraph->n_nodes; i++) {
+2785:        ggml_cuda_graph::node_properties prop = {};
+2786:        memcpy(&prop.node, cgraph->nodes[i], sizeof(ggml_tensor));
+2788:        for (int j = 0; j < GGML_MAX_SRC; ++j) {
+2790:                prop.node_src_data_ptrs[j] = cgraph->nodes[i]->src[j]->data;
+2791:                memcpy(prop.node_src_ne[j], cgraph->nodes[i]->src[j]->ne, ...);
+2792:                memcpy(prop.node_src_nb[j], cgraph->nodes[i]->src[j]->nb, ...);
+2796:        if (res || memcmp(&graph->node_props[i], &prop, sizeof(prop)) != 0) {
+```
+
+The segmented path is anchored on the same quantities but only for COMPUTE
+nodes of the split, and that is sufficient:
+
+* every kernel in a captured segment is a COMPUTE node of this split, and its
+  inputs are recorded from the **consumer** side (`src[j]->data/ne/nb`);
+* a view or reshape that feeds such a kernel resolves to a concrete pointer, so
+  a moved base allocation or a moved offset (KV row, recurrent slot) changes
+  the consumer's `src[j]->data` and is caught;
+* a non-COMPUTE node with no consumer inside the segment has no kernel in the
+  segment either, so its buffer cannot affect the captured graph;
+* `op` and `op_params` of every COMPUTE node are in the node copy.
+
+Gap shared with the native path: neither stores `src[j]->type`.
+
+### 16.6 The 128K side: measured
+
+Three acceptance runs, current build, slab 6.0e9 pinned (`-lgc 2800,3090
+-lmc 13000,14001`), all VALID clock runs.
+
+**(a) `-c 131072`, chat prompt (1630 tokens), 1024 decode steps** — correctness
+gate, both sides on the same binary:
+
+| | SEG=0 | SEG=48 |
+|---|---|---|
+| fill | 95.77 s | 90.24 s |
+| steady | 300.10 ms | 281.82 ms |
+| disk | 430.49 GB | 430.49 GB (same counters) |
+| logits.f32 | `fa4db9f505f3496f` | `fa4db9f505f3496f` |
+| argmax / fed | `da61e07f62255adb` | `da61e07f62255adb` |
+
+Identical routing (same `calls=147879 lookups=3771450 reads=634862`), identical
+outputs. At 1024 tokens this prompt is still in the fill (300 ms, 420 MB/token),
+so this case proves correctness, not speed.
+
+**(b) 640 tokens at `-c 2048`, crossing n_kv 256 and 512** — byte-identical:
+
+| run | logits | argmax / fed | tail ms |
+|---|---|---|---|
+| ref (SEG=0) | `c30f01a8d676d64f` | `82d3653cfaf21968` | 43.66 |
+| SEG=48 | `c30f01a8d676d64f` | `82d3653cfaf21968` | 29.91 |
+| default (unset) | `c30f01a8d676d64f` | `82d3653cfaf21968` | 30.02 |
+| `SABAH_CUDA_GRAPH_SEG=0` | `c30f01a8d676d64f` | `82d3653cfaf21968` | 42.85 |
+
+The last two rows prove the default is the segmented path and that `=0` still
+restores the eager path (`moe_calls=0 native_calls=3200 segments=0` in
+`SEG_STATS`). The 640-token run at `-c 512` is not possible: a 53-token prompt
+plus 640 decodes exceeds n_ctx 512, and the hybrid memory does not shift.
+
+**(c) 128K chat, 2048 steps, slab 6.0e9, tail window (last 256 steps)** — the
+6 ms rule:
+
+| | baseline SEG=0 | SEG=48 | delta |
+|---|---|---|---|
+| tail ms/token | 42.74 | **30.36** | **-12.38 (-29.0%)** |
+| tok/s | 23.40 | **32.93** | +40.7% |
+| min / max | 40.1 / 132.4 | 28.3 / 119.5 | |
+| MiB/token (tail) | 1.9 | 1.8 | |
+| miss/token (tail) | 3 | 3 | |
+| fill | 91.01 s | 90.34 s | |
+| VRAM peak | 15859 MiB | 15872 MiB | |
+| WS peak / avail min | 8994 / 3182 MiB | 8994 / 3182 MiB | |
+
+The saving is GPU-side idle time, not launch or host overhead: `SEG_STATS` for
+this run reports 24.0 segments per Sabah split, 23.9 launches, 0.047 captures
+and 0.157 ms props + 0.139 ms launch + 0.011 ms capture host time per call,
+against 36.1 eager nodes. Captures over 2048 tokens: 120 (96 at the prefill to
+decode transition, 24 at the n_kv 256/512 boundaries) = 0.06 per token, and no
+step at either boundary exceeds its neighbours.
+
+### 16.7 The 6 ms stop rule
+
+Met, and measured in the target regime: **-12.38 ms/token** at 128K steady
+(42.74 -> 30.36), the same order as the graph-replay microbenchmark's
+12.8-14.4 ms and the `-c 512` result (41.81 -> 29.87). The projection written
+here before the run (30.8 ms) was right to 0.4 ms.
+
+### 16.8 State of the tree
+
+Committed on `phase-e-item4-graphs` as `5c313f7`, tagged `rollback-item4-base` at the
+pre-item-4 commit `f2b9354`. The llama.cpp changes are exported to
+`patches/llama.cpp/0003-sabah-cuda-graph-split-and-op-times.patch` (4 files:
+`ggml-cuda.cu`, `ggml-cuda/CMakeLists.txt`, `sabah-seg.{h,cpp}`). Nothing is
+pushed.
+
+### 16.9 Item 4 acceptance summary
+
+| gate | result |
+|---|---|
+| fusion decisions, SEG=0 vs SEG=48 | 10/10 split blocks identical |
+| `-c 131072`, 1024 tokens, logits/argmax/fed | byte-identical |
+| 640 tokens across n_kv 256/512, `-c 2048` | byte-identical |
+| 128K chat 2048 steps, tail | 42.74 -> 30.36 ms (rule: at least 6 ms) |
+| default path | segmented; `SABAH_CUDA_GRAPH_SEG=0` disables |
+| `sabah gate` | PASS (verify 2000/0, id reuse 768/0, mapped fallback 0) |
+| host RAM | WS peak 8994 MiB, same as baseline; avail min 3182 MiB |
+| driver / clocks | 32.0.16.1742, SM 2805-2857, mem 13801, P1, 34.9 W |

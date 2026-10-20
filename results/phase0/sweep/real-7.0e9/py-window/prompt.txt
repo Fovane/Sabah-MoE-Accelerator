@@ -1,0 +1,31 @@
+<|im_start|>system
+Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.<|im_end|>
+<|im_start|>user
+You are helping debug a production Python service. Here is the code and the traceback.
+
+```python
+def rolling_max(xs, k):
+    out = []
+    for i in range(len(xs) - k):
+        out.append(max(xs[i:i + k]))
+    return out
+
+def p95(values):
+    s = sorted(values)
+    return s[int(0.95 * len(s))]
+
+series = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]
+print(rolling_max(series, 3))
+print(p95(rolling_max(series, 3)))
+```
+
+Traceback (most recent call last):
+  File "stats.py", line 12, in <module>
+    print(p95(rolling_max(series, 3)))
+  File "stats.py", line 7, in p95
+    return s[int(0.95 * len(s))]
+IndexError: list index out of range
+
+Unit tests also report that the last window is missing from rolling_max and that p95 disagrees with numpy.percentile on small samples. Find the bugs, explain why each one is wrong, and give a corrected implementation that keeps the public signatures and handles empty input.<|im_end|>
+<|im_start|>assistant
+<think>
