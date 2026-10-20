@@ -339,3 +339,116 @@ at boost, which is consistent with 7.5 and 7.2.
   (9/30/2026), nvidia-smi 617.42, CUDA UMD 13.4, Windows 11 Pro 26300.9711 (26H2),
   KB5127694/KB5121794/KB5127648 (10/14) + KB5127647 (10/13), last boot 10/19 22:37,
   power plan Balanced, HAGS key absent (off), no application clocks set.
+
+## 8. Bit-exact tiling of `k_mul_mat_id` (Oct 20)
+
+`k_mul_mat_id` gives one row to a 128-thread block. With `nsub = k/32 = 80`
+(gate/up) only 80 of the 128 threads hold a partial; with `nsub = 20` (down) only
+20 do, and the block then costs two `__syncthreads` to add four warp sums of which
+three are zero.
+
+The reduction order that must be preserved is, exactly:
+
+1. virtual lane `v` holds `partial_v = 0; for (s = v; s < nsub; s += 128) partial_v += sub32(...)`
+   — with `nsub <= 128` this is a single `sub32` or nothing, i.e. `+0.0f`;
+2. each virtual warp reduces with `__shfl_down_sync` offsets 16, 8, 4, 2, 1;
+3. `r = 0.0f; r += w0; r += w1; r += w2; r += w3` in that serial order;
+4. `block_sum` returns `sh[4]`, so the value is warp-sum-ordered, not a tree over blocks.
+
+`sub32` is used unchanged, so its internal FMA contraction is identical by
+construction.
+
+### 8.1 Standalone proof (`tools/tile_exact.cu`)
+
+Both reductions are run on identical partials and compared as raw 32-bit words:
+20,000 rows × `nsub ∈ {1, 2, 19, 20, 21, 31, 32, 33, 63, 64, 65, 79, 80}`, with
+±0.0, denormals, ±inf, NaN and `FLT_MAX` mixed in.
+
+```
+nsub= 20 rows=20000  bitwise mismatches=0
+nsub= 80 rows=20000  bitwise mismatches=0
+TOTAL mismatches=0  (nsub20=0 nsub80=0)
+```
+
+**0 mismatches in 260,000 rows.** The earlier 8-lane tile was rejected for 24/256
+argmax flips; those flips were rounding from a genuinely different reduction order,
+not a bug in that kernel, and this construction does not have them.
+
+### 8.2 Two shapes, both bit-exact
+
+- `SABAH_LLAMA_TILE2=1` — 4 rows per 128-thread block, one physical warp per row,
+  the four virtual warps done as four sequential passes with the same tree.
+  Warp-uniform early exit for virtual warps entirely past `nsub` (a per-lane break
+  would have diverged out of `__shfl_down_sync` with a full mask — that bug was
+  caught before it was ever run).
+- `SABAH_LLAMA_TILE3=1` — the tree is the contract, but the 32-element dots that
+  feed it are independent, so they are computed 8 lanes per row (ten per thread,
+  which is where the latency hiding comes from) and their exact bits are staged in
+  shared memory by virtual-lane index. A full warp then replays the original tree
+  and the original serial warp-sum. 16 rows per 128-thread block. Guarded to
+  `nsub <= 96`.
+
+Both are off by default (`git diff` on the timing path is empty unless the env var
+is set).
+
+### 8.3 Integration: same tokens, measured speed
+
+`-c 512`, 9.8e9, `-n 256`, driver 32.0.16.1742, clocks 2812-2850 MHz, N=3:
+
+| config | fill s | warm-up ms | steady min/med/max ms | tok/s (med) |
+|---|---|---|---|---|
+| default | 11.19 / 11.20 / 11.45 | 72.8 / 73.2 / 73.4 | 60.36 / 60.56 / 60.92 | 16.51 |
+| TILE3 | 10.75 / 10.81 / 10.81 | 57.98 / 58.25 / 58.71 | 44.05 / 44.21 / 44.35 | 22.62 |
+
+Per-kernel, `SABAH_LLAMA_EVENTS=1`, same clocks:
+
+| config | gate/up us/call | gate/up ms/tok | down us/call | down ms/tok | kernel ms/tok | steady ms |
+|---|---|---|---|---|---|---|
+| default | 189.6 | 18.21 | 207.3 | 9.95 | 28.16 | 61.94 |
+| TILE2 | 186.4 | 17.90 | 190.1 | 9.13 | 27.03 | 60.59 |
+| TILE3 | 79.7 | 7.65 | 73.0 | 3.51 | 11.16 | 45.76 |
+
+TILE2's 4% is what the reduction alone is worth; TILE3's 2.5× comes from giving
+each thread ten independent dots instead of one, which is the same numbers in a
+different schedule.
+
+Bit-exactness of the integration, byte-comparing whole files:
+
+| output | bytes | default vs TILE2 | default vs TILE3 |
+|---|---|---|---|
+| `fed.i32` | 1,024 | identical | identical |
+| `argmax.i32` | 1,024 | identical | identical |
+| `logits.f32` | 254,279,680 | identical | identical |
+
+`sabah gate` PASSes on both paths (2000/0 verify, 768/0 id reuse, 0 mapped
+fallbacks).
+
+### 8.4 Where the time is now, and the graph re-estimate
+
+Measured per token at 44.21 ms: Sabah 11.16 + dense 12.4-12.8 + other ~3.5
+(section 2's split) = 27.1-27.5 ms of GPU, leaving ~16.7-17.1 ms of host/queue
+exposure — the same ~15.2 ms host gap Phase 0 measured, now a quarter of the token
+instead of a tenth of it.
+
+| step | ms/token | tok/s | basis |
+|---|---|---|---|
+| Phase 0 (58.6 ms) | 58.60 | 17.07 | measured, section 2 |
+| today, TILE3 | 44.21 | 22.62 | measured, 8.3 |
+| + CUDA graphs removing the ~12.7 ms host submission | ~31.5 | ~31.7 | 44.21 − 12.7 (Phase 0d's measured host saving), GPU work unchanged |
+| + dense at memory peak (12.6 → 9.3) | ~28.2 | ~35.5 | section 5(b), unchanged |
+
+So the graph work, deferred in the last round when the host gap was 21% of a 58.6 ms
+token, is now worth ~29% of a 44.2 ms token: it is the difference between 22.6 and
+~31.7 tok/s, i.e. it is what stands between TILE3 and the 30-35 tok/s target. It is
+still not started, per the instruction to defer it and only re-estimate here.
+
+### 8.5 Not attempted, and why
+
+- The slab/VRAm cliff at `-c 131072` (section 4) is untouched; all of the above is
+  `-c 512`.
+- No routing change: ids are still downloaded per layer (48 drains/token), the
+  reuse group is still 3, and no expert is pruned, substituted or skipped.
+- 30-35 tok/s is not reachable by further `k_mul_mat_id` reshaping alone: the MoE
+  kernels are 11.16 ms of a 44.21 ms token, so even a free MoE kernel leaves
+  ~33 ms and ~30 tok/s only with the host gap removed.
+
