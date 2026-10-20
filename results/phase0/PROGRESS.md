@@ -46,6 +46,27 @@ item                                              state      done   weight  poin
    Coding never steady (last 256 = 251.12 ms, 240.3 MiB/token). Prefill
    91.0 s/94.37 GB and 76.3 s/78.58 GB; 2048-token chunks re-stream the
    pool each time (113-134 GB per chunk). Report 15.
+
+## Next: B, layer-group-major prefill
+
+State: design note rev 2 written (`docs/PREFILL_GROUP_MAJOR.md`), nothing
+implemented, awaiting approval.
+
+Rev 2 resolves the two conditions requested before coding:
+
+* `apply()` is a commit, not a getter: once per ubatch, and the 11 later groups
+  replay the per-ubatch view (`i_cur`, `n_kv`, `head`, `rs_z`, `src0`, `rs_idx`)
+  instead of applying again. `n_kv` must be restored rather than recomputed
+  because it sizes the kq mask; `head` must be restored because `s_copy` and the
+  PLE conv write offset by it.
+* block-boundary invariants I1-I7: per-layer order, KV cell identity
+  (`T + N_decode <= n_ctx`), SSM cell chain, conv/PLE row chain, f32 hc handoff,
+  exact block partition, graph identity at group boundaries.
+
+Acceptance: byte-identical KV/SSM/conv state, logits and I/O counters vs the
+current chunked path (1630 tok and 4-8K), `sabah gate` PASS, item-4 decode
+numbers unchanged, 8K prefill >= 3x faster or stop.
+
 ## Gate
 
 The llama.cpp rebuild is the gate for items 4 and 5. It was restarted with
