@@ -115,6 +115,41 @@ static double g_t_ids   = 0;   // router id download and its stream synchronise
 static double g_t_ptr   = 0;   // pointer table upload and copy/compute hand-off
 static double g_t_prime = 0;   // residency snapshot: one table sweep per tensor
 
+// Optional CUDA-event probe (SABAH_LLAMA_EVENTS=1). Attributes a slowdown to the
+// kernels themselves (clock/width) or to the gaps around them (host submission,
+// queue depth) without nsys, which cannot intercept this DLL. Every k_mul_mat_id
+// launch is bracketed by an event pair; the pairs are read at the next router-id
+// drain, which already guarantees they have completed. Reported per token.
+struct sb_ev_pair {
+    cudaEvent_t a, b;
+    double host_ms;
+    int nt;
+    int rows;
+};
+static bool                 g_ev_enabled = false;
+static bool                 g_ev_checked = false;
+static double               g_ev_kernel_ms = 0;   // device time inside the kernels (decode rows only)
+static double               g_ev_launch_ms = 0;   // host time to submit each launch (decode rows only)
+static uint64_t             g_ev_calls = 0;
+static double               g_ev_kernel_ms_all = 0; // every call, for reference
+static double               g_ev_launch_ms_all = 0;
+static uint64_t             g_ev_calls_all = 0;
+static double               g_ev_kernel_ms_gu = 0;  // decode gate/up calls (rows < 1024)
+static uint64_t             g_ev_calls_gu = 0;
+static double               g_ev_kernel_ms_dn = 0;  // decode down calls (rows >= 1024)
+static uint64_t             g_ev_calls_dn = 0;
+static std::vector<sb_ev_pair> g_ev_pending;
+static std::vector<sb_ev_pair> g_ev_pool;
+
+static bool sb_ev_on() {
+    if (!g_ev_checked) {
+        g_ev_checked = true;
+        const char * v = std::getenv("SABAH_LLAMA_EVENTS");
+        g_ev_enabled = v != nullptr && v[0] != 0 && v[0] != '0';
+    }
+    return g_ev_enabled;
+}
+
 struct sb_phase_timer {
     std::chrono::steady_clock::time_point t0;
     double * acc;
@@ -2879,6 +2914,27 @@ static void sb_report_diag() {
                      g_t_ptr / calls * 1000.0, g_t_prime / calls * 1000.0,
                      g_t_ids + g_t_fetch + g_t_slot + g_t_ptr + g_t_prime);
     }
+    if (sb_ev_on()) {
+        const double dcalls = g_ev_calls > 0 ? (double) g_ev_calls : 1.0;
+        const double dtok = dcalls / 144.0;
+        std::fprintf(stderr,
+                     "SABAH_EV decode_calls=%llu kernel_ms=%.1f launch_ms=%.1f "
+                     "| per_decode_token ms: kernel=%.2f launch=%.2f "
+                     "| per_call us: kernel=%.1f launch=%.1f "
+                     "| gu calls=%llu kernel_ms=%.1f per_token=%.2f per_call_us=%.1f "
+                     "| dn calls=%llu kernel_ms=%.1f per_token=%.2f per_call_us=%.1f "
+                     "| all_calls=%llu kernel_ms=%.1f launch_ms=%.1f\n",
+                     (unsigned long long) g_ev_calls, g_ev_kernel_ms, g_ev_launch_ms,
+                     g_ev_kernel_ms / dtok, g_ev_launch_ms / dtok,
+                     g_ev_kernel_ms / dcalls * 1000.0, g_ev_launch_ms / dcalls * 1000.0,
+                     (unsigned long long) g_ev_calls_gu, g_ev_kernel_ms_gu,
+                     g_ev_kernel_ms_gu / dtok,
+                     g_ev_calls_gu ? g_ev_kernel_ms_gu / g_ev_calls_gu * 1000.0 : 0.0,
+                     (unsigned long long) g_ev_calls_dn, g_ev_kernel_ms_dn,
+                     g_ev_kernel_ms_dn / dtok,
+                     g_ev_calls_dn ? g_ev_kernel_ms_dn / g_ev_calls_dn * 1000.0 : 0.0,
+                     (unsigned long long) g_ev_calls_all, g_ev_kernel_ms_all, g_ev_launch_ms_all);
+    }
     std::fprintf(stderr,
                  "SABAH_IDS reused=%llu group_max=%llu check=%d check_ok=%llu check_fail=%llu\n",
                  (unsigned long long) g_id_reuse, (unsigned long long) g_id_group_max,
@@ -3317,6 +3373,31 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
                 ++g_id_check_fail;
             }
         }
+        // The synchronise above drained the compute stream, so every event pair
+        // recorded since the last drain has completed and can be read now.
+        if (sb_ev_on() && !g_ev_pending.empty()) {
+            for (const auto & p : g_ev_pending) {
+                float ms = 0.f;
+                if (cudaEventElapsedTime(&ms, p.a, p.b) == cudaSuccess) {
+                    g_ev_kernel_ms_all += (double) ms;
+                    if (p.nt == 1) g_ev_kernel_ms += (double) ms;
+                }
+                g_ev_launch_ms_all += p.host_ms;
+                ++g_ev_calls_all;
+                if (p.nt == 1) {
+                    g_ev_launch_ms += p.host_ms;
+                    ++g_ev_calls;
+                    if (p.rows < 1024) {
+                        g_ev_kernel_ms_gu += (double) ms;
+                        ++g_ev_calls_gu;
+                    } else {
+                        g_ev_kernel_ms_dn += (double) ms;
+                        ++g_ev_calls_dn;
+                    }
+                }
+            }
+            g_ev_pending.clear();
+        }
     }
     last_ids_key   = ids_key;
     last_ids_bytes = ids_bytes;
@@ -3455,15 +3536,41 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
                    std::chrono::steady_clock::now() - t_ptr0).count();
 
     dim3 grid((unsigned) rows, (unsigned) n_ids, (unsigned) n_tokens);
+    const bool ev_on = sb_ev_on();
+    sb_ev_pair ev{};
+    auto ev_t0 = std::chrono::steady_clock::now();
+    if (ev_on) {
+        while (g_ev_pool.size() <= g_ev_pending.size()) {
+            cudaEvent_t a = nullptr, b = nullptr;
+            if (!ck(cudaEventCreateWithFlags(&a, cudaEventDefault), "Sabah event create") ||
+                !ck(cudaEventCreateWithFlags(&b, cudaEventDefault), "Sabah event create")) {
+                return -1;
+            }
+            g_ev_pool.push_back({a, b, 0.0});
+        }
+        ev = g_ev_pool[g_ev_pending.size()];
+        if (!ck(cudaEventRecord(ev.a, compute_stream), "Sabah event record")) {
+            return -1;
+        }
+    }
     k_mul_mat_id<<<grid, NT, 0, compute_stream>>>(
         (const void * const *) d_ptrs,
         (const float *) d_x,
         d_dst,
         rows, k, n_ids, n_tokens,
         row_stride, x_id_stride, x_rows, x_token_stride,
-        dst_id_stride, dst_token_stride, qt);
-    if (!ck(cudaGetLastError(), "Sabah MUL_MAT_ID launch")) {
+        dst_id_stride, dst_token_stride, qt);    if (!ck(cudaGetLastError(), "Sabah MUL_MAT_ID launch")) {
         return -1;
+    }
+    if (ev_on) {
+        if (!ck(cudaEventRecord(ev.b, compute_stream), "Sabah event record")) {
+            return -1;
+        }
+        ev.host_ms = std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - ev_t0).count();
+        ev.nt = n_tokens;
+        ev.rows = rows;
+        g_ev_pending.push_back(ev);
     }
 
     sb_selfcheck(source, expert_stride, row_stride, d_x, x_id_stride, x_rows, x_token_stride,

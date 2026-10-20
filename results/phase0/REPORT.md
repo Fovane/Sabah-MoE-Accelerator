@@ -213,67 +213,129 @@ The KV type is worth 180-276 MiB and is not the deciding factor.
   oversubscription into shared system memory), not inside the driver.
 - No kernel change has been made; Phase 2 is still to be implemented and gated.
 
-## 7. Regression triage (Oct 20): steady-state 58.6 ms -> 88.9 ms at `-c 512`
+## 7. Regression triage (Oct 20): the 88.9 ms episode was a low-clock state
 
-Same DLL, same context, same slab (9.8e9), same flags as Phase 0. The token time
-rose from 58.6 ms (17.1 tok/s) to 88.9 ms (11.2 tok/s), identical with the rebuilt
-DLL and with the untouched Phase-0 DLL, so it is not a code change.
+**This section replaces an earlier conclusion in this file that blamed WDDM time
+slicing among concurrent GPU processes. That was wrong, and the measurements
+below are what refute it.**
 
-Measured environment:
-- Driver: NVIDIA 32.0.16.1742, dated 9/30/2026; nvidia-smi 617.42, CUDA UMD 13.4.
-- Windows 11 Pro, build 26300. Windows Updates KB5127694, KB5121794, KB5127648
-  (10/14/2026) and KB5127647 (10/13/2026) installed recently; no driver-file change
-  confirmed on Oct 20.
+Same DLL, same context, same slab (9.8e9), same flags as Phase 0. For part of the
+night the token ran at 88.9 ms; it now runs at 60.5 ms and is reproducible.
 
-Slab sweep at `-c 512`, `-n 256`, 3 runs each (min/median/max ms):
+### 7.1 What changed: `ids` per call, nothing else
 
-| slab | run0 | run1 | run2 | median | tok/s |
+`SABAH_PHASE` splits each of the 144 calls per token into phases. Comparing three
+states of the same binary (driver 32.0.16.1742, `-c 512`, 9.8e9):
+
+| state | ids us/call | fetch us/call | wait us/call | launch us/call | steady ms |
 |---|---|---|---|---|---|
-| 6.0e9 | 88.90 | 88.89 | 88.90 | 88.90 | 11.25 |
-| 7.0e9 | 88.85 | 88.85 | 88.85 | 88.85 | 11.25 |
-| 8.0e9 | 87.86 | 87.86 | 87.86 | 87.86 | 11.38 |
-| 9.8e9 | 89.58 | 89.54 | 89.23 | 89.54 | 11.17 |
+| Phase 0 (23:19, same boot) | 243 | 477 | 468 | - | 58.59 |
+| the 88.9 ms episode (00:41) | 442 | 479 | 469 | - | 88.47 |
+| now (12:00) | 256 | 474 | 464 | - | 61.06 |
 
-**Slab does not explain the regression:** every slab lands at ~88-89 ms at `-c 512`,
-whereas Phase 0 measured 58.3 ms at `-c 512`/9.8e9. The slab only matters at
-`-c 131072` (where 9.8e9 oversubscribes VRAM).
+`fetch` and `wait` are identical in all three. Only `ids` moved. 144 calls × 186 us
+= 26.8 ms/token, which is the whole regression (88.5 − 61.7). `ids` is the router-id
+download *and its stream synchronise*, so it absorbs the time the GPU needs to
+finish the work queued before it.
 
-Windows GPU-memory counters during the run (`\GPU Adapter Memory(*)` and per-process
-`\GPU Process Memory(*)`), median:
+### 7.2 The clock state, measured (not inferred)
 
-| counter | value |
-|---|---|
-| adapter dedicated | 15,361 MiB |
-| adapter shared | 130 MiB |
-| our dedicated | 14,894 MiB |
-| our shared | 110 MiB |
-| other-process dedicated | 642 MiB |
+`nvidia-smi --query-gpu` sampled every 400 ms during a decode; min/median/max over
+the steady window. Max SM clock on this board is 3090 MHz, max memory 14001 MHz.
 
-Shared usage is 110 MiB — **not** the VRAM cliff (the cliff is the 3.6 GB of shared
-seen at `-c 131072`/9.8e9). Other processes hold ~642 MiB dedicated (dwm 356, OpenCode
-92, msedge 85, Twinkle Tray 40, plus smaller), so closing them frees at most ~0.6 GB
-and dwm cannot be closed; VRAM headroom is not the binding constraint at `-c 512`.
+| state | SM MHz | mem MHz | P-state | power | temp | steady ms |
+|---|---|---|---|---|---|---|
+| idle | 427-547 | 405 | P8 | 8.4 W | 30 C | - |
+| the 88.9 ms episode (dmon) | 1342-1590 | 7001 | - | 17-35 W | 45 C | 88.47 |
+| now, unpinned | 2730/2842/2850 | 13801 | P1/P3 | 43.5 W | 36 C | 61.07 |
+| pinned 2800-3000 | 2812/2827/2842 | 13801 | P1 | 71.9 W | 50 C | 60.67 |
+| pinned 1400-1500 | 1410/1485/1492 | 7001 | P3 | 21.5 W | 38 C | 101.72 |
 
-Root-cause elimination:
-- GPU clocks: boost to ~1.4-1.5 GHz / ~30 W during decode; not stuck at P8 (idle). Not power/throttle.
-- VRAM pressure at `-c 512`: none (shared 110 MiB). Not the cliff.
-- Launch submission cost: `launch_latency.cu` re-measured = 3.42 us/launch (GPU busy),
-  48x(empty+D2H+sync) = 812 us/token — identical to Phase 0. Not host launch cost.
-- misses/token: 135.1, identical to Phase 0's 135.7; bytes fetched identical (23.4 GB).
-  Tier behavior unchanged.
-- CPU load during decode: ~12-15% (not pegged). Not host-CPU contention on submissions.
+The episode ran at roughly half the SM clock and exactly half the memory clock.
+No throttle reason fires (`clocks_throttle_reasons.active` is constant
+`0x400` = reliability, not power or thermal; power was 35 W of a 180 W limit,
+temperature 45 C of ~90 C).
 
-What remains: **GPU-side**. With CPU idle, clocks boosted, and launch cost unchanged,
-the extra ~30 ms/token is stretched kernel wall-clock time. The machine now runs
-several concurrent GPU users (dwm, msedge, OpenCode, explorer, ShellExperienceHost — all
-C+G). WDDM time-slices the GPU among them, so Sabah's expert kernels take longer
-wall-clock per call than when Phase 0 was measured. nsys cannot confirm this directly
-because Sabah loads `sabah_rt.dll` via `LoadLibrary` after process start, so nsys's
-CUDA interposition misses the runtime's calls.
+### 7.3 Pinning the clock old-style, both directions (reversible)
 
-No driver rollback was performed (driver changes require asking). No other processes
-were closed. The 88.9 ms is treated as the current baseline; Phase 2 projections
-(section 5) are restated against it: host submission removal (a) targets the ~15 ms
-host gap, and kernel efficiency (b) is contract-blocked on bit-exact greedy equality
-(tiling the `k_mul_mat_id` reduction is 30% faster but changes FP rounding and breaks
-greedy-token equality, so it is not enabled).
+`nvidia-smi -lgc 2800,3000` / `-lmc 13000,14001`, three steady runs each, then
+`-rgc` / `-rmc` (restored; idle returned to 442 MHz / P8):
+
+| condition | run0 | run1 | run2 | median ms | tok/s |
+|---|---|---|---|---|---|
+| unpinned, now | 61.06 | 60.49 | 60.72 | 60.72 | 16.47 |
+| pinned near boost | 60.67 | 60.77 | 60.50 | 60.67 | 16.48 |
+| pinned at the episode's clock | 101.72 | - | - | 101.72 | 9.83 |
+| unpinned, after restore | 60.38 | - | - | 60.38 | 16.56 |
+
+Pinning low reproduces the slowdown and then some (101.7 vs 88.5, because 1485 MHz
+is a little lower than the episode's ~1.5 GHz average). Pinning high changes
+nothing because the machine is already at boost.
+
+### 7.4 Kernel time vs gap time (CUDA events, since nsys cannot see this DLL)
+
+nsys 2026.3.2 captures kernels for a trivial CUDA binary (80 kernel rows), but for
+the diag it records 9 runtime calls and zero kernels: the runtime is loaded with
+`LoadLibrary` and CUPTI never sees its launches. (`C:\Temp\nsys\ctx128.sqlite`,
+cited as a Phase 0 kernel trace, is in fact a *non-Sabah* run: 121,843 kernels with
+no `k_gate_up`/`k_down`, so it was never a Sabah kernel baseline either.)
+
+So `sabah_rt.cu` now has an env-gated probe, `SABAH_LLAMA_EVENTS=1`: each
+`k_mul_mat_id` launch is bracketed by a CUDA event pair, and the pairs are read at
+the next router drain, which already proves they completed. `host_ms` is the
+matching submission time. Times are per decode token (144 calls) at 2842 MHz unless
+stated; driver 32.0.16.1742:
+
+| condition | gate/up us | down us | kernel ms/tok | launch ms/tok | steady ms |
+|---|---|---|---|---|---|
+| 2842 MHz | 189.6 | 207.3 | 28.16 | 2.12 | 61.94 |
+| 1485 MHz (pinned) | - | - | 53.04 (368.3 us/call) | 1.96 | 101.83 |
+
+Kernel time scales with the clock (194.8 → 368.3 us/call = ×1.89 against a clock
+ratio of 1.91) and host submission does not move (14.7 → 13.6 us/call). That is the
+decisive split: **the kernels stretched, the gaps did not.** The `ids` phase grew
+because it waits on those longer kernels, not because the host got slower.
+
+### 7.5 What did *not* cause it
+
+Per-process GPU engine utilisation during the current decode
+(`\GPU Engine(*)\Utilization Percentage`, steady window, 0.5 s samples):
+
+| process | engine | mean % | max % |
+|---|---|---|---|
+| llama-sabah (the workload) | 3D | 56.4 | 81.4 |
+| llama-sabah | copy | 2.2 | 4.3 |
+| OpenCode | 3D | 0.7 | 0.8 |
+| System | copy | 0.4 | 0.7 |
+| dwm | - | 0 | 0 |
+
+**Nothing else is using the GPU.** dwm is at zero, so the display path is not
+involved. (The CPU does have an AMD Radeon iGPU, so moving the monitor to the iGPU
+header is possible, but there is nothing to move away from.)
+
+Detached benchmark (runs without this session or the UI; `tools/a5_detached_bench.ps1`,
+60 s countdown before the second condition), driver 32.0.16.1742, clocks 2812-2850:
+
+| condition | run0 | run1 | run2 | median ms |
+|---|---|---|---|---|
+| as-is | 61.23 | 60.85 | 60.99 | 60.99 |
+| after 60 s with apps closed | 60.63 | 60.51 | 60.70 | 60.63 |
+| clocks pinned high | 60.85 | 60.85 | 60.77 | 60.85 |
+
+Closing applications and pinning the clock both change nothing once the machine is
+at boost, which is consistent with 7.5 and 7.2.
+
+### 7.6 Conclusion and the consequence for measurement
+
+- The 88.9 ms episode was the GPU sitting at ~1.45 GHz / 7 GHz instead of 2.84 GHz /
+  13.8 GHz. Kernel wall-clock roughly doubles; the host side is unchanged.
+- Nothing in the code, the slab, VRAM, the launch path or another process explains
+  it; the clock state came and went on its own within one boot session
+  (Phase 0 58.6 ms at 23:19, episode 88.5 ms at 00:41, 60.5 ms at 12:00).
+- Phase 0's 58.6 ms is therefore not wrong, and neither number is a regression. Any
+  benchmark that does not record (or pin) the clock is not reproducible on this
+  machine; every table above carries the clock state for that reason.
+- Environment in which all of the above was measured: driver 32.0.16.1742
+  (9/30/2026), nvidia-smi 617.42, CUDA UMD 13.4, Windows 11 Pro 26300.9711 (26H2),
+  KB5127694/KB5121794/KB5127648 (10/14) + KB5127647 (10/13), last boot 10/19 22:37,
+  power plan Balanced, HAGS key absent (off), no application clocks set.
