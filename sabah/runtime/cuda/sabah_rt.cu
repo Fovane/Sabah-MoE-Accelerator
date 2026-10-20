@@ -150,6 +150,33 @@ static bool sb_ev_on() {
     return g_ev_enabled;
 }
 
+// Optional 4-rows-per-block k_mul_mat_id tile (SABAH_LLAMA_TILE2=1). It is a
+// throughput change only: the floating-point reduction order is reproduced
+// exactly, so the greedy token stream must not move by one bit.
+static bool                 g_tile2_enabled = false;
+static bool                 g_tile2_checked = false;
+
+static bool sb_tile2_on() {
+    if (!g_tile2_checked) {
+        g_tile2_checked = true;
+        const char * v = std::getenv("SABAH_LLAMA_TILE2");
+        g_tile2_enabled = v != nullptr && v[0] != 0 && v[0] != '0';
+    }
+    return g_tile2_enabled;
+}
+
+static bool                 g_tile3_enabled = false;
+static bool                 g_tile3_checked = false;
+
+static bool sb_tile3_on() {
+    if (!g_tile3_checked) {
+        g_tile3_checked = true;
+        const char * v = std::getenv("SABAH_LLAMA_TILE3");
+        g_tile3_enabled = v != nullptr && v[0] != 0 && v[0] != '0';
+    }
+    return g_tile3_enabled;
+}
+
 struct sb_phase_timer {
     std::chrono::steady_clock::time_point t0;
     double * acc;
@@ -2783,6 +2810,175 @@ __global__ void k_mul_mat_id(const void * const * __restrict__ weights,
     }
 }
 
+// Bit-exact tiling of the same op: four output rows per 128-thread block, one
+// physical warp per row. The arithmetic is deliberately NOT simplified. Virtual
+// lane v of warp w owns exactly the partial that thread v owns in
+// k_mul_mat_id (sub32 over s = v, v + NT, ...), each virtual warp is reduced
+// with the same shfl_down 16,8,4,2,1 tree, and the four warp sums are added in
+// the same serial 0 + w0 + w1 + w2 + w3 order. A virtual warp whose lanes are
+// all beyond nsub contributes exactly +0.0f, which is the identity for the
+// running sum, so those passes are skipped. Only lane 0 writes, so the block
+// needs neither shared memory nor __syncthreads.
+__global__ void k_mul_mat_id_tile(const void * const * __restrict__ weights,
+                                  const float * __restrict__ x,
+                                  float * __restrict__ dst,
+                                  int rows, int k, int n_ids, int n_tokens,
+                                  size_t row_stride,
+                                  size_t x_id_stride, int x_rows, size_t x_token_stride,
+                                  size_t dst_id_stride, size_t dst_token_stride,
+                                  int qt) {
+    const int lane = (int) (threadIdx.x & 31u);
+    const int row  = (int) blockIdx.x * NWARP + (int) (threadIdx.x >> 5);
+    const int id_i = (int) blockIdx.y;
+    const int token = (int) blockIdx.z;
+    if (row >= rows || id_i >= n_ids || token >= n_tokens) {
+        return;
+    }
+
+    const void * expert = weights[(size_t) token * n_ids + id_i];
+    const uint8_t * row_ptr = (const uint8_t *) expert + (size_t) row * row_stride;
+#if SABAH_SENTINEL == 2
+    const int x_row = x_rows > 1 ? (id_i + 1) % x_rows : 0;
+#else
+    const int x_row = id_i % x_rows;
+#endif
+#if SABAH_SENTINEL == 3
+    const int x_tok = (token + 1) % n_tokens;
+#else
+    const int x_tok = token;
+#endif
+    const float * x_ptr = (const float *) ((const uint8_t *) x
+                        + (size_t) x_row * x_id_stride
+                        + (size_t) x_tok * x_token_stride);
+
+    const int nsub = k / 32;
+    // All virtual-warp partials are independent, so compute them before any
+    // reduction. That is bit-for-bit the same arithmetic (each lane still sums
+    // exactly the s = v, v + NT, ... its virtual lane owns) but the three
+    // dependent 32-MAC chains overlap instead of serialising, which is the
+    // whole cost of this kernel.
+    float part[NWARP];
+    #pragma unroll
+    for (int w = 0; w < NWARP; ++w) {
+        part[w] = 0.0f;
+        if (w * 32 < nsub) {
+            const int v = w * 32 + lane;
+            for (int s = v; s < nsub; s += NT) {
+                part[w] += sub32(qt, row_ptr, s, x_ptr + (size_t) s * 32);
+            }
+        }
+    }
+    float value = 0.0f;
+    #pragma unroll
+    for (int w = 0; w < NWARP; ++w) {
+        // Warp-uniform: a virtual warp entirely past nsub sums to exactly +0.0f.
+        if (w * 32 >= nsub) {
+            break;
+        }
+        float p = part[w];
+        #pragma unroll
+        for (int o = 16; o > 0; o >>= 1) {
+            p += __shfl_down_sync(0xffffffffu, p, o);
+        }
+        value += __shfl_sync(0xffffffffu, p, 0);
+    }
+    if (lane == 0) {
+        uint8_t * out_ptr = (uint8_t *) dst + (size_t) token * dst_token_stride
+                          + (size_t) id_i * dst_id_stride
+                          + (size_t) row * sizeof(float);
+        *(float *) out_ptr = value;
+    }
+}
+
+// Bit-exact tile, second shape (SABAH_LLAMA_TILE3=1). The reduction tree is the
+// authoritative order, but the 32-element dots that feed it are independent of
+// each other. So the dots are computed 8 lanes per row (ten per thread, which is
+// where the latency hiding comes from), their exact float bits are staged in
+// shared memory indexed by virtual lane, and then a full warp replays the
+// original shfl_down 16,8,4,2,1 tree and the original serial warp-sum order.
+// Sixteen rows per 128-thread block.
+#define SB_T3_ROWS 16
+#define SB_T3_LANES 8
+#define SB_T3_V 96      /* 3 virtual warps: nsub <= 96 */
+__global__ void k_mul_mat_id_tile3(const void * const * __restrict__ weights,
+                                   const float * __restrict__ x,
+                                   float * __restrict__ dst,
+                                   int rows, int k, int n_ids, int n_tokens,
+                                   size_t row_stride,
+                                   size_t x_id_stride, int x_rows, size_t x_token_stride,
+                                   size_t dst_id_stride, size_t dst_token_stride,
+                                   int qt) {
+    __shared__ float sh[SB_T3_ROWS][SB_T3_V];
+
+    const int r_in = (int) (threadIdx.x >> 3);
+    const int l8   = (int) (threadIdx.x & 7u);
+    const int id_i = (int) blockIdx.y;
+    const int token = (int) blockIdx.z;
+    const int row  = (int) blockIdx.x * SB_T3_ROWS + r_in;
+
+    const void * expert = weights[(size_t) token * n_ids + id_i];
+    const uint8_t * row_ptr = (const uint8_t *) expert + (size_t) row * row_stride;
+#if SABAH_SENTINEL == 2
+    const int x_row = x_rows > 1 ? (id_i + 1) % x_rows : 0;
+#else
+    const int x_row = id_i % x_rows;
+#endif
+#if SABAH_SENTINEL == 3
+    const int x_tok = (token + 1) % n_tokens;
+#else
+    const int x_tok = token;
+#endif
+    const float * x_ptr = (const float *) ((const uint8_t *) x
+                        + (size_t) x_row * x_id_stride
+                        + (size_t) x_tok * x_token_stride);
+
+    const int nsub = k / 32;
+    const bool valid = row < rows && id_i < n_ids && token < n_tokens;
+    float acc[SB_T3_V / SB_T3_LANES];
+    #pragma unroll
+    for (int j = 0; j < SB_T3_V / SB_T3_LANES; ++j) {
+        const int v = l8 + SB_T3_LANES * j;
+        acc[j] = 0.0f;
+        if (valid && v < nsub) {
+            for (int s = v; s < nsub; s += NT) {
+                acc[j] += sub32(qt, row_ptr, s, x_ptr + (size_t) s * 32);
+            }
+        }
+        sh[r_in][v] = acc[j];
+    }
+    __syncthreads();
+
+    const int lane = (int) (threadIdx.x & 31u);
+    const int warp = (int) (threadIdx.x >> 5);
+    #pragma unroll
+    for (int j = 0; j < SB_T3_ROWS / NWARP; ++j) {
+        const int r = warp + NWARP * j;
+        const int rrow = (int) blockIdx.x * SB_T3_ROWS + r;
+        if (rrow >= rows) {
+            continue;
+        }
+        float value = 0.0f;
+        #pragma unroll
+        for (int w = 0; w < NWARP; ++w) {
+            if (w * 32 >= nsub) {
+                break;
+            }
+            float p = sh[r][w * 32 + lane];
+            #pragma unroll
+            for (int o = 16; o > 0; o >>= 1) {
+                p += __shfl_down_sync(0xffffffffu, p, o);
+            }
+            value += __shfl_sync(0xffffffffu, p, 0);
+        }
+        if (lane == 0) {
+            uint8_t * out_ptr = (uint8_t *) dst + (size_t) token * dst_token_stride
+                              + (size_t) id_i * dst_id_stride
+                              + (size_t) rrow * sizeof(float);
+            *(float *) out_ptr = value;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // standalone dequantizer - used only to prove the kernels above read the
 // formats correctly, by diffing against gguf-py.
@@ -2918,12 +3114,14 @@ static void sb_report_diag() {
         const double dcalls = g_ev_calls > 0 ? (double) g_ev_calls : 1.0;
         const double dtok = dcalls / 144.0;
         std::fprintf(stderr,
-                     "SABAH_EV decode_calls=%llu kernel_ms=%.1f launch_ms=%.1f "
+                     "SABAH_EV tile2=%d tile3=%d decode_calls=%llu kernel_ms=%.1f launch_ms=%.1f "
                      "| per_decode_token ms: kernel=%.2f launch=%.2f "
                      "| per_call us: kernel=%.1f launch=%.1f "
                      "| gu calls=%llu kernel_ms=%.1f per_token=%.2f per_call_us=%.1f "
                      "| dn calls=%llu kernel_ms=%.1f per_token=%.2f per_call_us=%.1f "
                      "| all_calls=%llu kernel_ms=%.1f launch_ms=%.1f\n",
+                     sb_tile2_on() ? 1 : 0,
+                     sb_tile3_on() ? 1 : 0,
                      (unsigned long long) g_ev_calls, g_ev_kernel_ms, g_ev_launch_ms,
                      g_ev_kernel_ms / dtok, g_ev_launch_ms / dtok,
                      g_ev_kernel_ms / dcalls * 1000.0, g_ev_launch_ms / dcalls * 1000.0,
@@ -3536,6 +3734,13 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
                    std::chrono::steady_clock::now() - t_ptr0).count();
 
     dim3 grid((unsigned) rows, (unsigned) n_ids, (unsigned) n_tokens);
+    const bool tile3 = sb_tile3_on() && (k / 32) <= SB_T3_V;
+    const bool tile2 = !tile3 && sb_tile2_on();
+    if (tile3) {
+        grid.x = (unsigned) ((rows + SB_T3_ROWS - 1) / SB_T3_ROWS);
+    } else if (tile2) {
+        grid.x = (unsigned) ((rows + NWARP - 1) / NWARP);
+    }
     const bool ev_on = sb_ev_on();
     sb_ev_pair ev{};
     auto ev_t0 = std::chrono::steady_clock::now();
@@ -3553,13 +3758,32 @@ SABAH_API int sabah_rt_mul_mat_id_v2(
             return -1;
         }
     }
-    k_mul_mat_id<<<grid, NT, 0, compute_stream>>>(
-        (const void * const *) d_ptrs,
-        (const float *) d_x,
-        d_dst,
-        rows, k, n_ids, n_tokens,
-        row_stride, x_id_stride, x_rows, x_token_stride,
-        dst_id_stride, dst_token_stride, qt);    if (!ck(cudaGetLastError(), "Sabah MUL_MAT_ID launch")) {
+    if (tile3) {
+        k_mul_mat_id_tile3<<<grid, NT, 0, compute_stream>>>(
+            (const void * const *) d_ptrs,
+            (const float *) d_x,
+            d_dst,
+            rows, k, n_ids, n_tokens,
+            row_stride, x_id_stride, x_rows, x_token_stride,
+            dst_id_stride, dst_token_stride, qt);
+    } else if (tile2) {
+        k_mul_mat_id_tile<<<grid, NT, 0, compute_stream>>>(
+            (const void * const *) d_ptrs,
+            (const float *) d_x,
+            d_dst,
+            rows, k, n_ids, n_tokens,
+            row_stride, x_id_stride, x_rows, x_token_stride,
+            dst_id_stride, dst_token_stride, qt);
+    } else {
+        k_mul_mat_id<<<grid, NT, 0, compute_stream>>>(
+            (const void * const *) d_ptrs,
+            (const float *) d_x,
+            d_dst,
+            rows, k, n_ids, n_tokens,
+            row_stride, x_id_stride, x_rows, x_token_stride,
+            dst_id_stride, dst_token_stride, qt);
+    }
+    if (!ck(cudaGetLastError(), "Sabah MUL_MAT_ID launch")) {
         return -1;
     }
     if (ev_on) {
