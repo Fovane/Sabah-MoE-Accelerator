@@ -1074,15 +1074,17 @@ plus 640 decodes exceeds n_ctx 512, and the hybrid memory does not shift.
 | MiB/token (tail) | 1.9 | 1.8 | |
 | miss/token (tail) | 3 | 3 | |
 | fill | 91.01 s | 90.34 s | |
-| VRAM peak | 15859 MiB | 15872 MiB | |
-| WS peak / avail min | 8994 / 3182 MiB | 8994 / 3182 MiB | |
+| VRAM peak | 15745 MiB | 15872 MiB (+127) | |
+| WS peak / avail min | 8943 / 2841 MiB | 8994 / 3182 MiB | |
 
 The saving is GPU-side idle time, not launch or host overhead: `SEG_STATS` for
 this run reports 24.0 segments per Sabah split, 23.9 launches, 0.047 captures
 and 0.157 ms props + 0.139 ms launch + 0.011 ms capture host time per call,
 against 36.1 eager nodes. Captures over 2048 tokens: 120 (96 at the prefill to
-decode transition, 24 at the n_kv 256/512 boundaries) = 0.06 per token, and no
-step at either boundary exceeds its neighbours.
+decode transition, 24 at the n_kv 256/512 boundaries) = 0.06 per token, and at both
+boundaries the segmented step is no slower than the eager path at the same index
+(249 vs 258 ms at step 256, 225 vs 243 ms at step 512; the 560-600 ms steps
+right after 256 exist on both sides).
 
 ### 16.7 The 6 ms stop rule
 
@@ -1093,7 +1095,7 @@ here before the run (30.8 ms) was right to 0.4 ms.
 
 ### 16.8 State of the tree
 
-Committed on `phase-e-item4-graphs` as `5c313f7`, tagged `rollback-item4-base` at the
+Committed on `phase-e-item4-graphs` as `5a44de9`, tagged `rollback-item4-base` at the
 pre-item-4 commit `f2b9354`. The llama.cpp changes are exported to
 `patches/llama.cpp/0003-sabah-cuda-graph-split-and-op-times.patch` (4 files:
 `ggml-cuda.cu`, `ggml-cuda/CMakeLists.txt`, `sabah-seg.{h,cpp}`). Nothing is
@@ -1109,5 +1111,5 @@ pushed.
 | 128K chat 2048 steps, tail | 42.74 -> 30.36 ms (rule: at least 6 ms) |
 | default path | segmented; `SABAH_CUDA_GRAPH_SEG=0` disables |
 | `sabah gate` | PASS (verify 2000/0, id reuse 768/0, mapped fallback 0) |
-| host RAM | WS peak 8994 MiB, same as baseline; avail min 3182 MiB |
+| host RAM | WS peak 8943 -> 8994 MiB (+51 MiB, the segment table) |
 | driver / clocks | 32.0.16.1742, SM 2805-2857, mem 13801, P1, 34.9 W |

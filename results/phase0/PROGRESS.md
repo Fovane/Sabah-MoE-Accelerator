@@ -24,7 +24,7 @@ item                                              state      done   weight  poin
 | `phase-d-clock-hygiene` | `e313435` | clocks.py, invalidity rule, pinning evidence, docs/CLOCK_HYGIENE.md, REPORT §9-10 |
 | `phase-d-clock-hygiene` | `3393333` | tools/status.py, PROGRESS.md, fallback-test metadata |
 | `phase-e-item3-5` | `f2b9354` | item 3 sweep + tail steady, item 5 byte model, graph replay probe, REPORT §11-14 |
-| `phase-e-item4-graphs` | `5c313f7` | item 4: segmented CUDA graphs, default on, acceptance matrix, patch 0003, REPORT 16 |
+| `phase-e-item4-graphs` | `5a44de9` | item 4: segmented CUDA graphs, default on, acceptance matrix, patch 0003, REPORT 16 |
 ## What "done" means per item
 
 1. DONE. Four byte-identical pairs (2 prompts x `-c 2048` / `-c 131072`, 1024
