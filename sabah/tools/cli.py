@@ -176,6 +176,8 @@ def cmd_bench(args):
         argv += ["--trace", args.trace]
     if args.json:
         argv += ["--json-out", args.json]
+    if getattr(args, "allow_low_clock", False):
+        argv += ["--allow-low-clock"]
     return bench_moe.main(argv)
 
 
@@ -396,6 +398,8 @@ def main(argv=None):
     a.add_argument("--slots", default="16,64,256,512")
     a.add_argument("--bank-mode", default="mmap", choices=["mmap", "ram"])
     a.add_argument("--json", default="")
+    a.add_argument("--allow-low-clock", action="store_true",
+                   help="exit 0 even if the steady SM clock was below 2400 MHz")
     a.set_defaults(fn=cmd_bench)
 
     a = sub.add_parser("benchmark", help="measure the full-model reference path")

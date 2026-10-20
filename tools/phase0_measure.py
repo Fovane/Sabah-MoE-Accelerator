@@ -26,7 +26,7 @@ ROOT = os.path.abspath(os.path.join(HERE, ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from sabah.tools import stream  # noqa: E402
+from sabah.tools import clocks, stream  # noqa: E402
 
 DEFAULT_MODEL = (r"C:\Strata-data\models\IQ3_S"
                  r"\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf")
@@ -111,6 +111,12 @@ def main():
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     ap.add_argument("--flag", action="append", default=[], metavar="ARG")
     ap.add_argument("--no-monitor", action="store_true")
+    ap.add_argument("--allow-low-clock", action="store_true",
+                    help="keep exit code 0 even if the steady SM clock was below "
+                         "2400 MHz (the run is still recorded as invalid)")
+    ap.add_argument("--gpu-mem", action="store_true",
+                    help="sample this process's Dedicated/Shared GPU memory from "
+                         "the Windows GPU performance counters")
     args = ap.parse_args()
 
     out_dir = os.path.join(args.out_root, args.label)
@@ -164,8 +170,23 @@ def main():
             samples["peak_ws"] = max(samples.get("peak_ws", 0), m["peak_working_set"])
 
     t0 = time.time()
+    clock_sampler = None
+    if not args.no_monitor:
+        clock_sampler = clocks.ClockSampler(interval=0.5)
+        clock_sampler.start()
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
         proc = subprocess.Popen(argv, env=env, stdout=log, stderr=subprocess.STDOUT)
+        mem_probe = None
+        gpu_mem = {}
+        if args.gpu_mem:
+            mem_csv = os.path.join(out_dir, "gpu_mem.csv")
+            if os.path.exists(mem_csv):
+                os.remove(mem_csv)
+            mem_probe = subprocess.Popen(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-File", os.path.join(ROOT, "tools", "gpu_mem_sampler.ps1"),
+                 "-ProcessId", str(proc.pid), "-Out", mem_csv],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             while proc.poll() is None:
                 sample(proc.pid)
@@ -173,7 +194,29 @@ def main():
         finally:
             proc.wait()
             sample(proc.pid)
+            if mem_probe is not None:
+                mem_probe.terminate()
+    if mem_probe is not None:
+        rows = []
+        try:
+            for line in open(os.path.join(out_dir, "gpu_mem.csv"),
+                             "r", encoding="ascii", errors="replace").read().splitlines()[1:]:
+                t, d, s = line.split(",")
+                rows.append((float(t), int(d), int(s)))
+        except (OSError, ValueError):
+            rows = []
+        if rows:
+            gpu_mem = {
+                "samples": len(rows),
+                "dedicated_peak_mib": max(r[1] for r in rows) / (1 << 20),
+                "dedicated_last_mib": rows[-1][1] / (1 << 20),
+                "shared_peak_mib": max(r[2] for r in rows) / (1 << 20),
+                "shared_last_mib": rows[-1][2] / (1 << 20),
+            }
     wall = time.time() - t0
+    clock_rec = None
+    if clock_sampler is not None:
+        clock_sampler.stop()
     if nv is not None:
         nv.terminate()
 
@@ -191,8 +234,14 @@ def main():
         "SABAH_LLAMA_IO_DEPTH", "SABAH_LLAMA_TRACE", "SABAH_LLAMA_PREFETCH",
         "GGML_OP_OFFLOAD_MIN_BATCH")}
     rec["env"].update({i.split("=", 1)[0]: i.split("=", 1)[1] for i in args.set})
-    rec["memory"] = {
-        "vram_peak_mib": max(samples["vram_mib"]) if samples["vram_mib"] else None,
+    if clock_sampler is not None:
+        clock_rec = clock_sampler.record(decode_ms=rec.get("decode_ms_sum"))
+        rec["clocks"] = clock_rec
+        rec["clock_valid"] = clock_rec.get("valid")
+        rec["clock_invalid_reason"] = clock_rec.get("reason")
+        clocks.clock_series_csv(clock_rec, os.path.join(out_dir, "clocks.csv"))
+    rec["machine"] = clocks.machine_state()
+    rec["memory"] = {        "vram_peak_mib": max(samples["vram_mib"]) if samples["vram_mib"] else None,
         "vram_samples": len(samples["vram_mib"]),
         "vram_mib_series": samples["vram_mib"],
         "avail_phys_min_mib": (min(samples["avail_phys"]) / (1 << 20)
@@ -206,6 +255,8 @@ def main():
         "process_ws_first_mib": (samples["ws"][0] / (1 << 20) if samples["ws"] else None),
         "process_ws_last_mib": (samples["ws"][-1] / (1 << 20) if samples["ws"] else None),
     }
+    if gpu_mem:
+        rec["gpu_memory"] = gpu_mem
     reg = stream.regimes(out_dir, fill_ms=rec.get("prefill_ms"))
     if reg:
         rec["regimes"] = reg
@@ -238,7 +289,17 @@ def main():
           f"avail min {rec['memory']['avail_phys_min_mib']:.0f} MiB")
     print(f"  calls={rec.get('calls')} lookups={rec.get('lookups')} "
           f"reads={rec.get('unbuffered_reads')} bytes={rec.get('read_bytes')}")
+    if clock_rec is not None:
+        print(f"  {clocks.format_steady(clock_rec)}")
+        if clock_rec.get("valid") is False:
+            print(f"  CLOCK INVALID: {clock_rec.get('reason')}")
+    if gpu_mem:
+        print(f"  GPU mem: dedicated peak {gpu_mem['dedicated_peak_mib']:.0f} MiB "
+              f"(last {gpu_mem['dedicated_last_mib']:.0f}), shared peak "
+              f"{gpu_mem['shared_peak_mib']:.0f} MiB (last {gpu_mem['shared_last_mib']:.0f})")
     print(f"  wrote {json_path}")
+    if clock_rec is not None and clock_rec.get("valid") is False and not args.allow_low_clock:
+        return 4
     return 0 if rec["exit_code"] == 0 else 3
 
 

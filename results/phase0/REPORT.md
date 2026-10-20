@@ -452,3 +452,110 @@ still not started, per the instruction to defer it and only re-estimate here.
   kernels are 11.16 ms of a 44.21 ms token, so even a free MoE kernel leaves
   ~33 ms and ~30 tok/s only with the host gap removed.
 
+## 9. Clock hygiene: the low state is reproducible (Oct 20)
+
+Section 7 named the low-clock state as the cause of the 88.9 ms episode but could
+not reproduce it on demand. It reproduces now, with a 1 s trace across
+idle -> decode -> idle (`tools/clock_trace.py`, `results/phase0/clock-trace/`).
+
+Decode, 256 tokens, `-c 512`, 6.0e9, TILE3 on, **unpinned**:
+
+| t s | SM MHz | mem MHz | P | W | note |
+|---|---|---|---|---|---|
+| 0-15 | 412-472 | 405 | P8 | 8.3 | idle |
+| 16-21 | 2617-2857 | 13801 | P1 | 17-32 | ramp |
+| 22-29 | 1470 -> 825 | **7001** | **P3** | 20-21 | **downclocked mid-decode** |
+| 30-31 | 2392-2422 | 7001 | P3 | 32 | recovering |
+| 32-40 | 2400-2527 | 13801 | P1 | 34-38 | partial |
+| 41-51 | 2820-2842 | 13801 | P1 | 76-86 | full boost |
+
+The downclock starts ~7 s into a decode that is itself making 13% utilisation:
+the host is waiting on expert fetches, the driver sees a low duty cycle, drops
+the memory clock to 7001 and the SM to 825, the kernels stretch, and the low
+duty cycle persists a little longer. It is a closed loop with the workload, which
+is why it looks random between runs and why closing applications and pinning the
+process made no difference in A.5.
+
+Pinning results, same trace shape:
+
+| pin | SM min/med/max | mem min/med/max | low samples | verdict |
+|---|---|---|---|---|
+| none | 412 / 1335 / 2857 | 405 / 7001 / 13801 | 43 / 72 | invalid |
+| `-lgc 2800,3090` | 2805 / 2805 / 2842 | **810 / 810 / 13801** | 0 / 59 | **not sufficient** |
+| `-lgc 2800,3090 -lmc 13000,14001` | 2805 / 2812 / 2842 | 13801 / 13801 / 13801 | 0 / 53 | holds |
+
+So pinning the SM floor alone is not enough on this card: the memory clock still
+fell to 7001 MHz for 7 s (P3), which slows every memory-bound kernel. Both floors
+are needed. Commands, restore commands and the idle cost (P1/2805 MHz/~26 W
+instead of P8/430 MHz/~8.4 W) are in `docs/CLOCK_HYGIENE.md`.
+
+Machine state during all of the above: power plan **Balanced**, HAGS key
+**absent (off)**, display **attached and active**, driver **617.42**, power limit
+**180 W** (default 180, max 200), no `PowerMizer*` override. The throttle bitmask
+is `0x400` (reliability) in every state, pinned or not, so it is not the trigger.
+The driver was not modified.
+
+Every benchmark record now carries `clocks.whole`, `clocks.steady` (SM/mem
+P-state/power/throttle/display), `clocks.valid` and `machine`, from
+`sabah/tools/clocks.py` (0.5 s sampler). A run is **invalid** when the steady
+median is below 2400 MHz SM or 10000 MHz memory; `tools/phase0_measure.py` and
+`sabah bench` then exit 4 (`--allow-low-clock` keeps the exit code while still
+recording the run as invalid). All tables in sections 9-12 were taken pinned,
+and every row below reports the clock that goes with it.
+
+## 10. TILE3 is the default path (Oct 20)
+
+The guard covers the real model: `tools/expert_shape_guard.py` reads the GGUF and
+finds 144 expert tensors (48 blocks x 3 roles). Gate/up have k = 2560 -> 80
+sub-blocks, down has k = 640 -> 20, with 512 experts, so every tensor is inside
+the 96-sub-block limit of the staged tree (`SB_T3_V`). No tensor is near it.
+
+Default is TILE3. `SABAH_LLAMA_TILE3=0` (also `n`/`f`) restores the original
+kernel, and `SABAH_LLAMA_TILE3_MAXNSUB=<n>` lowers the guard, which is how the
+fallback branch is exercised on a model that is otherwise inside it.
+
+Byte-exactness, whole-file comparison, 1024 tokens per run, pinned clocks
+(2805-2857 MHz SM, 13801 MHz memory), `-n 1024`, 6.0e9 slab:
+
+| `-c` | prompt | TILE3 on warm/steady ms | TILE3 off warm/steady ms | reads | `fed`/`argmax`/`logits` |
+|---|---|---|---|---|---|
+| 2048 | "Hello" | 55.3 / 175.01 | 70.8 / 183.00 | 179.1 GB | identical (1,017,118,720 B) |
+| 2048 | merge-lists | 283.5 / 46.18 | 286.1 / 61.07 | 135.7 GB | identical |
+| 131072 | "Hello" | 50.0 / 176.02 | 55.4 / 183.16 | 179.1 GB | identical |
+| 131072 | merge-lists | 295.0 / 47.39 | 291.9 / 59.99 | 135.7 GB | identical |
+
+`fed.i32` and `argmax.i32` are 4,096 bytes (1024 tokens) and match byte for byte;
+`logits.f32` is 1,017,118,720 bytes and matches byte for byte in all four pairs.
+The two prompts produce the same read pattern at both contexts (179.1 GB and
+135.7 GB exactly), i.e. context length does not change routing here.
+
+What the two prompts say about TILE3: on the merge-lists prompt the tier stays
+hot and the token is compute/latency bound, so TILE3 is worth **-24.4%** at
+`-c 2048` and **-21.0%** at `-c 131072`. On "Hello" the steady token is I/O
+bound (175-183 ms for 175 MB/token, ~1.0 GB/s of expert fetch), so the same
+kernel change is worth only -3.9% to -4.6%. TILE3 removes kernel time; it does
+not remove fetch time.
+
+Fallback test (`tools/tile3_fallback_test.py`, 128 tokens, `-c 1024`,
+`SABAH_LLAMA_EVENTS=1`):
+
+| run | guard | per-call gate/up | per-call down | vs `tile3` | vs reference |
+|---|---|---|---|---|---|
+| `tile3` | maxnsub 96 (staged tree) | 79 us | 73 us | - | bit-exact |
+| `guard16` | maxnsub 16 (**falls back**) | 188 us | 208 us | bit-exact | bit-exact |
+| `off` | `TILE3=0` (reference) | - | - | bit-exact | - |
+
+The runtime line from the guard16 run confirms the branch: `SABAH_EV tile2=0
+tile3=1 maxnsub=16`, with per-call times back at the reference kernel's 188/208
+us. All three runs write byte-identical `fed`/`argmax`/`logits` (127,139,840 B).
+
+`sabah gate` with TILE3 as the default (`-c 4096`, 9.8e9, 2000 tokens): **PASS**,
+2000/0 served bytes matched, 192,000/0 reuse checks matched, 0 mapped fallbacks,
+0 overflow-affecting checks (5,990 documented over-budget allocations), clocks
+valid at 2805-2857/13801, steady 78.4 ms (12.76 tok/s). The 44.2 ms figure in
+section 8 was `-n 256`; at 2000 tokens the same slab settles at 78 ms because
+the miss rate rises as more distinct experts are touched. Section 11 measures
+where that plateau comes from and section 12 re-runs the slab sweep pinned.
+
+
+

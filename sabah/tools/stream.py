@@ -39,6 +39,8 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 
+from sabah.tools import clocks  # noqa: E402
+
 DEFAULT_RT = os.path.join(ROOT, "sabah", "runtime", "cuda", "sabah_rt.dll")
 
 # The placement requirements (see patches/llama.cpp/README.md). Without both of
@@ -297,10 +299,13 @@ def run(model, prompt="Hello", tokens=32, context=512, threads=8,
     clean_run_dir(out_dir)
 
     t0 = time.time()
+    clock_sampler = clocks.ClockSampler(interval=0.5)
+    clock_sampler.start()
     proc = subprocess.run(argv, env=env, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=timeout)
     wall = time.time() - t0
     rec = parse_driver(proc.stdout + proc.stderr)
+    clock_rec = clock_sampler.stop().record(decode_ms=rec.get("decode_ms_sum"))
     rec["wall_s"] = wall
     rec["exit_code"] = proc.returncode
     st = status(status_path) if counters else {}
@@ -319,6 +324,10 @@ def run(model, prompt="Hello", tokens=32, context=512, threads=8,
     rec["driver"] = os.path.abspath(diag)
     rec["runtime"] = os.path.abspath(rt)
     rec["counters_enabled"] = bool(counters)
+    rec["clocks"] = clock_rec
+    rec["clock_valid"] = clock_rec.get("valid")
+    rec["clock_invalid_reason"] = clock_rec.get("reason")
+    rec["machine"] = clocks.machine_state()
     pt = prompt_tokens(out_dir)
     if pt:
         rec["prompt_tokens_count"] = len(pt)
@@ -375,6 +384,10 @@ def print_breakdown(r):
     print("  checks       verify %s/%s, mapped_fallbacks=%s, overflow=%s"
           % (r.get("verify_ok"), r.get("verify_fail"),
              r.get("mapped_fallbacks"), r.get("overflow")))
+    if r.get("clocks"):
+        print("  " + clocks.format_steady(r["clocks"]))
+        if r["clocks"].get("valid") is False:
+            print("  CLOCK INVALID: %s" % r["clocks"].get("reason"))
 
 
 def environment_fingerprint(model, rt, diag):
