@@ -79,10 +79,24 @@ def wash(path, root, write):
     return True
 
 
+SKIP_PREFIX = ("tools/", "sabah/", "patches/", "docs/")
+SKIP_EXACT = ("install.bat", "pyproject.toml", "QUICKSTART.md", "README.md",
+              "CHANGELOG.md", "THIRD_PARTY.md", "LICENSE")
+
+
 def tracked():
     r = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True)
-    return [os.path.join(ROOT, p) for p in r.stdout.splitlines()
-            if p.endswith((".json", ".jsonl", ".log", ".md", ".txt", ".csv", ".py", ".bat"))]
+    paths = []
+    for p in r.stdout.splitlines():
+        if not p.endswith((".json", ".jsonl", ".log", ".md", ".txt", ".csv", ".tsv")):
+            continue
+        # never scrub anything a tool reads: a placeholder in a build script, a
+        # harness default or the launcher breaks them, and the leak they carry
+        # is the repo's own layout, which the README documents.
+        if p.startswith(SKIP_PREFIX) or p in SKIP_EXACT:
+            continue
+        paths.append(os.path.join(ROOT, p))
+    return paths
 
 
 def main():

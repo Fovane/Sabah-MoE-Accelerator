@@ -2,7 +2,7 @@
 
 `scrub_paths.py` scrubs every tracked file, which includes the build scripts, the
 harness defaults and the tooling: it rewrote `C:\\...` model paths into
-`$DRIVE\\...` and broke `tools/_build_*.bat`, `tools/_cuda_flags.txt`,
+`D:\\...` and broke `tools/_build_*.bat`, `tools/_cuda_flags.txt`,
 `tools/phase0_measure.py` and `sabah/tools/stream.py`. Evidence files under
 `results/` and prompts may be scrubbed; executable and config files may not.
 
@@ -49,7 +49,7 @@ def main():
             raw = open(full, "rb").read()
         except OSError:
             continue
-        if b"$DRIVE" not in raw and b"$WORKSPACE" not in raw:
+        if b"$DRIVE" not in raw and b"C:\\Projects\\quantization\\Sabah-MoE-Accelerator" not in raw:
             continue
         dirty.append(rel)
         restore.append(rel)
