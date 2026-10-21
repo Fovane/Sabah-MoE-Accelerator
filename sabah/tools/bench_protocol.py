@@ -46,18 +46,33 @@ def clocks():
 
 
 def shared_and_processes():
-    txt = nvidia(["--query-compute-apps=pid,used_memory",
-                  "--query-gpu=memory.used,memory.total",
-                  "--format=csv,noheader,nounits"])
-    procs = []
-    shared = 0
-    for line in txt.strip().splitlines():
-        parts = [p.strip() for p in line.split(",") if p.strip()]
-        if len(parts) == 2 and parts[0].isdigit():
-            procs.append((int(parts[0]), parts[1]))
-        else:
-            shared = line
-    return procs, shared
+    """(context holders, shared-usage info).
+
+    `nvidia-smi --query-compute-apps` lists every process holding a compute
+    context, not only the ones computing, so on a Windows desktop that list is
+    routinely in the double digits. It is a FLAG, not a refusal: the measured
+    number then carries a caveat, and a refusal only applies when this process
+    is not the one driving the load.
+    """
+    txt = nvidia(["--query-compute-apps=pid", "--format=csv,noheader,nounits"])
+    pids = []
+    for line in txt.splitlines():
+        line = line.strip()
+        if line.isdigit():
+            pids.append(int(line))
+
+    # Shared Usage is not in the query string (it is a per-process field), so
+    # read the GPU's own memory split instead: system-shared > 0 means the OS
+    # put a context in system RAM, which is exactly the case reported in
+    # phase0b.
+    shared = "unknown"
+    mem = nvidia(["--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"])
+    try:
+        used, total = [int(x.strip()) for x in mem.strip().splitlines()[0].split(",")]
+        shared = f"{used} MiB used of {total} MiB"
+    except (ValueError, IndexError, AttributeError):
+        pass
+    return pids, shared
 
 
 def main():
@@ -68,8 +83,9 @@ def main():
 
     cl = clocks()
     print("gpu:", cl or "nvidia-smi unavailable")
-    procs, shared = shared_and_processes()
-    print("processes on the gpu:", procs or "none")
+    pids, shared = shared_and_processes()
+    print("processes holding a compute context:", pids or "none")
+    print("gpu memory:", shared)
 
     bad = []
     if cl:
@@ -82,12 +98,20 @@ def main():
     else:
         bad.append("no clock readings")
 
-    # another process holding a context on the GPU means our numbers are shared
-    others = [p for p in procs if int(p[0]) != os.getpid()]
-    if len(others) > 1:
-        bad.append(f"{len(others)} other processes hold the gpu")
-
     print("verdict:", "CLEAN" if not bad else "INVALID: " + "; ".join(bad))
+
+    # flags, not refusals
+    others = [p for p in pids if p != os.getpid()]
+    if others:
+        print(f"FLAG: {len(others)} other process(es) hold a compute context "
+              f"({', '.join(str(p) for p in others[:8])}{' ...' if len(others) > 8 else ''}). "
+              "WDDM may time-slice: the same decode has measured 88.9 vs 58 ms on this "
+              "machine, so a timed number taken now carries that caveat.")
+    if "unknown" not in shared and args.allow_shared_usage is False:
+        print(f"FLAG: gpu memory split - {shared}. If the OS has put a context in "
+              "system RAM, host RAM is not flat for that process, and the "
+              "low-clock / shared caveat applies.")
+
     if bad:
         print("refusing; pin the clocks and close the other users first:")
         print("  nvidia-smi -lgc 2800,3090")
