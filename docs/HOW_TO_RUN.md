@@ -86,7 +86,16 @@ plainly:
 
 * it does not warm into the 33 tok/s headline - the 200-token run holds 1.96
   tok/s to the last token;
-* the context is not the problem: 32K and 128K differ by under 20%.
+* the context is not the problem: 32K and 128K differ by under 20%, and at
+  `-c 2048` a chat-style prompt already costs 157 ms/token, so a smaller window
+  will not get you to 33 tok/s either.
+
+The 33 tok/s headline is real, but it is the **narrow-prompt** regime
+(`"Hello"`, 131 expert reads/token). A chat prompt routes 331 reads/token, each
+460,800 B: 152 MB per token, and the misses go to the SSD while the GPU sits at
+P8. Priced out in REPORT 31 - host RAM as a second tier lands ~8 tok/s, a 6 GB/s
+drive ~10.5, and the only lever that cuts the miss count is fewer bytes per
+expert, which is a quantisation decision about the model, not a setting here.
 
 The GPU is idle while this happens (`4 % util, 487 MHz, P8`), so the wait is the
 expert fetch from the SSD, not the card. The 33.3 tok/s headline is a

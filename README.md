@@ -396,11 +396,14 @@ clock pinning a measurement needs.
 
 One thing to know before you open a chat window: **the measured served rate is
 about 2 tok/s** (REPORT 30). The 33.3 tok/s headline is the narrow-prompt,
-short-context diag measurement - `"Hello"` routes 33,557 expert reads, a real
-chat prompt routes ~84,767, and on this rig the tier misses go to the SSD while
-the GPU sits at P8. The context is not the cause: 32K and 128K differ by under
-20%. Speed on this hardware needs fewer bytes per expert, a faster drive, or
-host RAM as a tier; all three are recorded out of scope.
+short-context diag measurement - `"Hello"` routes 33,557 expert reads (131/token),
+a real chat prompt routes ~84,767 (331/token), and on this rig the tier misses go
+to the SSD while the GPU sits at P8. The context is not the cause: 32K and 128K
+differ by under 20%, and at `-c 2048` the chat-style prompt already costs
+157 ms/token. 331 reads of 460,800 B is 152 MB/token, so even a 6 GB/s drive is
+a different number of the same wall; the only lever that cuts the miss count is
+fewer bytes per expert (REPORT 31). Host RAM as a tier prices out at ~8 tok/s,
+a faster drive at ~10.5 (REPORT 26).
 
 ## How to reproduce a measured number
 
