@@ -346,6 +346,12 @@ list to attack.
   clock is below 2400 MHz is marked invalid by the harness and is not evidence.
   The pin needs admin; on this machine it was refused for part of one session
   and works again (REPORT 19).
+- **A quantised KV cache (`-ctk q8_0 -ctv q8_0`) costs 6.3x decode on this rig**
+  (188.32 vs 30.05 ms/token, REPORT 28). It perturbs the attention output and
+  with it which experts the router selects: the same ask lands on a wider set,
+  the misses go to the disk, and the disk is already the wall. The VRAM it
+  frees is ~384 MB at 128K. Opt-in, and a numerically-equivalent mode, never a
+  default.
 - **Deep context is disk-bound, and no policy reaches a tier on this hardware.**
   The first measurement at ~30K KV depth reads 280.45 ms/token (3.57 tok/s) with
   339 MB/token of expert traffic and 501 misses/token; the last-256 window is
@@ -378,6 +384,12 @@ list to attack.
   any conclusion about output quality.
 - **Layer-group prefill is not shipped.** Off by default, and additionally gated
   to a single ubatch per `llama_decode` call; see the design note.
+
+## How to run it
+
+See [`docs/HOW_TO_RUN.md`](docs/HOW_TO_RUN.md) for the working commands: the
+one-time setup, the 128K setting, what to expect per regime, the slab size for
+each context, long prompts, and the clock pinning a measurement needs.
 
 ## How to reproduce a measured number
 
