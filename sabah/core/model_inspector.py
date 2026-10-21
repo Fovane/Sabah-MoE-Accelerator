@@ -142,7 +142,16 @@ ARCHS = {
 
 
 def _gguf_reader():
-    for cand in (r"D:/llama-glm53/gguf-py", os.environ.get("SABAH_GGUF_PY", "")):
+    # The pinned llama.cpp checkout ships the gguf-py revision that matches the
+    # ggml.h this tree is built against, so it must beat any gguf pip installed
+    # into the environment: a model built by this tree can carry tensor types
+    # the released gguf-py does not know yet (Q2_0 = 42 on Qwen3.8-Flash-Next).
+    # Later candidates win: each is inserted at sys.path[0].
+    here = os.path.dirname(os.path.abspath(__file__))
+    pinned = os.path.abspath(os.path.join(here, "..", "..",
+                                          "third_party", "llama.cpp", "gguf-py"))
+    for cand in (r"D:/llama-glm53/gguf-py", pinned,
+                 os.environ.get("SABAH_GGUF_PY", "")):
         if cand and os.path.isdir(cand) and cand not in sys.path:
             sys.path.insert(0, cand)
     try:

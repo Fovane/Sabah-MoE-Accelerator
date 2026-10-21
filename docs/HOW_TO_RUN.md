@@ -3,6 +3,65 @@
 Short answer: **use the f16 KV cache.** q8 KV is available and documented, but on
 this machine it makes decode 6x slower (the reason is measured, not guessed).
 
+## Talking to it: a local server
+
+The working path on this rig is to start `llama-server` directly with the Sabah
+environment set - `tools/start_server.ps1` does it for you:
+
+```powershell
+powershell tools\start_server.ps1                      # f16 KV, 128K window
+powershell tools\start_server.ps1 -Context 32768        # 32K window, faster
+powershell tools\start_server.ps1 -Kv q8_0              # opt-in, see REPORT 28
+powershell tools\start_server.ps1 -NoGui                # API only, no chat page
+```
+
+It leaves you with:
+
+| endpoint | what it is |
+|---|---|
+| `http://127.0.0.1:8080` | a chat page in the browser (type and go) |
+| `http://127.0.0.1:8080/v1/chat/completions` | the OpenAI-compatible API |
+
+Any OpenAI client points at it with `base_url = "http://127.0.0.1:8080/v1"` and
+any `model` name: Open WebUI, LM Studio, LibreChat, SillyTavern, `openai-python`,
+or curl:
+
+```powershell
+curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "sabah",
+  "messages": [{"role":"user","content":"2+2 kacar?"}],
+  "max_tokens": 64
+}'
+```
+
+Stop it with `Ctrl-C` in its window, or
+`Get-Process llama-server | Stop-Process`.
+
+### `sabah serve` is not the runnable path here yet
+
+`sabah serve` (the project's own OpenAI proxy, `sabah/server/openai_proxy.py`)
+pins the planner's warm blocks into locked host memory before it launches the
+backend, and that is more than this driver grants: **9.477 GB wanted** (11 blocks
+x 3 roles x 512 experts x 460,800 B) against a measured **5.034 GB** grant, so it
+always stops with `cudaHostAlloc: out of memory` (REPORT 29). There is no flag to
+shrink or skip it. The direct route above pins nothing in the serving process and
+answers, so that is what is documented here.
+
+### What to expect from the first question
+
+The first question after the model loads is the slow one, and it is the fill, not
+the decode: the expert tier has to be pulled off the SSD once
+(REPORT 15.4, REPORT 25). Measured on the first question over the API:
+
+| phase | time | rate |
+|---|---|---|
+| prompt eval (67 tokens) | 35.8 s | 1.97 tok/s |
+| decode (39 tokens) | 19.4 s | 1.96 tok/s |
+
+After the fill, a short-context answer settles around **33 tok/s** and a 128K
+window around **7.5 tok/s** (see the table below). A second, longer question is
+still a slow fill if its experts are not the warm ones.
+
 ## One-time setup
 
 ```powershell
