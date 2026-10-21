@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, r"third_party\llama.cpp\gguf-py")
 import gguf
 
-PAT = r"C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-0000*-of-00002.gguf"
+PAT = r"$DRIVE\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-0000*-of-00002.gguf"
 ROLES = ("ffn_gate_exps.weight", "ffn_up_exps.weight", "ffn_down_exps.weight")
 GUARD_NSUB = 96
 

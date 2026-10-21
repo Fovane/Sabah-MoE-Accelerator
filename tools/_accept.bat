@@ -1,5 +1,5 @@
 @echo off
-cd /d C:\Projects\quantization\Sabah-MoE-Accelerator
+cd /d $WORKSPACE
 set PYTHONUNBUFFERED=1
 set SABAH_CUDA_GRAPH_SEG_STATS=1
 

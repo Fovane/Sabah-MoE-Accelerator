@@ -91,8 +91,8 @@ def main(path, pats):
 
 if __name__ == '__main__':
     pat = sys.argv[1:] or ['per_layer_token_embd']
-    for p in [r'C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf',
-              r'C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf']:
+    for p in [r'$DRIVE\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf',
+              r'$DRIVE\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf']:
         try:
             main(p, pat)
         except FileNotFoundError:

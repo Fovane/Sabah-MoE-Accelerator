@@ -4,7 +4,7 @@
 
 Checks, in order:
   1. tracked blobs larger than the limit;
-  2. tracked files whose text matches a local absolute path (C:\\<drive>\\...),
+  2. tracked files whose text matches a local absolute path ($DRIVE\<drive>\\...),
      a username from the environment, or this machine's host name;
 Prints one line per finding and a summary. Exit 1 if any finding.
 """

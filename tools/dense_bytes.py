@@ -5,7 +5,7 @@ import collections
 sys.path.insert(0, r"third_party\llama.cpp\gguf-py")
 import gguf
 
-p = r"C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+p = r"$DRIVE\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
 r = gguf.GGUFReader(p)
 
 expert_names = ("ffn_gate_exps.weight", "ffn_up_exps.weight", "ffn_down_exps.weight")

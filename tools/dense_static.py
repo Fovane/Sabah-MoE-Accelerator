@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, r"third_party\llama.cpp\gguf-py")
 import gguf
 
-GGUF = (r"C:\Strata-data\models\IQ3_S"
+GGUF = (r"$DRIVE\Strata-data\models\IQ3_S"
         r"\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf")
 PEAK_GBS = 448.0
 DENSE_MS = 12.6          # measured, REPORT.md section 2 (12.4-12.8)

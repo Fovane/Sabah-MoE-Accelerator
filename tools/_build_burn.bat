@@ -1,8 +1,8 @@
 @echo off
 setlocal
 rem Build the burn loop with the same MSVC discovery as build_dll.bat.
-set VSDIR=C:\Program Files\Microsoft Visual Studio\2022\Professional
-if not exist "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" set VSDIR=C:\Program Files\Microsoft Visual Studio\18\Community
+set VSDIR=$DRIVE\Program Files\Microsoft Visual Studio\2022\Professional
+if not exist "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" set VSDIR=$DRIVE\Program Files\Microsoft Visual Studio\18\Community
 if exist "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" goto have_vs
 set "VSDIR="
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"

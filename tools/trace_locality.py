@@ -8,7 +8,7 @@ Trace format is Sabah's own: ``ffn_moe_topk_L<block>.i32``, i32 little endian,
 ``steps * top_k`` expert ids per block (top_k = 10 for qwen4exp).
 
 Usage:
-    python tools/trace_locality.py --trace C:\\LMStudio\\scratchpads\\dk\\trace_full
+    python tools/trace_locality.py --trace $DRIVE\\LMStudio\\scratchpads\\dk\\trace_full
     python tools/trace_locality.py --trace <dir> --model <shard1> [--model <shard2>]
                                    --disk-gbps 2.2,1.56,1.0 --json out.json
 """
@@ -63,7 +63,7 @@ def expert_bytes_per_block(shards: list[str]) -> dict[int, int]:
     The runtime's cache object is a single (expert, projection) tensor, so the
     three roles are averaged: gate/up are 0.61 MB and down is 0.84 MB.
     """
-    sys.path.insert(0, r"C:\LMStudio\scratchpads\dk")
+    sys.path.insert(0, r"$DRIVE\LMStudio\scratchpads\dk")
     from gguf_probe import parse  # type: ignore
 
     per_block: dict[int, int] = defaultdict(int)
