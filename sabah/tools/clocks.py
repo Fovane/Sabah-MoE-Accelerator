@@ -315,6 +315,31 @@ def machine_state():
     return out
 
 
+def other_gpu_users(exclude_pid=None):
+    """PIDs of processes that currently hold a context on the GPU.
+
+    A measurement taken while another process holds the card reports that
+    process's behaviour, not the model's, so ``sabah bench`` refuses instead of
+    printing a number. An empty or unavailable listing is treated as "none".
+    """
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = []
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if not line.isdigit():
+            continue
+        pid = int(line)
+        if exclude_pid is not None and pid == exclude_pid:
+            continue
+        out.append(pid)
+    return out
+
+
 def clock_series_csv(rec, path):
     """Write the raw samples of a ``record()`` dict as CSV."""
     with open(path, "w", encoding="utf-8") as f:

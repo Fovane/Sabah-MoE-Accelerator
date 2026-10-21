@@ -293,6 +293,13 @@ def main(argv=None):
     bank.close()
     if clock_rec.get("valid") is False and not args.allow_low_clock:
         return 4
+    # refuse to report a number another process is sharing: the measured
+    # ms/block then depends on that process, not on the model
+    others = clocks.other_gpu_users(exclude_pid=os.getpid())
+    if others:
+        print("refusing: %d other process(es) hold a context on this GPU: %s"
+              % (len(others), ", ".join(str(p) for p in others)))
+        return 5
     return 0
 
 
