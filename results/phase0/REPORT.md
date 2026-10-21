@@ -1029,6 +1029,40 @@ nodes of the split, and that is sufficient:
 
 Gap shared with the native path: neither stores `src[j]->type`.
 
+#### 16.5.2 Tightening (October 21): a non-COMPUTE node now records its own struct
+
+The original `prop_fill` zeroed the whole block for a non-COMPUTE node, so a
+moved backing allocation for such a node was only visible through a consumer.
+That is provably complete, but it left the segment blind to a node whose own
+buffer moved and whose only consumer sits in **another** split's view. The block
+now records the node struct unconditionally and still zeroes only the src
+tuple (`sabah-seg.cpp:166-190`):
+
+```
+167:    std::memset(dst, 0, SEG_PROP_BYTES);
+168:    std::memcpy(dst, node, sizeof(ggml_tensor));
+169:    if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+170:        return;
+171:    }
+```
+
+`sizeof(ggml_tensor)` carries `op`, `type`, `ne`, `nb`, `flags`, `op_params`,
+`data`, `view_src` and `view_offs`, so a view's moved base (its `data` is
+`base + offset`) or a changed offset now forces a recapture on its own, not only
+through a consumer. The src tuple stays zeroed for non-COMPUTE nodes because
+those buffers belong to another split and must not invalidate this one.
+
+Re-measured after the change: fusion decisions 15/15 split blocks identical
+between `SEG=0` and `SEG=48` (`tools/p1_fuse.py`), and the `-c 2048` 640-token
+gate still reproduces `c30f01a8d676d64f` byte-identically on both sides.
+
+A different risk class, found while debugging the layer-group experiment, is
+**not** covered by this property check and is documented in
+`docs/PREFILL_GROUP_MAJOR.md` 6.2: the fusion *decision* depends on the node
+neighbourhood, so moving a graph boundary changes which patterns fuse even
+though no pointer or shape changed. `SABAH_FUSE_TRACE` plus `tools/fuse_diff.py`
+compare decisions inside one graph shape only.
+
 ### 16.6 The 128K side: measured
 
 Three acceptance runs, current build, slab 6.0e9 pinned (`-lgc 2800,3090
@@ -1105,11 +1139,17 @@ pushed.
 
 | gate | result |
 |---|---|
-| fusion decisions, SEG=0 vs SEG=48 | 10/10 split blocks identical |
-| `-c 131072`, 1024 tokens, logits/argmax/fed | byte-identical |
-| 640 tokens across n_kv 256/512, `-c 2048` | byte-identical |
-| 128K chat 2048 steps, tail | 42.74 -> 30.36 ms (rule: at least 6 ms) |
+| fusion decisions, SEG=0 vs SEG=48 | 10/10 split blocks identical, re-run 15/15 after the 16.5.2 tightening |
+| `-c 131072`, 1024 tokens, logits/argmax/fed | byte-identical (prompt A). Prompt B aborts on both sides with "over-budget expert: out of memory" (`ggml-cuda.cu:2068-2072`), a runtime limit, not a SEG regression |
+| 640 tokens across n_kv 256/512, `-c 2048` | byte-identical, re-verified `c30f01a8d676d64f` on the current build |
+| 640 tokens at `-c 512` | **not possible**: any prompt plus 640 decodes exceeds `n_ctx` 512 and the hybrid memory does not shift; substituted `-c 2048` (documented in 16.6) |
+| 128K chat 2048 steps, tail | 42.74 -> 30.36 ms (rule: at least 6 ms), N=1. **N=2 not yet run** |
 | default path | segmented; `SABAH_CUDA_GRAPH_SEG=0` disables |
 | `sabah gate` | PASS (verify 2000/0, id reuse 768/0, mapped fallback 0) |
 | host RAM | WS peak 8943 -> 8994 MiB (+51 MiB, the segment table) |
+
+Open on this item: the N=2 repetition of the 128K tail, and the second 128K
+prompt. Clock pinning (`nvidia-smi -lgc/-lmc`) lost permission on this machine
+during the session, so any further timed number has to be judged on the
+harness's steady-clock gate alone.
 | driver / clocks | 32.0.16.1742, SM 2805-2857, mem 13801, P1, 34.9 W |

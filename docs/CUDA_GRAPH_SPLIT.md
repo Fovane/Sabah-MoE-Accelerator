@@ -188,6 +188,29 @@ Multi-stream: the hook declines when `stream_context().concurrent_events` is
 non-empty, so a fork/join chain is never cut by a boundary. On this model the
 set is empty (checked at run time, printed in the report).
 
+`tools/fuse_diff.py` compares decisions **inside one graph shape**. It cannot
+see a decision change caused by moving a graph boundary: the fusion guard is
+neighbourhood-based (`ggml-cuda.cu:3610-3614`), so a pattern that is whole in
+one shape can straddle a boundary in another. The layer-group prefill
+experiment hit exactly that (`docs/PREFILL_GROUP_MAJOR.md` 6.2): a different
+fused set at one `rms_norm`+`mul` pair produced a 1.0 logit drift with no
+pointer or shape change at all, so the property check was right and the
+*numerics* moved.
+
+## 4d: property check, tightened (October 21)
+
+`prop_fill` now records `sizeof(ggml_tensor)` for **every** node, not only the
+COMPUTE ones, and zeroes only the src tuple of a non-COMPUTE node
+(`sabah-seg.cpp:167-171`). A view's `data` is `base + offset`, so a moved
+backing allocation or a moved offset now forces a recapture on its own, even
+when its only consumer sits in another split. The src tuple stays zeroed for
+non-COMPUTE nodes because those buffers belong to another split and must not
+invalidate this one.
+
+Measured after the change: fusion decisions 15/15 split blocks identical
+`SEG=0` vs `SEG=48` (`tools/p1_fuse.py`), and the `-c 2048` 640-token gate
+reproduces `c30f01a8d676d64f` byte-identically on both sides.
+
 ## 4c: capture, instantiate and the boundary stall
 
 Measured shape at `-c 512` (53-token prompt, 128 decode steps, SEG=48): the

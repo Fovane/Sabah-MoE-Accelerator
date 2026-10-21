@@ -1,0 +1,632 @@
+# llama.cpp pinned commit: 96ffdc41ceb055e1c2d3d96667ae6d9f0ccb710b
+# feature: segmented CUDA graphs (item 4), property check tightened
+# files:
+  # ggml/src/ggml-backend.cpp
+  # ggml/src/ggml-cuda/CMakeLists.txt
+  # ggml/src/ggml-cuda/ggml-cuda.cu
+  # ggml/src/ggml-cuda/sabah-seg.cpp
+  # ggml/src/ggml-cuda/sabah-seg.h
+
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 6faa680..b4d1bf3 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -28,6 +28,19 @@
+ #include <sys/sysctl.h>
+ #endif
+ 
++// Sabah's optional native MUL_MAT_ID adapter consumes the original read-only
++// host GGUF expert tensor directly. Avoid constructing llama.cpp's enormous
++// full-shaped CUDA copy only for that operation; the adapter performs exact
++// expert residency and uses the authoritative device ids at execution time.
++static bool ggml_backend_sched_sabah_direct_expert(const ggml_tensor * node,
++                                                   const ggml_tensor * src,
++                                                   int src_index) {
++    return std::getenv("SABAH_LLAMA") != nullptr &&
++           src_index == 0 && node->op == GGML_OP_MUL_MAT_ID &&
++           src->buffer != nullptr && ggml_backend_buffer_is_host(src->buffer) &&
++           ggml_is_quantized(src->type) && src->ne[2] > 1;
++}
++
+ 
+ // backend buffer type
+ 
+@@ -969,7 +982,16 @@ static int ggml_backend_sched_backend_id_from_cur(ggml_backend_sched_t sched, st
+                 // check if a backend with higher prio wants to offload the op
+                 if (sched->op_offload && src_backend_id == sched->n_backends - 1 && ggml_backend_buffer_is_host(src->buffer)) {
+                     for (int b = 0; b < src_backend_id; b++) {
+-                        if (ggml_backend_supports_op(sched->backends[b], tensor) && ggml_backend_offload_op(sched->backends[b], tensor)) {
++                        // Sabah's adapter keeps the expert bank in host memory and
++                        // executes the whole operation from there, so it wants this
++                        // node whatever the batch size is. The backend's own
++                        // offload heuristic is a batch-size threshold, which means
++                        // single-token decode - the steady state - would otherwise
++                        // fall back to the CPU and read the expert bank through the
++                        // mapping.
++                        const bool sabah_wants = ggml_backend_sched_sabah_direct_expert(tensor, src, i);
++                        if (ggml_backend_supports_op(sched->backends[b], tensor) &&
++                            (ggml_backend_offload_op(sched->backends[b], tensor) || sabah_wants)) {
+                             SET_CAUSE(tensor, "1.off");
+                             return b;
+                         }
+@@ -1397,6 +1419,14 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
+                 }
+ 
+                 if (src_backend_id != cur_backend_id && !ggml_backend_sched_buffer_supported(sched, src, cur_backend_id)) {
++                    if (ggml_backend_sched_sabah_direct_expert(node, src, j)) {
++                        // Keep the original host tensor in the graph. The
++                        // Sabah CUDA bridge consumes its immutable GGUF bytes
++                        // directly and therefore must not receive a full
++                        // device-shaped copy of the expert bank.
++                        tensor_id_copy(src_id, cur_backend_id, sched->cur_copy) = src;
++                        continue;
++                    }
+                     // create a copy of the input in the split's backend
+                     if (tensor_id_copy(src_id, cur_backend_id, 0) == NULL) {
+                         ggml_backend_t backend = sched->backends[cur_backend_id];
+diff --git a/ggml/src/ggml-cuda/CMakeLists.txt b/ggml/src/ggml-cuda/CMakeLists.txt
+index 2254090..3e7c1e0 100644
+--- a/ggml/src/ggml-cuda/CMakeLists.txt
++++ b/ggml/src/ggml-cuda/CMakeLists.txt
+@@ -103,6 +103,8 @@ if (CUDAToolkit_FOUND)
+     list(APPEND GGML_HEADERS_CUDA "../../include/ggml-cuda.h")
+ 
+     file(GLOB   GGML_SOURCES_CUDA "*.cu")
++    # Host-only TU: compiled by the C++ compiler, not by nvcc.
++    list(APPEND GGML_SOURCES_CUDA "${CMAKE_CURRENT_SOURCE_DIR}/sabah-seg.cpp")
+     file(GLOB   SRCS "template-instances/fattn-tile*.cu")
+     list(APPEND GGML_SOURCES_CUDA ${SRCS})
+     file(GLOB   SRCS "template-instances/fattn-mma*.cu")
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 7905538..78c6606 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -2,8 +2,18 @@
+ #include "ggml-impl.h"
+ #include "ggml-backend-impl.h"
+ 
++#include <chrono>
++#include <algorithm>
++#include <cstring>
++#include <map>
++#include <string>
++#include <utility>
++#include <vector>
++
+ #include "ggml-cuda/allreduce.cuh"
+ #include "ggml-cuda/common.cuh"
++#include "sabah-seg.h"
++
+ #include "ggml-cuda/acc.cuh"
+ #include "ggml-cuda/add-id.cuh"
+ #include "ggml-cuda/arange.cuh"
+@@ -91,6 +101,12 @@
+ #include <string>
+ #include <vector>
+ 
++#if defined(_WIN32)
++#include <windows.h>
++#else
++#include <dlfcn.h>
++#endif
++
+ static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
+ 
+ #define GGML_LOG_WARN_ONCE(str) \
+@@ -137,6 +153,143 @@ int ggml_cuda_get_device() {
+     return id;
+ }
+ 
++// Optional Sabah native bridge. It is loaded only when SABAH_LLAMA is set;
++// the normal llama.cpp CUDA path remains untouched otherwise. The bridge is
++// deliberately located at MUL_MAT_ID so the real graph supplies the host GGUF
++// tensor, hidden-state device pointer, authoritative ids and output tensor.
++struct sabah_llama_bridge {
++#if defined(_WIN32)
++    HMODULE handle = nullptr;
++#else
++    void * handle = nullptr;
++#endif
++    bool ready = false;
++    using init_fn = int (*)(int);
++    // v2: the input row stride and row count (src1->nb[1], src1->ne[1]) are
++    // part of the MUL_MAT_ID contract. The down projection has one input row
++    // per selected expert; v1 omitted them and fed every slot row 0.
++    using mul_mat_id_fn = int (*) (
++        const void *, size_t, size_t,
++        const void *, size_t, int, size_t,
++        const void *, size_t, size_t, int, int,
++        float *, size_t, size_t,
++        int, int, int, int, void *, const void *);
++    using last_error_fn = const char *(*)();
++    using get_metrics_fn = int (*)(unsigned long long *, unsigned long long *,
++                                   unsigned long long *, unsigned long long *,
++                                   unsigned long long *);
++    init_fn init = nullptr;
++    mul_mat_id_fn mul_mat_id = nullptr;
++    last_error_fn last_error = nullptr;
++    get_metrics_fn get_metrics = nullptr;
++};
++
++static sabah_llama_bridge g_sabah_llama_bridge;
++static std::once_flag g_sabah_llama_once;
++
++static void sabah_bridge_report_metrics() {
++    auto & bridge = g_sabah_llama_bridge;
++    if (!bridge.ready || !bridge.get_metrics || std::getenv("SABAH_LLAMA_TRACE") == nullptr) {
++        return;
++    }
++    unsigned long long hits = 0;
++    unsigned long long misses = 0;
++    unsigned long long evictions = 0;
++    unsigned long long bytes_fetched = 0;
++    unsigned long long resident_bytes = 0;
++    if (bridge.get_metrics(&hits, &misses, &evictions, &bytes_fetched, &resident_bytes) == 0) {
++        std::fprintf(stderr,
++                     "SABAH_METRICS hits=%llu misses=%llu evictions=%llu bytes_fetched=%llu resident_bytes=%llu\n",
++                     hits, misses, evictions, bytes_fetched, resident_bytes);
++    }
++}
++
++static void * sabah_bridge_symbol(sabah_llama_bridge & bridge, const char * name) {
++#if defined(_WIN32)
++    return (void *) GetProcAddress(bridge.handle, name);
++#else
++    return dlsym(bridge.handle, name);
++#endif
++}
++
++static bool sabah_bridge_load() {
++    std::call_once(g_sabah_llama_once, []() {
++        auto & bridge = g_sabah_llama_bridge;
++        const char * configured = std::getenv("SABAH_RT_LIB");
++        const char * path = configured && *configured ? configured :
++#if defined(_WIN32)
++            "sabah_rt.dll";
++#else
++            "libsabah_rt.so";
++#endif
++
++#if defined(_WIN32)
++        bridge.handle = LoadLibraryA(path);
++#else
++        bridge.handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
++#endif
++        if (!bridge.handle) {
++            GGML_LOG_ERROR("SABAH_LLAMA requested but Sabah runtime could not be loaded: %s\n", path);
++            return;
++        }
++        bridge.init = (sabah_llama_bridge::init_fn) sabah_bridge_symbol(bridge, "sabah_rt_init");
++        bridge.mul_mat_id = (sabah_llama_bridge::mul_mat_id_fn) sabah_bridge_symbol(bridge, "sabah_rt_mul_mat_id_v2");
++        bridge.last_error = (sabah_llama_bridge::last_error_fn) sabah_bridge_symbol(bridge, "sabah_rt_last_error");
++        bridge.get_metrics = (sabah_llama_bridge::get_metrics_fn) sabah_bridge_symbol(bridge, "sabah_rt_get_metrics");
++        if (!bridge.init || !bridge.mul_mat_id || !bridge.last_error || !bridge.get_metrics) {
++            GGML_LOG_ERROR("SABAH_LLAMA runtime is missing the native MUL_MAT_ID ABI\n");
++            return;
++        }
++        if (bridge.init(ggml_cuda_get_device()) != 0) {
++            GGML_LOG_ERROR("SABAH_LLAMA runtime init failed: %s\n", bridge.last_error());
++            return;
++        }
++        bridge.ready = true;
++        std::atexit(sabah_bridge_report_metrics);
++        GGML_LOG_INFO("SABAH_LLAMA native exact-expert backend enabled (%s)\n", path);
++    });
++    return g_sabah_llama_bridge.ready;
++}
++
++static bool sabah_bridge_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
++    const ggml_tensor * src0 = dst->src[0];
++    const ggml_tensor * src1 = dst->src[1];
++    const ggml_tensor * ids  = dst->src[2];
++    if (!sabah_bridge_load()) {
++        return false;
++    }
++    if (!ggml_backend_buffer_is_host(src0->buffer) ||
++        src1->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32 ||
++        src1->nb[0] != sizeof(float) || src1->ne[1] > INT_MAX ||
++        ids->type != GGML_TYPE_I32 || src0->ne[0] > INT_MAX ||
++        src0->ne[1] > INT_MAX || src0->ne[2] > INT_MAX ||
++        ids->ne[0] > INT_MAX || ids->ne[1] > INT_MAX) {
++        GGML_LOG_ERROR("SABAH_LLAMA received an unsupported MUL_MAT_ID layout\n");
++        return false;
++    }
++    const int rc = g_sabah_llama_bridge.mul_mat_id(
++        src0->data, src0->nb[2], src0->nb[1],
++        src1->data, src1->nb[1], (int) src1->ne[1], src1->nb[2],
++        ids->data, ids->nb[0], ids->nb[1],
++        (int) ids->ne[0], (int) ids->ne[1],
++        (float *) dst->data, dst->nb[1], dst->nb[2],
++        (int) src0->ne[1], (int) src0->ne[0], (int) src0->ne[2],
++        (int) src0->type, (void *) ctx.stream(), (const void *) ids);
++    if (rc != 0) {
++        GGML_LOG_ERROR("SABAH_LLAMA MUL_MAT_ID failed: %s\n", g_sabah_llama_bridge.last_error());
++        return false;
++    }
++    return true;
++}
++
++// A MUL_MAT_ID whose expert tensor stayed in host memory for the Sabah bridge.
++// Its src[0] is not device memory: no fused kernel may consume it directly.
++static bool ggml_cuda_sabah_owns_node(const ggml_tensor * node) {
++    return node->op == GGML_OP_MUL_MAT_ID && std::getenv("SABAH_LLAMA") != nullptr &&
++           node->src[0] != nullptr && node->src[0]->buffer != nullptr &&
++           ggml_backend_buffer_is_host(node->src[0]->buffer);
++}
++
+ static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
+     ggml_cuda_set_device(device);
+     cudaError_t err;
+@@ -1912,6 +2065,14 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor *
+     const ggml_tensor * src1 = dst->src[1];
+     const ggml_tensor * ids  = dst->src[2];
+ 
++    if (std::getenv("SABAH_LLAMA") != nullptr && src0->buffer != nullptr &&
++        ggml_backend_buffer_is_host(src0->buffer)) {
++        if (!sabah_bridge_mul_mat_id(ctx, dst)) {
++            GGML_ABORT("SABAH_LLAMA could not execute the host-backed exact expert operation");
++        }
++        return;
++    }
++
+     GGML_ASSERT(src1->type == GGML_TYPE_F32);
+     GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+ 
+@@ -2568,6 +2729,13 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
+         }
+ 
+         // [TAG_MUL_MAT_ID_CUDA_GRAPHS]
++        // The Sabah bridge reads the routed ids on the host and may fetch
++        // experts, so like the synchronizing fallback it cannot be captured.
++        if (node->op == GGML_OP_MUL_MAT_ID && std::getenv("SABAH_LLAMA") != nullptr &&
++            node->src[0] != nullptr && node->src[0]->buffer != nullptr &&
++            ggml_backend_buffer_is_host(node->src[0]->buffer)) {
++            use_cuda_graph = false;
++        }
+         if (node->op == GGML_OP_MUL_MAT_ID) {
+             const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+             if (ggml_cuda_mul_mat_id_needs_sync(node, cc)) {
+@@ -3436,6 +3604,15 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         return 0;
+     }
+ 
++    // Every Sabah-routed MUL_MAT_ID must reach ggml_cuda_mul_mat_id, where the
++    // bridge executes it. A fused kernel would read the host expert tensor as
++    // device memory. No fusion pattern spans more than 8 nodes.
++    for (int j = i; j < cgraph->n_nodes && j < i + 8; ++j) {
++        if (ggml_cuda_sabah_owns_node(cgraph->nodes[j])) {
++            return 0;
++        }
++    }
++
+     ggml_tensor * node = cgraph->nodes[i];
+ 
+     if (node->op == GGML_OP_MUL) {
+@@ -4182,6 +4359,27 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+     return 0;
+ }
+ 
++// SABAH_FUSE_TRACE=1 prints one line per node with the fusion decision taken
++// for it, plus one line per scheduler split. Same node names on both sides, so
++// a segmented run and an eager run can be compared decision by decision.
++static void sabah_fuse_trace(const ggml_tensor * node, int skip) {
++    static const char * env = getenv("SABAH_FUSE_TRACE");
++    if (env == nullptr) {
++        return;
++    }
++    fprintf(stderr, "FUSE %s %s %d\n", node->name != nullptr ? node->name : "?",
++            ggml_op_name(node->op), skip);
++}
++
++static void sabah_fuse_trace_split(int n_nodes, int first_compute, int has_sabah) {
++    static const char * env = getenv("SABAH_FUSE_TRACE");
++    if (env == nullptr) {
++        return;
++    }
++    fprintf(stderr, "FUSE_SPLIT n=%d first_compute=%d sabah=%d\n",
++            n_nodes, first_compute, has_sabah);
++}
++
+ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, const bool use_cuda_graph, const bool cuda_graph_update_required, const void * graph_key) {
+     bool graph_evaluated_or_captured = false;
+ 
+@@ -4323,8 +4521,10 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
+                 }
+ 
+                 int nodes_to_skip = ggml_cuda_try_fuse(cuda_ctx, cgraph, i);
++                sabah_fuse_trace(node, nodes_to_skip);
+ 
+                 if (nodes_to_skip != 0) {
++                    sabah_seg_note_fusion();
+ #ifdef GGML_CUDA_DEBUG
+                     const int last_fused = i + nodes_to_skip;
+                     GGML_LOG_INFO("nodes_fused: %d, first: %s (%s), last: %s (%s)\n",
+@@ -4417,11 +4617,260 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+ }
+ #endif // USE_CUDA_GRAPH
+ 
++// [TAG_SABAH_SEG] Segmented CUDA graphs around Sabah-owned nodes.
++//
++// The plan, the capture calls, the cache and the counters are in sabah-seg.cpp,
++// which is compiled by the host compiler. Only what needs this context lives
++// here: the node runner (fusion rule), the split predicate and the capture
++// guard. See docs/CUDA_GRAPH_SPLIT.md.
++
++// [TAG_SABAH_OP_TIMES] Per-node GPU time for the dense path.
++// GGML_CUDA_OP_TIMES=1 runs the graph through the plain node loop and brackets
++// every node with two CUDA events. The stream is synchronized once per token to
++// read them, so wall time from such a run is not a performance number.
++#define SABAH_OP_MAX_SLOTS 8192
++#define SABAH_OP_MAX_NAMES 1024
++
++// "blk.12.ffn_moe_gate" -> ".ffn_moe_gate": the same suffix for every layer, so
++// the 48 layers aggregate without building a new string.
++static const char * sabah_op_fold(const char * name) {
++    if (name != nullptr && std::strncmp(name, "blk.", 4) == 0) {
++        const char * dot = std::strchr(name + 4, '.');
++        if (dot != nullptr) {
++            return dot;
++        }
++    }
++    return name != nullptr ? name : "";
++}
++
++struct sabah_op_times {
++    bool on = std::getenv("GGML_CUDA_OP_TIMES") != nullptr;
++    int n = 0;
++    cudaEvent_t ev[SABAH_OP_MAX_SLOTS][2] = {};
++    const char * name[SABAH_OP_MAX_SLOTS] = {};
++    int op[SABAH_OP_MAX_SLOTS] = {};
++    const char * agg_name[SABAH_OP_MAX_NAMES] = {};
++    int agg_op[SABAH_OP_MAX_NAMES] = {};
++    double agg_ms[SABAH_OP_MAX_NAMES] = {};
++    int n_agg = 0;
++    long long tokens = 0;
++
++    ~sabah_op_times() {
++        if (!on || tokens == 0) {
++            return;
++        }
++        double sum = 0.0;
++        for (int i = 0; i < n_agg; i++) {
++            sum += agg_ms[i];
++        }
++        std::fprintf(stderr, "GGML_OP_TIMES tokens=%lld sum_ms_per_token=%.3f\n",
++                     tokens, sum / (double) tokens);
++        for (int i = 0; i < n_agg; i++) {
++            int best = i;
++            for (int j = i + 1; j < n_agg; j++) {
++                if (agg_ms[j] > agg_ms[best]) {
++                    best = j;
++                }
++            }
++            if (best != i) {
++                std::swap(agg_ms[i], agg_ms[best]);
++                std::swap(agg_name[i], agg_name[best]);
++                std::swap(agg_op[i], agg_op[best]);
++            }
++        }
++        for (int i = 0; i < n_agg; i++) {
++            std::fprintf(stderr, "GGML_OP_TIME %8.3f ms/token %5.1f%%  %s %s\n",
++                         agg_ms[i] / (double) tokens,
++                         sum > 0.0 ? 100.0 * agg_ms[i] / sum : 0.0,
++                         ggml_op_name((enum ggml_op) agg_op[i]), agg_name[i]);
++        }
++    }
++
++    void begin(const ggml_tensor * node, cudaStream_t stream) {
++        if (n >= SABAH_OP_MAX_SLOTS) {
++            return;
++        }
++        if (ev[n][0] == nullptr) {
++            CUDA_CHECK(cudaEventCreateWithFlags(&ev[n][0], cudaEventDefault));
++            CUDA_CHECK(cudaEventCreateWithFlags(&ev[n][1], cudaEventDefault));
++        }
++        name[n] = sabah_op_fold(node->name);
++        op[n] = (int) node->op;
++        CUDA_CHECK(cudaEventRecord(ev[n][0], stream));
++        n++;
++    }
++
++    void end(cudaStream_t stream) {
++        if (n == 0) {
++            return;
++        }
++        CUDA_CHECK(cudaEventRecord(ev[n - 1][1], stream));
++    }
++
++    void flush(cudaStream_t stream) {
++        if (n == 0) {
++            return;
++        }
++        CUDA_CHECK(cudaStreamSynchronize(stream));
++        for (int i = 0; i < n; i++) {
++            float ms = 0.0f;
++            CUDA_CHECK(cudaEventElapsedTime(&ms, ev[i][0], ev[i][1]));
++            int k = 0;
++            while (k < n_agg && (agg_name[k] != name[i] || agg_op[k] != op[i])) {
++                k++;
++            }
++            if (k == n_agg) {
++                if (n_agg >= SABAH_OP_MAX_NAMES) {
++                    continue;
++                }
++                agg_name[n_agg] = name[i];
++                agg_op[n_agg] = op[i];
++                agg_ms[n_agg] = 0.0;
++                n_agg++;
++            }
++            agg_ms[k] += (double) ms;
++        }
++        n = 0;
++        tokens++;
++    }
++};
++
++static sabah_op_times g_sabah_op_times;
++
++// Runs nodes [i0, i1) exactly like the native loop body: same fusion rule, same
++// stream. Used for eager segments, for capture and for op timing.
++static void sabah_cuda_run_nodes(ggml_backend_cuda_context & ctx, ggml_cgraph * cgraph,
++                                 int i0, int i1) {
++    for (int i = i0; i < i1; i++) {
++        ggml_tensor * node = cgraph->nodes[i];
++        if (ggml_cuda_is_view_or_noop(node)) {
++            continue;
++        }
++        if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
++            continue;
++        }
++        const int nodes_to_skip = ggml_cuda_try_fuse(&ctx, cgraph, i);
++        sabah_fuse_trace(node, nodes_to_skip);
++        if (nodes_to_skip != 0) {
++            // A pattern must not cross a segment end. Segment ends are Sabah
++            // nodes, and try_fuse refuses any pattern within 8 nodes of one.
++            GGML_ASSERT(i + nodes_to_skip < i1);
++            sabah_seg_note_fusion();
++            i += nodes_to_skip;
++            continue;
++        }
++        if (g_sabah_op_times.on) {
++            g_sabah_op_times.begin(node, ctx.stream());
++        }
++        const bool ok = ggml_cuda_compute_forward(ctx, node);
++        if (g_sabah_op_times.on) {
++            g_sabah_op_times.end(ctx.stream());
++        }
++        GGML_ASSERT(ok);
++    }
++}
++
++struct sabah_seg_user {
++    ggml_backend_cuda_context * ctx;
++    ggml_cgraph * cgraph;
++};
++
++static void sabah_cuda_seg_emit(void * user, int i0, int i1) {
++    sabah_seg_user & u = *(sabah_seg_user *) user;
++    sabah_cuda_run_nodes(*u.ctx, u.cgraph, i0, i1);
++}
++
++static int sabah_cuda_seg_is_split(void * user, int i) {
++    const ggml_tensor * node = ((sabah_seg_user *) user)->cgraph->nodes[i];
++    // Only nodes the scheduler assigned to this backend are this split's
++    // business; the same cgraph is handed over once per split.
++    if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
++        return 0;
++    }
++    return ggml_cuda_sabah_owns_node(node) ? 1 : 0;
++}
++
++static void sabah_cuda_seg_capture_enter(void * user) {
++    GGML_UNUSED(user);
++    std::lock_guard<std::mutex> lock(ggml_cuda_lock);
++    ggml_cuda_lock_counter.fetch_add(1, std::memory_order_relaxed);
++}
++
++static void sabah_cuda_seg_capture_leave(void * user) {
++    GGML_UNUSED(user);
++    std::lock_guard<std::mutex> lock(ggml_cuda_lock);
++    if (ggml_cuda_lock_counter.fetch_sub(1, std::memory_order_relaxed) == 1) {
++        ggml_cuda_lock_cv.notify_all();
++    }
++}
++
++// Returns true when this path handled the graph.
++static bool sabah_cuda_seg_compute(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph) {
++    const int cc = ggml_cuda_info().devices[cuda_ctx->device].cc;
++
++    // One cgraph is handed to this backend once per scheduler split, with only
++    // that split's nodes flagged COMPUTE. The first such node identifies the
++    // split, which is what keeps two splits of one graph from sharing entries.
++    int first_compute = -1;
++    bool has_sabah = false;
++    bool needs_sync = false;
++    for (int i = 0; i < cgraph->n_nodes; i++) {
++        const ggml_tensor * node = cgraph->nodes[i];
++        if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
++            continue;
++        }
++        if (first_compute < 0) {
++            first_compute = i;
++        }
++        if (ggml_cuda_sabah_owns_node(node)) {
++            has_sabah = true;
++        } else if (node->op == GGML_OP_MUL_MAT_ID && ggml_cuda_mul_mat_id_needs_sync(node, cc)) {
++            needs_sync = true;
++        }
++    }
++    if (!has_sabah) {
++        sabah_fuse_trace_split(cgraph->n_nodes, first_compute, 0);
++        sabah_seg_note_split(0);
++        return false;
++    }
++    sabah_fuse_trace_split(cgraph->n_nodes, first_compute, 1);
++    // A synchronizing MUL_MAT_ID also needs the host, and may sit inside a
++    // fusion pattern: keep such a graph on the native path.
++    if (needs_sync || !sabah_seg_enabled() ||
++        std::getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr ||
++        !cuda_ctx->stream_context().concurrent_events.empty()) {
++        sabah_seg_note_split(0);
++        return false;
++    }
++
++    sabah_seg_user u = { cuda_ctx, cgraph };
++    const sabah_seg_callbacks cb = {
++        sabah_cuda_seg_emit, sabah_cuda_seg_is_split,
++        sabah_cuda_seg_capture_enter, sabah_cuda_seg_capture_leave,
++    };
++    if (sabah_seg_run(cgraph->n_nodes, (void * const *) cgraph->nodes, cgraph, first_compute,
++                      cuda_ctx->stream(), &cb, &u) == 0) {
++        sabah_seg_note_split(0);
++        return false;
++    }
++    return true;
++}
++
+ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
+ 
+     ggml_cuda_set_device(cuda_ctx->device);
+ 
++    if (g_sabah_op_times.on) {
++        sabah_cuda_run_nodes(*cuda_ctx, cgraph, 0, cgraph->n_nodes);
++        g_sabah_op_times.flush(cuda_ctx->stream());
++        return GGML_STATUS_SUCCESS;
++    }
++
++    if (sabah_cuda_seg_compute(cuda_ctx, cgraph)) {
++        return GGML_STATUS_SUCCESS;
++    }
++
+     bool use_cuda_graph             = false;
+     bool cuda_graph_update_required = false;
+     const void * graph_key = nullptr;
+diff --git a/ggml/src/ggml-cuda/sabah-seg.cpp b/ggml/src/ggml-cuda/sabah-seg.cpp
+index 0003930..e21ea8f 100644
+--- a/ggml/src/ggml-cuda/sabah-seg.cpp
++++ b/ggml/src/ggml-cuda/sabah-seg.cpp
+@@ -159,16 +159,19 @@ seg_entry * entry_find(const void * key, int split, int ordinal) {
+     return nullptr;
+ }
+ 
+-// Fills one property block. The node copy catches a changed op or shape, the
+-// source tuple catches a moved buffer, which is what a realloc does. Nodes the
+-// scheduler did not give to this backend are zeroed: their buffers belong to
++// Fills one property block. The node copy catches a changed op, shape or buffer,
++// the source tuple catches a moved buffer, which is what a realloc does.
++// A node the scheduler did not give to this backend still records its own
++// struct: a moved backing allocation shows up as a changed `data` (a view's
++// data is base + offset), so the skip cannot miss a pointer or shape change.
++// Only that node's source tuple is zeroed, because those buffers belong to
+ // another split and must not invalidate this one.
+ void prop_fill(unsigned char * dst, const ggml_tensor * node) {
+     std::memset(dst, 0, SEG_PROP_BYTES);
++    std::memcpy(dst, node, sizeof(ggml_tensor));
+     if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+         return;
+     }
+-    std::memcpy(dst, node, sizeof(ggml_tensor));
+     unsigned char * p = dst + sizeof(ggml_tensor);
+     for (int j = 0; j < GGML_MAX_SRC; j++) {
+         const ggml_tensor * src = node->src[j];
