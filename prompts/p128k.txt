@@ -272,7 +272,7 @@ $env:GGML_OP_OFFLOAD_MIN_BATCH = "1"          # required, see above
 $env:SABAH_LLAMA_TRACE  = "1"                 # cache / coverage / phase counters at exit
 
 llama-sabah-diag.exe `
-  -m C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf `
+  -m $DRIVE\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf `
   -dev CUDA0 -ngl 99 --cpu-moe `
   -ot "\.per_layer_token_embd\.weight=CPU" `
   -t 8 -c 512 -n 32 -p "Hello"
@@ -522,7 +522,7 @@ The `.cu` changes do not take effect until the DLL is rebuilt.
 The build that works on this machine (CUDA 12.8 + Visual Studio) is:
 
 ```powershell
-cd C:\Projects\quantization\Sabah-MoE-Accelerator\sabah\runtime\cuda
+cd $WORKSPACE\sabah\runtime\cuda
 .\build_dll.bat sm_120
 ```
 
@@ -573,7 +573,7 @@ These require only Python + numpy. They cover the pure-logic pieces and are the
 quickest way to see whether the planner and the prefetch scaffolding behave.
 
 ```powershell
-cd C:\Projects\quantization\Sabah-MoE-Accelerator
+cd $WORKSPACE
 python -m pytest tests\test_accel_layer.py -q
 python -m pytest tests\test_public_contracts.py sabah\tests\test_planner.py -q
 ```
@@ -633,10 +633,10 @@ if prefetch evicts live work, or if eviction corrupts a requested expert.
 Set the paths once (two different variables are used by different tests):
 
 ```powershell
-$env:SABAH_MODEL      = "C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+$env:SABAH_MODEL      = "$DRIVE\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
 $env:SABAH_TEST_MODEL = $env:SABAH_MODEL
-$env:SABAH_GGUF_PY    = "C:\Projects\qwen4exp-llama\gguf-py"
-$env:SABAH_SENTINEL_DIR = "C:\Projects\quantization\Sabah-MoE-Accelerator\build\sentinels"
+$env:SABAH_GGUF_PY    = "$DRIVE\Projects\qwen4exp-llama\gguf-py"
+$env:SABAH_SENTINEL_DIR = "$WORKSPACE\build\sentinels"
 ```
 
 `SABAH_GGUF_PY` must point at a `gguf-py` that knows the newer quant type codes
@@ -694,12 +694,12 @@ $env:SABAH_TEST_STEPS = "80"    # more steps = more evictions
 
 ```powershell
 python sabah\tools\bench_moe.py --model $env:SABAH_MODEL `
-  --trace C:\Projects\quantization\Sabah-MoE-Accelerator\tests\data\bench_trace `
+  --trace $WORKSPACE\tests\data\bench_trace `
   --block 0 --slots 16,32,64,128 --prefetch-slots 10
 ```
 
 The trace file was vendored into the repo at `tests\data\bench_trace` because
-the upstream path (`D:\sabah_scaling\v3\traces\main2`) does not exist on this
+the upstream path (`$DRIVE\sabah_scaling\v3\traces\main2`) does not exist on this
 machine. It holds 3000 routing steps for block 0 (top-10 over 512 experts).
 ```
 
@@ -1100,7 +1100,7 @@ bridge's error if it refuses (`ggml/src/ggml-cuda/ggml-cuda.cu:269`) and aborts
 the process (`:2058-2064`):
 
 ```
-C:\...\ ggml\src\ggml-cuda\ggml-cuda.cu:2061: SABAH_LLAMA could not execute the host-backed exact expert operation
+$DRIVE\...\ ggml\src\ggml-cuda\ggml-cuda.cu:2061: SABAH_LLAMA could not execute the host-backed exact expert operation
 0.16.573.058 E SABAH_LLAMA MUL_MAT_ID failed: Sabah over-budget expert: out of memory
 ```
 
@@ -2254,7 +2254,7 @@ claim. See `RC3_CORRECTNESS_REPORT.md` and
 
 ## Pinned dependency and working-tree state
 
-The inspected dirty development checkout is `D:\llama-glm53`; it is preserved
+The inspected dirty development checkout is `$DRIVE\llama-glm53`; it is preserved
 for archaeology only. The reproducible integration source of truth is the
 clean pinned worktree and patch under `third_party/` and `patches/llama.cpp/`.
 
@@ -2378,7 +2378,7 @@ open until the independent correctness ladder and sequential tests are added.
 ## Dependency policy
 
 The release should pin the above llama.cpp commit (or a clean commit plus a
-small documented patch set). The current `D:\llama-glm53` tree contains
+small documented patch set). The current `$DRIVE\llama-glm53` tree contains
 experimental, unrelated local additions and is not a shippable dependency
 snapshot. A future release artifact must record the exact clean base commit,
 Sabah patch, CUDA build flags and native runtime DLL beside its results.
@@ -2389,13 +2389,13 @@ Sabah patch, CUDA build flags and native runtime DLL beside its results.
 # Locality findings — the real 48-block routing trace
 
 Decisive measurement for the 10–15 tok/s target. Tool:
-`tools/trace_locality.py`. Trace: `C:\LMStudio\scratchpads\dk\trace_full`
+`tools/trace_locality.py`. Trace: `$DRIVE\LMStudio\scratchpads\dk\trace_full`
 (48 blocks × 499 steps × top-10, captured from the real model). Artifact:
 `results/trace_locality_full.json`.
 
 ## Baseline (measured, not projected)
 
-`C:\LMStudio\scratchpads\dk\cap_run.log` is a reference run of the full model
+`$DRIVE\LMStudio\scratchpads\dk\cap_run.log` is a reference run of the full model
 through llama.cpp with `sabah-diag` capturing. Per prompt step:
 
 ```
@@ -4702,7 +4702,7 @@ static const char * sb_disk_file_path(size_t i, uint64_t * size_out) {
 }
 
 #if defined(_WIN32)
-// "\Device\HarddiskVolume3\Strata-data\x.gguf" -> "C:\Strata-data\x.gguf"
+// "\Device\HarddiskVolume3\Strata-data\x.gguf" -> "$DRIVE\Strata-data\x.gguf"
 static bool sb_device_path_to_dos(const std::string & dev, std::string & out) {
     char drives[1024];
     const DWORD n = GetLogicalDriveStringsA((DWORD) sizeof(drives) - 1, drives);
@@ -4714,7 +4714,7 @@ static bool sb_device_path_to_dos(const std::string & dev, std::string & out) {
         if (!QueryDosDeviceA(drive, target, sizeof(target))) continue;
         const size_t tl = std::strlen(target);
         if (dev.size() >= tl && dev.compare(0, tl, target) == 0) {
-            out = d;                                        // "C:\"
+            out = d;                                        // "$DRIVE\"
             if (!out.empty() && out.back() == '\\') out.pop_back();
             out += dev.substr(tl);
             return true;
@@ -10204,7 +10204,7 @@ if ROOT not in sys.path:
 
 from sabah.tools import clocks, stream  # noqa: E402
 
-DEFAULT_MODEL = (r"C:\Strata-data\models\IQ3_S"
+DEFAULT_MODEL = (r"$DRIVE\Strata-data\models\IQ3_S"
                  r"\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf")
 DEFAULT_DIAG = os.path.join(ROOT, "third_party", "llama.cpp", "build", "bin",
                             "llama-sabah-diag.exe")

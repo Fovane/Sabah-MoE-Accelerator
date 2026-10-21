@@ -1,0 +1,19 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16283 MiB):
+  Device 0: NVIDIA GeForce RTX 5060 Ti, compute capability 12.0, VMM: yes, VRAM: 16283 MiB
+0.00.889.394 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+0.02.342.054 I cmn          init: llama threadpool init, n_threads = 8
+sabah-diag: main prefill chunk 0 off=0 n=1888  120923.9 ms bytes=111938560000
+sabah-diag: main prefill total_ms=120924.0 chunks=1 n=1888 n_batch=2048 bytes=111938560000
+sabah-diag: main step 0 argmax 198 fed 198  0.0 ms
+sabah-diag: main step 1 argmax 263 fed 263  590.3 ms
+sabah-diag: main step 2 argmax 279 fed 279  504.5 ms
+sabah-diag: main step 3 argmax 1788 fed 1788  359.6 ms
+SABAH_DIAG calls=999 tokens=266643 lookups=2666430 overflow=12992 verify_ok=0 verify_fail=0
+SABAH_DISK unbuffered_reads=167927 bytes=113435315200 waves=21434 mapped_fallbacks=0 staging_bytes=0 direct_io=1 depth=8 lanes=8 lane_reads=167927 sync=0 pending=0
+SABAH_IO read_ms=371430.1 wave_ms=83377.9 overlap=4.45 reads_per_wave=7.83
+SABAH_PHASE calls=999 ids=7557.3ms fetch=84608.8ms wait=83377.9ms slot=22327.2ms ptr=18.9ms prime=4.2ms | per_call us: ids=7565 fetch=84693 wait=83461 slot=22350 ptr=19 prime=4 | accounting=114516.3ms
+SABAH_IDS reused=666 group_max=3 check=0 check_ok=0 check_fail=0
+SABAH_MERGE enabled=0 reserved=0
+SABAH_PREFETCH enabled=0 reads=0 read_bytes=0 used=0 used_bytes=0 dropped=0 stale=0 queued=0 waits=0 wait_ms=0.0 wait_timeouts=0
+SABAH_SNAPSHOT {"calls":999,"empty_calls":0,"tokens":266643,"lookups":2666430,"hits":2498503,"misses":167927,"evictions":154069,"bytes_fetched":113435315200,"resident_bytes":9799692800,"overflow":12992,"verify_ok":0,"verify_fail":0,"selfcheck_k":0,"selfcheck_ok":0,"selfcheck_fail":0,"selfcheck_max_rel_l2":0.000000e+00,"selfcheck_multi_token":0,"selfcheck_tensors":0,"selfcheck_slots":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"sentinel":0}
+SABAH_METRICS hits=2498503 misses=167927 evictions=154069 bytes_fetched=113435315200 resident_bytes=9799692800

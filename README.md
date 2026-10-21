@@ -268,7 +268,7 @@ $env:GGML_OP_OFFLOAD_MIN_BATCH = "1"          # required, see above
 $env:SABAH_LLAMA_TRACE  = "1"                 # cache / coverage / phase counters at exit
 
 llama-sabah-diag.exe `
-  -m C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf `
+  -m $DRIVE\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf `
   -dev CUDA0 -ngl 99 --cpu-moe `
   -ot "\.per_layer_token_embd\.weight=CPU" `
   -t 8 -c 512 -n 32 -p "Hello"

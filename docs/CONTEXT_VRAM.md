@@ -50,7 +50,7 @@ bridge's error if it refuses (`ggml/src/ggml-cuda/ggml-cuda.cu:269`) and aborts
 the process (`:2058-2064`):
 
 ```
-C:\...\ ggml\src\ggml-cuda\ggml-cuda.cu:2061: SABAH_LLAMA could not execute the host-backed exact expert operation
+$DRIVE\...\ ggml\src\ggml-cuda\ggml-cuda.cu:2061: SABAH_LLAMA could not execute the host-backed exact expert operation
 0.16.573.058 E SABAH_LLAMA MUL_MAT_ID failed: Sabah over-budget expert: out of memory
 ```
 

@@ -276,7 +276,7 @@ nothing because the machine is already at boost.
 
 nsys 2026.3.2 captures kernels for a trivial CUDA binary (80 kernel rows), but for
 the diag it records 9 runtime calls and zero kernels: the runtime is loaded with
-`LoadLibrary` and CUPTI never sees its launches. (`C:\Temp\nsys\ctx128.sqlite`,
+`LoadLibrary` and CUPTI never sees its launches. (`$DRIVE\Temp\nsys\ctx128.sqlite`,
 cited as a Phase 0 kernel trace, is in fact a *non-Sabah* run: 121,843 kernels with
 no `k_gate_up`/`k_down`, so it was never a Sabah kernel baseline either.)
 

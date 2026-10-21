@@ -1,0 +1,16 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16283 MiB):
+  Device 0: NVIDIA GeForce RTX 5060 Ti, compute capability 12.0, VMM: yes, VRAM: 16283 MiB
+0.00.968.414 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+0.02.442.848 I cmn          init: llama threadpool init, n_threads = 8
+sabah-diag: main prefill chunk 0 off=0 n=780  53695.8 ms bytes=53759257600
+sabah-diag: main prefill total_ms=53695.8 chunks=1 n=780 n_batch=2048 bytes=53759257600
+sabah-diag: main step 0 argmax 198 fed 198  0.0 ms
+SABAH_DIAG calls=285 tokens=109983 lookups=1099830 overflow=5491 verify_ok=0 verify_fail=0
+SABAH_DISK unbuffered_reads=79545 bytes=53759257600 waves=10068 mapped_fallbacks=0 staging_bytes=0 direct_io=1 depth=8 lanes=8 lane_reads=79545 sync=0 pending=0
+SABAH_IO read_ms=174839.8 wave_ms=39192.3 overlap=4.46 reads_per_wave=7.90
+SABAH_PHASE calls=285 ids=3575.2ms fetch=39879.2ms wait=39192.3ms slot=8993.1ms ptr=6.6ms prime=0.0ms | per_call us: ids=12545 fetch=139927 wait=137517 slot=31555 ptr=23 prime=0 | accounting=52454.2ms
+SABAH_IDS reused=190 group_max=3 check=0 check_ok=0 check_fail=0
+SABAH_MERGE enabled=0 reserved=0
+SABAH_PREFETCH enabled=0 reads=0 read_bytes=0 used=0 used_bytes=0 dropped=0 stale=0 queued=0 waits=0 wait_ms=0.0 wait_timeouts=0
+SABAH_SNAPSHOT {"calls":285,"empty_calls":0,"tokens":109983,"lookups":1099830,"hits":1020285,"misses":79545,"evictions":65778,"bytes_fetched":53759257600,"resident_bytes":9799744000,"overflow":5491,"verify_ok":0,"verify_fail":0,"selfcheck_k":0,"selfcheck_ok":0,"selfcheck_fail":0,"selfcheck_max_rel_l2":0.000000e+00,"selfcheck_multi_token":0,"selfcheck_tensors":0,"selfcheck_slots":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"sentinel":0}
+SABAH_METRICS hits=1020285 misses=79545 evictions=65778 bytes_fetched=53759257600 resident_bytes=9799744000

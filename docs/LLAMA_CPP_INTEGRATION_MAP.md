@@ -8,7 +8,7 @@ claim. See `RC3_CORRECTNESS_REPORT.md` and
 
 ## Pinned dependency and working-tree state
 
-The inspected dirty development checkout is `D:\llama-glm53`; it is preserved
+The inspected dirty development checkout is `$DRIVE\llama-glm53`; it is preserved
 for archaeology only. The reproducible integration source of truth is the
 clean pinned worktree and patch under `third_party/` and `patches/llama.cpp/`.
 
@@ -132,7 +132,7 @@ open until the independent correctness ladder and sequential tests are added.
 ## Dependency policy
 
 The release should pin the above llama.cpp commit (or a clean commit plus a
-small documented patch set). The current `D:\llama-glm53` tree contains
+small documented patch set). The current `$DRIVE\llama-glm53` tree contains
 experimental, unrelated local additions and is not a shippable dependency
 snapshot. A future release artifact must record the exact clean base commit,
 Sabah patch, CUDA build flags and native runtime DLL beside its results.

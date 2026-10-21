@@ -53,6 +53,20 @@ BASE_ENV = {
     "SABAH_LLAMA_TRACE": "1",
 }
 
+# The shipped configuration, both measured in REPORT 16/8: SEG=48 segments every
+# Sabah node into a CUDA graph (42.74 -> 30.36 ms/token at 128K) and TILE3 is
+# the default expert kernel (item 3/8). Both are the runtime default; setting
+# either to 0 restores the eager and TILE2 path. They are in the profile so the
+# launcher states what it ran, and so a run can be replayed with one change.
+# SABAH_PREFILL_GROUP stays off (docs/PREFILL_GROUP_MAJOR.md 6.2).
+SHIPPED_ENV = {
+    "SABAH_CUDA_GRAPH_SEG": "48",
+    "SABAH_LLAMA_TILE3": "1",
+}
+
+# escape hatch: any of these set in the parent environment wins over SHIPPED_ENV
+OVERRIDABLE = tuple(SHIPPED_ENV)
+
 # The reproduction flags from the README, and nothing else.
 BASE_FLAGS = [
     "-dev", "CUDA0", "-ngl", "99", "--cpu-moe",
@@ -292,6 +306,10 @@ def run(model, prompt="Hello", tokens=32, context=512, threads=8,
 
     env = dict(os.environ)
     env.update(BASE_ENV)
+    # the shipped profile, unless the parent environment already pins a value
+    for k, v in SHIPPED_ENV.items():
+        if os.environ.get(k) is None:
+            env[k] = v
     env["SABAH_RT_LIB"] = os.path.abspath(rt)
     env["SABAH_LLAMA_HOT_BYTES"] = str(hot_bytes)
     if counters:
