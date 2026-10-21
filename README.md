@@ -159,10 +159,30 @@ GPU-side idle time rather than launch overhead:
 | VRAM peak | 15745 MiB | 15872 MiB |
 | outputs | reference | byte-identical |
 
-That is N=1, at slab 6.0e9, with the tail window read at a ~3.7K-deep KV. It is
-**not** a filled-128K-context number, and the coding trace does not warm up in
-2048 steps at that slab - see the limitations below. The saving is measured, the
-mechanism is in [`docs/CUDA_GRAPH_SPLIT.md`](docs/CUDA_GRAPH_SPLIT.md).
+That is N=1, at slab 6.0e9, with the tail window read at a **~3.7K-deep KV** - a
+6817-character prompt, not a filled 128K context. It is **not** a
+filled-128K-context number, and the coding trace does not warm up in 2048 steps
+at that slab - see the limitations below. The saving is measured, the mechanism
+is in [`docs/CUDA_GRAPH_SPLIT.md`](docs/CUDA_GRAPH_SPLIT.md).
+
+### Decode on a deep KV: what the same code does at 30K tokens of context
+
+The first measurement at real depth, same build and settings (`-c 32768`,
+`-b 2048`, `-ub 1024`, slab 6.0e9, 2048 decode steps after a 28,413-token
+prefill, clocks valid, `N=1`):
+
+| regime | ms/token (min / median / max) | MB/token | misses/token |
+|---|---|---|---|
+| warm-up (first 128) | 0.0 / **312.5** / 796.3 | 342 | 500 |
+| last 256 ("steady") | 103.2 / **310.0** / 665.0 | 344 | **504** |
+
+tok/s over that tail: **3.2**. The last-256 window is **not steady**: at step
+2048 the run still misses 504 experts per token, which with 48 layers and top-10
+is 10.5 misses per layer - every routed expert is still a miss. So there is no
+steady-state number to quote at this depth, and the 10x gap to the table above
+is the expert working set rather than the KV depth: the coding trace shows the
+same 272 ms tail at only ~3.2K depth because it routes as widely
+(REPORT 15.4). Full evidence: REPORT sections 21-22.
 
 ### Prefill with a wider ubatch (no new algorithm)
 
@@ -176,8 +196,34 @@ changed (same prompt, same build, byte-identical routing counters):
 | 1024 (2 ubatches) | **65.9 GB** | **-42%** |
 
 Larger `-ub` moves the same work into one ubatch, so the pool is streamed once
-per chunk instead of once per ubatch. Full sweep, compute buffer, VRAM and
-ms/token per setting: [`REPORT.md`](results/phase0/REPORT.md) section 19.
+per chunk instead of once per ubatch. The full sweep (one 4486-token prompt,
+`-b 2048`, slab 9.8e9, same build, `N=1`):
+
+| `-ub` | disk GB | per 2048-token chunk | ms/token | cache misses | host WS peak |
+|---|---|---|---|---|---|
+| 512 (default) | 257.5 | 113.0 / 115.5 GB | 114.3 | 382644 | 5894 MiB |
+| 1024 | 161.8 | 65.9 / 66.9 GB | 107.0 | 241183 | 6492 MiB |
+| 2048 | 102.9 | 37.1 / 36.9 GB | 350.0 | 154016 | 7128 MiB |
+| 4096 | 102.9 | 37.1 / 36.9 GB | 102.3 | 154016 | 7265 MiB |
+
+Disk halves with each doubling, because a chunk is read once per ubatch inside
+it; the 390-token tail chunk reads the same ~29 GB in all four settings, which
+is the control. The 2048 and 4096 rows are the same execution (identical cache
+counters) and their 3.4x wall difference sits in the host `ids`/`slot` phases,
+not the disk, so with `N=1` only the disk claim is made.
+
+**A wider `-ub` is not byte-identical and stays opt-in.** `-ub 512` vs `-ub 1024`
+over four decode rows: max abs logit diff 2.905, top-1 agreement 4/4 rows,
+max abs KL 0.21. So `--flag=-ub 1024` is a *numerically equivalent* mode, never
+a default; `-ub 512` is the default and is what every other number here was
+measured with.
+
+One real 32K-class prefill at the best setting (`-ub 1024`): 1174 s, 14 chunks,
+1013 GB, 41.3 ms/token. Projected to 128K that is 4679 GB and **90.3 min**,
+over the 60-minute threshold, so the full 128K prefill was **not** run - the one
+setting that would fit (`-ub 2048`) is not qualified to recommend. Full sweep,
+compute buffer, VRAM and per-setting detail: [`REPORT.md`](results/phase0/REPORT.md)
+section 20-21.
 
 The warm-up token, phase by phase (differencing `-n 32` minus `-n 8`, i.e. decode
 steps 9..32 — this is the number the README used to quote as *the* rate):
@@ -243,10 +289,16 @@ list to attack.
   section 6.2 records the root cause: the fused-kernel set changes at the split
   boundary).
 - **The machine state can double ms/token.** The same decode measured 88.9 ms and
-  58 ms on two runs (REPORT 9); the clock pin that used to remove this needs
-  admin on this machine and is currently refused. Every timed number here was
-  taken with the pin in force, and the harness refuses to call a run valid below
-  2400 MHz steady SM.
+  58 ms on two runs (REPORT 9). Every timed number here was taken with the clock
+  pin in force (`-lgc 2800,3090 -lmc 13000,14001`), and a run whose steady SM
+  clock is below 2400 MHz is marked invalid by the harness and is not evidence.
+  The pin needs admin; on this machine it was refused for part of one session
+  and works again (REPORT 19).
+- **Deep context does not reach the steady state within 2048 steps.** The first
+  measurement at ~30K KV depth reads 310 ms/token in its last-256 window with
+  504 misses/token - every routed expert still missing, so that window is not
+  steady (REPORT 22). The 30-33 tok/s table above is a short-prompt,
+  warm-tier number and does not extend to a deep KV with a wide-routing prompt.
 - **Correctness is about bytes served, not model quality.** Byte-identical means
   the runtime serves exactly what the GGUF contains (`verify_ok`,
   `id_check`); it is not a perplexity or benchmark comparison, and none is run
