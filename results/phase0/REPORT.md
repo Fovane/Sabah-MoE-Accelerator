@@ -1614,8 +1614,8 @@ shipped `f16` on the same prompt, context and build, `N=1`, clocks valid
 
 | KV type | steady ms/token | tok/s | expert reads | disk bytes |
 |---|---|---|---|---|
-| f16 (default) | **30.05** | **33.28** | 33,557 | 22.7 GB |
-| q8_0 | 188.32 | 5.31 | **84,055** | 56.7 GB |
+| build default, `K=f16` / **`V=q4_0`** | **30.05** | **33.28** | 33,557 | 22.7 GB |
+| `-ctk q8_0 -ctv q8_0` | 188.32 | 5.31 | **84,055** | 56.7 GB |
 
 Same prompt ("Hello", 53 tokens), same `-c 2048`, same slab, only `-ctk q8_0
 -ctv q8_0` added. The KV saving is real but the decode gets **6.3x slower**, and
@@ -1634,8 +1634,15 @@ the same effect REPORT 15.4 records for the coding trace).
 ### What this means for the config
 
 * **`-ctk q8_0 -ctv q8_0` is an opt-in "numerically equivalent" mode** - the
-  outputs are not byte-identical to the f16 path, and on this rig it is a
-  6.3x decode-time regression, not a free saving;
+  outputs are not byte-identical to the default path, and on this rig it is a
+  6.3x decode-time regression, not a free saving, while the default it replaces
+  already quantises V (`-ctv` default is `q4_0` in this build);
+* **the label "f16" was wrong and is corrected here**: the "fast" column above
+  was measured without any `-ctk/-ctv` flags, so it is the build default
+  `K=f16` + **`V=q4_0`**, not an unquantised cache. A fully unquantised
+  `-ctk f16 -ctv f16` run is **not measured**, and the V quantisation is exactly
+  the mechanism REPORT 28 describes, so the default may already be paying part
+  of the price it claims to charge `q8_0` for;
 * the VRAM it frees is small next to the cause of VRAM pressure (at
   `-c 131072` the whole KV cache is ~384 MB f16, REPORT 23.1), so paying 6x
   decode for it is the wrong trade on this hardware;

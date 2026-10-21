@@ -351,7 +351,9 @@ list to attack.
   with it which experts the router selects: the same ask lands on a wider set,
   the misses go to the disk, and the disk is already the wall. The VRAM it
   frees is ~384 MB at 128K. Opt-in, and a numerically-equivalent mode, never a
-  default.
+  default. Note the "fast" column there is the build default, which is already
+  `K=f16` with **`V=q4_0`** - a fully unquantised `-ctk f16 -ctv f16` is not
+  measured.
 - **Deep context is disk-bound, and no policy reaches a tier on this hardware.**
   The first measurement at ~30K KV depth reads 280.45 ms/token (3.57 tok/s) with
   339 MB/token of expert traffic and 501 misses/token; the last-256 window is

@@ -22,6 +22,27 @@ It leaves you with:
 | `http://127.0.0.1:8080` | a chat page in the browser (type and go) |
 | `http://127.0.0.1:8080/v1/chat/completions` | the OpenAI-compatible API |
 
+### Three things that will confuse you otherwise
+
+**It is a reasoning model.** It thinks before it answers, and the reasoning is
+returned in `message.reasoning` (or `reasoning_content`), not in `content`. With
+`max_tokens` too small the whole budget goes into thinking and `content` comes
+back **empty** - that is not a bug, it is a budget:
+
+```powershell
+# 40 tokens: what you get back is ''  - the model never finished thinking
+# 512 tokens: what you get back is '4'
+"max_tokens": 512
+```
+
+**`--parallel 2` halves the context.** With `-c 131072 --parallel 2` each
+request gets `n_ctx_slot = 65536`, not 131072. For one user chatting, use
+`--parallel 1` (`tools/start_server.ps1` does).
+
+**The default cache is not all-f16.** In this build `-ctv` defaults to `q4_0`,
+so the shipped path is `K=f16` + `V=q4_0` (REPORT 28). Leave the flags alone for
+the measured fast path; `-ctk f16 -ctv f16` is unmeasured and may not be faster.
+
 Any OpenAI client points at it with `base_url = "http://127.0.0.1:8080/v1"` and
 any `model` name: Open WebUI, LM Studio, LibreChat, SillyTavern, `openai-python`,
 or curl:
@@ -130,14 +151,19 @@ What it costs (same prompt, same context, measured, REPORT 28):
 
 | KV | ms/token | tok/s | expert reads |
 |---|---|---|---|
-| f16 | 30.05 | 33.3 | 33,557 |
-| q8_0 | 188.32 | 5.3 | 84,055 |
+| build default: `K=f16`, `V=q4_0` | 30.05 | 33.3 | 33,557 |
+| `-ctk q8_0 -ctv q8_0` | 188.32 | 5.3 | 84,055 |
 
 **Why:** q8 quantises the keys and values, which perturbs the attention output,
 which perturbs the hidden state, and with it which experts the router selects.
 The same expert ask lands on a wider, less cache-resident set, the misses go to
 the disk, and the disk is already the wall - so decode gets 6x slower. The VRAM
 it frees is small (the whole 128K KV cache is ~384 MB f16, REPORT 23.1).
+
+Note the default already quantises V: in this build `-ctv` defaults to `q4_0`,
+so "use f16" means "leave the defaults alone". A fully unquantised
+`-ctk f16 -ctv f16` has not been measured here, and it may not be faster - the
+V quantisation is the same mechanism that makes `q8_0` slow.
 
 Use q8 as a numerically-equivalent mode, not as a speed setting.
 
