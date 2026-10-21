@@ -2,7 +2,7 @@
   "argv": [
     "C:\\Projects\\quantization\\Sabah-MoE-Accelerator\\third_party\\llama.cpp\\build\\bin\\llama-sabah-diag.exe",
     "-m",
-    "C:\\Strata-data\\models\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+    "C:\\Projects\\quantization\\Sabah-MoE-Accelerator\\$DRIVE\\Strata-data\\models\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
     "-dev",
     "CUDA0",
     "-ngl",
@@ -13,11 +13,11 @@
     "-t",
     "8",
     "-c",
-    "20000",
+    "9000",
     "-n",
-    "8",
+    "4",
     "-b",
-    "str(batch)",
+    "2048",
     "-ub",
     "2048"
   ],
@@ -29,17 +29,17 @@
     "reason": "no clock samples",
     "samples": [
       [
-        0.03,
+        0.033,
         {
           "display_active": "Enabled",
           "display_attached": "Yes",
           "fan_pct": 0.0,
           "mem_mhz": 405.0,
           "power_limit_w": 180.0,
-          "power_w": 8.08,
+          "power_w": 8.65,
           "pstate": "P8",
-          "sm_mhz": 412.0,
-          "temp_c": 35.0,
+          "sm_mhz": 502.0,
+          "temp_c": 34.0,
           "throttle": "0x0000000000000400",
           "util_pct": 1.0
         }
@@ -60,10 +60,10 @@
         "n": 1
       },
       "power_w": {
-        "max": 8.08,
-        "mean": 8.08,
-        "median": 8.08,
-        "min": 8.08,
+        "max": 8.65,
+        "mean": 8.65,
+        "median": 8.65,
+        "min": 8.65,
         "n": 1
       },
       "pstates": {
@@ -71,18 +71,18 @@
       },
       "samples": 1,
       "sm_mhz": {
-        "max": 412.0,
-        "mean": 412.0,
-        "median": 412.0,
-        "min": 412.0,
+        "max": 502.0,
+        "mean": 502.0,
+        "median": 502.0,
+        "min": 502.0,
         "n": 1
       },
       "span_s": 0.0,
       "temp_c": {
-        "max": 35.0,
-        "mean": 35.0,
-        "median": 35.0,
-        "min": 35.0,
+        "max": 34.0,
+        "mean": 34.0,
+        "median": 34.0,
+        "min": 34.0,
         "n": 1
       },
       "throttle": [
@@ -116,21 +116,21 @@
     "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
   },
   "memory": {
-    "avail_phys_first_mib": 11435.0703125,
-    "avail_phys_last_mib": 11471.5,
-    "avail_phys_min_mib": 11435.0703125,
-    "process_peak_ws_mib": 179.9140625,
-    "process_ws_first_mib": 39.95703125,
+    "avail_phys_first_mib": 11649.4453125,
+    "avail_phys_last_mib": 11697.03125,
+    "avail_phys_min_mib": 11649.4453125,
+    "process_peak_ws_mib": 183.15234375,
+    "process_ws_first_mib": 50.7578125,
     "process_ws_last_mib": 0.03125,
     "vram_mib_series": [
-      283,
-      283
+      207,
+      207
     ],
-    "vram_peak_mib": 283,
+    "vram_peak_mib": 207,
     "vram_samples": 2
   },
   "n_decodes": 0,
-  "prompt_chars": 26001,
-  "prompt_file": "C:\\Projects\\quantization\\Sabah-MoE-Accelerator\\results\\phase0\\b-eq\\prompt8k.txt",
-  "wall_s": 0.5474112033843994
+  "prompt_chars": 13001,
+  "prompt_file": "C:\\Projects\\quantization\\Sabah-MoE-Accelerator\\results\\phase0\\b-eq\\prompt4k.txt",
+  "wall_s": 0.535130500793457
 }
