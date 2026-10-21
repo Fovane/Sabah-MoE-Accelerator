@@ -107,7 +107,9 @@ def wash(path, root, write):
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(new)
         return True, True
-    return True, False
+    # dirty-looking but unchanged: a placeholder that is already a placeholder must
+    # not be reported as needing a scrub, or the check output cannot be trusted
+    return new != text, False
 
 
 SKIP_PREFIX = ("tools/", "sabah/", "patches/", "docs/")
