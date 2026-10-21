@@ -4,8 +4,11 @@
 
 Sabah runs models far larger than the machine's VRAM + RAM combined. It does that
 **without a RAM tier, without the page cache and without the page file**: the
-expert path goes `disk -> pinned staging -> VRAM` with `FILE_FLAG_NO_BUFFERING`,
-so **host RAM stays flat** for the whole run.
+expert path goes `disk -> pinned staging -> VRAM` with `FILE_FLAG_NO_BUFFERING`.
+The measured claim is that **host RAM stays flat while the expert tier fits in
+VRAM** - 4.78 GiB at a short context, `mapped_fallbacks=0`. At `-c 131072` the
+tier stops fitting beside the KV cache and ~3.4 GB of it is served from system
+RAM; that boundary is measured, not assumed (REPORT 23.1).
 
 That is the point of the project. An 83.6 GB MoE model either fails to load on a
 16 GB-VRAM / 15 GB-RAM machine, or it "runs" only by letting the OS page weights
@@ -21,7 +24,7 @@ Measured end to end on the reference rig:
 | decode, steady state | **~67 ms/token = ~15 tok/s**, effectively disk-free (4.5 reads, 3.0 MB/token) |
 | decode, first 128 tokens | 79-204 ms/token: the tier is still discovering its working set |
 | 256-token answer end to end | 11.2 s + 24.6 s = **7.1 tok/s including the fill**, 10.4 over the decodes |
-| **host RAM** | **flat at 4.78 GiB**, never grows, `mapped_fallbacks=0` |
+| **host RAM** | **flat at 4.78 GiB** at this context (53-token prompt), `mapped_fallbacks=0`. At `-c 131072` the 6 GB slab no longer fits beside the KV cache and **~3.4 GB of it runs from system RAM** - see the limitation below |
 | peak VRAM | 15.36 GB of 16.31 GB |
 | correctness | byte-exact against the GGUF ranges (`verify_ok=64191 verify_fail=0`) |
 
@@ -299,6 +302,20 @@ list to attack.
   504 misses/token - every routed expert still missing, so that window is not
   steady (REPORT 22). The 30-33 tok/s table above is a short-prompt,
   warm-tier number and does not extend to a deep KV with a wide-routing prompt.
+- **At 128K context the RAM-flat claim does not hold.** Sampling the GPU's
+  Windows Shared Usage counter against its idle baseline, with the same 6.0e9
+  slab: **+110 MiB at `-c 512`, +349 MiB at `-c 32768`, +3517 MiB at
+  `-c 131072`** (`tools/p3_shared.py`, REPORT 23.1). The KV cache grows, the
+  6 GB slab stops fitting in 16.3 GB of VRAM, and WDDM puts ~3.4 GB of it in
+  system RAM; the host working set grows 4867 -> 8901 MiB with it. Sizing the
+  slab from the DXGI budget minus the KV cache gives ~2.4 GB at 128K, which is
+  not the current default.
+- **A bigger slab does not shorten the warm-up.** The coding trace at 6.0e9 vs
+  9.8e9 (outputs byte-identical): double the slab halves the tail misses
+  (408.4 -> 213.2/token) and the tail disk (277.1 -> 144.1 MB/token) and moves
+  the tail 4%, but makes the warm-up 90% slower (296 -> 563 ms) and the prefill
+  4.6x slower. A prompt-informed warm-up is not implemented; the measurement
+  says why (REPORT 23.2).
 - **Correctness is about bytes served, not model quality.** Byte-identical means
   the runtime serves exactly what the GGUF contains (`verify_ok`,
   `id_check`); it is not a perplexity or benchmark comparison, and none is run
