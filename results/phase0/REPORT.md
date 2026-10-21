@@ -1113,3 +1113,72 @@ pushed.
 | `sabah gate` | PASS (verify 2000/0, id reuse 768/0, mapped fallback 0) |
 | host RAM | WS peak 8943 -> 8994 MiB (+51 MiB, the segment table) |
 | driver / clocks | 32.0.16.1742, SM 2805-2857, mem 13801, P1, 34.9 W |
+
+## 17. Item 4 re-verification (October 21)
+
+Two checks re-run on the current build (after the section 16.5.2 tightening of
+`prop_fill`):
+
+| check | result |
+|---|---|
+| fusion decisions, `SEG=0` vs `SEG=48` | **15/15 split blocks identical** (`tools/p1_fuse.py`, one full token) |
+| 640 tokens across n_kv 256/512, `-c 2048`, logits | byte-identical, hash `c30f01a8d676d64f` on both sides, re-derived on this build |
+| `sabah gate` | **PASS** (verify 2000/0, id reuse 768/0, mapped fallback 0, over-budget 448 documented) |
+
+Driver 32.0.16.1742 (nvidia-smi 617.42), CUDA 12.8, `compute_120a/sm_120a`,
+MSVC 14.44, RTX 5060 Ti 16283 MiB, Ryzen 5 7600. The gate run's steady clocks
+were **INVALID** (steady SM median 727 MHz, P3): `nvidia-smi -lgc/-lmc` now
+returns "the current user does not have permission to change clocks", so pinning
+is no longer available on this machine and every timed number must be judged on
+the harness's own steady-clock gate. This is a machine-state change, not a
+result: the byte-identical checks above do not depend on clocks.
+
+Two item-4 cells stay open, both recorded rather than silently dropped:
+
+* **N=2 on the 128K tail**: the 42.74 -> 30.36 ms result is N=1.
+* **a second 128K prompt**: prompt B (a different 26 KB slice of the item-6
+  128K text) aborts on **both** sides with
+  `SABAH_LLAMA could not execute the host-backed exact expert operation`
+  (`ggml-cuda.cu:2068-2072`, the bridge refusing an over-budget expert), at
+  ~285 s into a 1024-token `-c 131072` run. This is a runtime budget limit for
+  that prompt's routing, not a SEG regression, and it is the reason only one
+  128K correctness gate exists.
+
+## 18. Layer-group prefill: root cause of the divergence
+
+Measured, one hypothesis per test, all on the same binary. Full table in
+`docs/PREFILL_GROUP_MAJOR.md` 6.2.
+
+| hypothesis | test | result |
+|---|---|---|
+| segmented CUDA graph recapture | `SABAH_CUDA_GRAPH_SEG=0` both sides | DIFF, ruled out |
+| op offload by batch size | `GGML_OP_OFFLOAD_MIN_BATCH=1000000` | DIFF, ruled out |
+| graph reuse across ubatches | `LLAMA_GRAPH_REUSE_DISABLE=1` | DIFF, ruled out |
+| stock CUDA graph path | `GGML_CUDA_DISABLE_GRAPHS=1` | DIFF, ruled out |
+| H1 recurrent-memory replay | capture `state_predelta` / `conv_state_at` at layers 24/25/44/45/46 | **identical**, ruled out |
+| **fusion decisions** | `GGML_CUDA_DISABLE_FUSION=1` both sides | G=24, 12 and 4 all **IDENTICAL** |
+
+Root cause: a group graph is a contiguous subsequence of the chunk graph, and
+the fusion guard is neighbourhood-based (`ggml-cuda.cu:3610-3614`), so a pattern
+that is whole in the chunk graph straddles a group boundary and is refused inside
+each group graph. First differing value: layer 20 `hc_norm` (a RESHAPE of an
+`rms_norm`+`mul` pair), token 3, with a byte-identical input tensor, same backend
+and same op reported by the capture. max abs logit difference 1.048 with the
+same argmax, which is why the earlier "identical argmax" readings hid it.
+
+G dependence, one ubatch, `-ub 2048`, SEG=0:
+
+| G | groups | logits vs the plain reference |
+|---|---|---|
+| 48 | 1 (no grouping) | IDENTICAL |
+| 24 | 2 | **DIFF** |
+| 12 | 4 | IDENTICAL |
+| 8 | 6 | IDENTICAL |
+| 6 | 8 | IDENTICAL |
+| 4 | 12 | IDENTICAL |
+| 2 | 24 | aborts: `GGML_ASSERT(buffer)` at `ggml-backend.cpp:218`, open |
+
+The G values that pass do so by position (their boundaries happen to fall where
+no pattern straddles), so they are not a safe envelope. The feature is off by
+default, additionally gated to one ubatch per `llama_decode` call, and is not
+part of the release.
