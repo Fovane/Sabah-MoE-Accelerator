@@ -21,8 +21,10 @@ Measured end to end on the reference rig:
 |---|---|
 | model | `Qwen3.8-Flash-Next` IQ3_S, **83.6 GB** (2 shards, 48 blocks x 512 experts, top-10) |
 | time to first token | **11.2 s** (the 53-token prompt is easy; the expert tier starts empty and fills 12.68 GB at 1.11 GB/s) |
-| decode, steady state, short context | **~67 ms/token = ~15 tok/s**, effectively disk-free (4.5 reads, 3.0 MB/token) |
-| decode, 128K context, short prompt, SEG=48 | **30.36 ms/token = 32.93 tok/s** over the last-256 window (REPORT 16.6, N=1) |
+| **decode, short context, SEG=48 (best measured)** | **30.36 ms/token = 32.93 tok/s** over the last-256 window, byte-identical outputs (REPORT 16.6, N=1, clocks valid) |
+| decode, same, SEG=0 baseline | 42.74 ms = 23.40 tok/s - what the graph work bought |
+| decode, short context, no SEG | **~67 ms/token = ~15 tok/s**, effectively disk-free (4.5 reads, 3.0 MB/token) |
+| decode, 128K window, short prompt | 30.36 ms (32.93 tok/s), ~3.7K-deep KV (REPORT 16.6) |
 | decode, **filled ~30K KV** | **280.45 ms/token = 3.57 tok/s**, 339 MB/token, 501 misses/token, still not steady at step 2048 (REPORT 21-22) |
 | decode, first 128 tokens | 79-204 ms/token: the tier is still discovering its working set |
 | 256-token answer end to end | 11.2 s + 24.6 s = **7.1 tok/s including the fill**, 10.4 over the decodes |
@@ -103,10 +105,13 @@ Two placement details are required and easy to get wrong:
 
 ### What was optimised, and what it bought
 
-Everything here came from measuring the token, not from guessing. Baseline to
-current is **4.37 -> 4.84 tok/s (+11%)**, with no change to the outputs.
+Everything here came from measuring the token, not from guessing. **Every tok/s
+figure in this table is the warm-up regime** (the tier still filling, 6-token
+runs) - not the steady state, and not comparable with the headline table above,
+whose figures are steady-decode. Baseline to current in that regime is
+**4.37 -> 4.84 tok/s (+11%)**, with no change to the outputs.
 
-| change | cost before | after | tok/s |
+| change | cost before | after | tok/s (warm-up) |
 |---|---|---|---|
 | baseline (per-call stream drain, linear erase) | `ids` 87 ms | | 4.37 |
 | reuse the router ids across a layer's 3 expert tensors | 87 ms | ~23 ms | 4.75 |
@@ -349,24 +354,28 @@ list to attack.
   spill-free slab, where tier A (10 tok/s) needs 88% (REPORT 25). The 30-33 tok/s
   figure above is a short-prompt, warm-tier number and does not extend to a deep
   KV with a wide-routing prompt. Never quote one number for both.
-- **At 128K context the RAM-flat claim does not hold.** Sampling the GPU's
-  Windows Shared Usage counter against its idle baseline, with the same 6.0e9
-  slab: **+110 MiB at `-c 512`, +349 MiB at `-c 32768`, +3517 MiB at
-  `-c 131072`** (`tools/p3_shared.py`, REPORT 23.1). The KV cache grows, the
-  6 GB slab stops fitting in 16.3 GB of VRAM, and WDDM puts ~3.4 GB of it in
-  system RAM; the host working set grows 4867 -> 8901 MiB with it. Sizing the
-  slab from the DXGI budget minus the KV cache gives ~2.4 GB at 128K, which is
-  not the current default.
+- **At 128K context the RAM-flat claim does not hold.** The *process* working set stays
+  flat, but the driver moves slabs into system RAM when the slab no longer fits beside
+  the KV cache and the compute buffer: sampling the GPU's Windows "Shared Usage"
+  counter against its idle baseline gives **+110 MiB at `-c 512`, +349 MiB at
+  `-c 32768` and +3517 MiB at `-c 131072`** (`tools/p3_shared.py`, REPORT 23.1).
+  Size the slab for the context (the table in the reproduce section) and do not quote
+  "host RAM is flat" for a 128K run with a 6 GB slab.
 - **A bigger slab does not shorten the warm-up.** The coding trace at 6.0e9 vs
   9.8e9 (outputs byte-identical): double the slab halves the tail misses
   (408.4 -> 213.2/token) and the tail disk (277.1 -> 144.1 MB/token) and moves
   the tail 4%, but makes the warm-up 90% slower (296 -> 563 ms) and the prefill
   4.6x slower. A prompt-informed warm-up is not implemented; the measurement
   says why (REPORT 23.2).
-- **Correctness is about bytes served, not model quality.** Byte-identical means
-  the runtime serves exactly what the GGUF contains (`verify_ok`,
-  `id_check`); it is not a perplexity or benchmark comparison, and none is run
-  here.
+- **Correctness is about bytes served, not model quality.** Byte-identical means the
+  runtime serves exactly the GGUF's quantised weights (`verify_ok`, `id_check`, and
+  the `SABAH_PREFILL_GROUP`/SEG toggles all check out byte-equal against the plain
+  path). It does **not** prove the model is good: no perplexity, no accuracy
+  benchmark and no A/B against another runtime is run here. The IQ3_S / IQ4_NL
+  quantisation quality numbers are ISTA-DASLab's own measurements of their
+  conversion, not ours, and Sabah can only be as good as the file it is handed. Run
+  a perplexity or task-level comparison against a reference build before drawing
+  any conclusion about output quality.
 - **Layer-group prefill is not shipped.** Off by default, and additionally gated
   to a single ubatch per `llama_decode` call; see the design note.
 
@@ -395,10 +404,23 @@ nvidia-smi -lgc 2800,3090        :: SM floor 2800, ceiling left free
 nvidia-smi -lmc 13000,14001      :: memory floor 13000, ceiling left free
 ```
 
-Both are reversible (`nvidia-smi -rgc` / `-rmc`) and need admin. Without them the
-card may sit at 585 MHz in P8 and the same decode measures twice the time, so a
-run whose steady SM clock is below 2400 MHz is marked **invalid** by the harness
-and is not evidence.
+Both are reversible (`nvidia-smi -rgc` / `-rmc`) and need admin.
+
+**The machine state can double ms/token, and this has happened here.** The same
+decode measured **88.9 ms** and **58 ms** on two runs of the same binary: the first
+sat in a low P-state with the SM clock at 585-900 MHz, the second at 2805 MHz
+(REPORT 9). A 53% difference from no code change at all. So:
+
+- pin the clocks before any timed run, and record `pstate`, `clocks.sm` and
+  `clocks.mem` next to the number;
+- the harness marks a run **invalid** when the steady SM clock is below 2400 MHz or
+  the memory clock is below 10000 MHz, and an invalid run is not evidence - re-run it;
+- if pinning is refused (it needs admin), the auto-boost may still be enough under
+  load, but check the recorded steady clock before quoting the time;
+- other processes holding a compute context are allowed (15 hold them on the
+  reference rig, mostly system ones that never compute) but they are a flag, not a
+  refusal - see `python -m sabah.tools.bench_protocol`, which prints the verdict
+  and refuses on a low clock.
 
 The regimes, and the command that produces each:
 
@@ -478,11 +500,28 @@ $env:GGML_OP_OFFLOAD_MIN_BATCH = "1"          # required, see above
 $env:SABAH_LLAMA_TRACE  = "1"                 # cache / coverage / phase counters at exit
 
 llama-sabah-diag.exe `
-  -m $DRIVE\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf `
+  -m $env:SABAH_MODEL_DIR\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf `
   -dev CUDA0 -ngl 99 --cpu-moe `
   -ot "\.per_layer_token_embd\.weight=CPU" `
   -t 8 -c 512 -n 32 -p "Hello"
 ```
+
+`SABAH_MODEL_DIR` is the single source of truth for where the shards live - every
+tool reads it, so no script in the repository carries a drive letter.
+
+**Slab size by context** (REPORT 23: the slab has to fit beside the KV cache and
+the compute buffer, or the driver puts the rest in system RAM):
+
+| context | slab | why |
+|---|---|---|
+| `-c 512` .. `-c 32768` | 6.0e9 (9.8e9 is fine) | the KV cache is small; the shared-memory
+spill is negligible (+110 MiB at `-c 512`, +349 MiB at `-c 32768`) |
+| `-c 65536` | ~3.0e9 | the KV cache starts to dominate |
+| `-c 131072` | ~2.4e9 | 6.0e9 spills ~3.4 GB into system RAM (Shared Usage +3517 MiB),
+which makes every miss more expensive than the disk saving is worth |
+
+`--hot-bytes 9.8e9` with `-c 512` is the *short-answer* setting; do not carry it to a
+128K context.
 
 `llama-sabah-diag` is the measurement driver from patch `0002`. The bridge lives
 in `ggml-cuda`, so any llama.cpp binary loads it: `llama-cli` runs this model end
@@ -593,8 +632,12 @@ tools/io_bench.cu                   C++ twin of it: one factor at a time (offset
 tools/trace_locality.py             expert-reuse trace -> hit-rate curves
 sabah/tools/bench_moe.py            per-block benchmark (research harness)
 sabah/runtime/*.py                  Python research harness, see below
+research_registry_v5.csv           experiment log: one row per hypothesis, the machine it
+                                    ran on, the artefact and the verdict (PASS / FAIL)
 docs/                               design notes, budgets, validation reports
-results/                            raw JSON for every number quoted here
+results/                            raw JSON for every number quoted here; ~46 MB tracked.
+                                    The raw per-token logit dump (logits.f32) is git-ignored;
+                                    its SHA-256 is recorded in REPORT.md instead
 ```
 
 ## Python block harness (separate from the shipped path)
@@ -641,9 +684,30 @@ is paid once per fresh working set (11.2 s), the warm-up is the tier learning
 | 1 | **Gen4/Gen5 NVMe** | the *fill* is 12.68 GB at 1.11 GB/s = 11.2 s of the 35.8 s a 256-token answer takes; at 6 GB/s that is ~2.1 s and the answer goes 7.1 -> ~10.5 tok/s end to end. The steady state does not move (it is disk-free). Re-measure any candidate with fresh offsets (`tools/disk_probe.py`, `tools/io_bench.cu`) - the old 6 GB/s projection used a repeat-read ceiling | money. Still the largest single change for short answers |
 | 2 | ~~**Close the exposure gap** (1.31 -> ~2.4 GB/s in the demand path)~~ **measured, no gap to close** | the 2.4 GB/s target was a repeat-read artifact of the old probe: with fresh offsets this drive reads ~1.05-1.45 GB/s and gains only ~15% from one reader to sixteen. The runtime reads at 1.11-1.46 GB/s | n/a. See `docs/DECODE_BUDGET.md` |
 | 3 | ~~**Fewer bytes per token** - batch verification / speculative decoding~~ **measured, dead on this rig** | the "982 -> 676 MB/token" figure was residency demand, not miss traffic; measured bytes/position get *worse* with B (164.5 -> 169.6 MB). A 100%-acceptance pass is only 15% faster (161.3 vs 190.9 ms/position), so break-even needs 78-82% acceptance plus rollout, and this rig's `common_ngram_simple_draft` accepts **0.004 drafts/pass** on the model's own greedy stream (99.6% of passes accept nothing; n>=3 never): **2.8-7.7x slower** | high risk, measured net loss for speculation. **What survives: batching real concurrent requests.** The floor is `30.3 + 37/B` ms/position, so B=8 is 34.9 ms = 28.7 tok/s, and a server has independent requests without needing a drafter |
-| 4 | **The floor** (the steady state, measured) | 67.3 ms/token with the disk removed entirely = `30.3` per-position work + `37/B` per-call cost, and the per-call cost is the per-layer router drain (ids ~50 ms/token at B=1). It *is* the steady state, so it is the only thing that moves 15 tok/s | medium: needs the batch (lever 3's surviving half) or faster expert kernels |
+| 4 | ~~**The floor** (the steady state, measured)~~ **measured, and it moved twice** | The floor was 67.3 ms/token (disk removed) = `30.3` per-position work + `37/B` per-call cost. **Both halves have since moved on this rig**: a bit-exact quant kernel (TILE3) took the per-token cost 60.56 -> 44.21 ms, and segmented CUDA graphs removed GPU-side idle time to take the steady decode 42.74 -> **30.36 ms** (32.93 tok/s) at 128K, byte-identical. The floor is no longer fixed | done for this rig: kernel + graph, both byte-exact. Remaining: batching (lever 3) |
 | 5 | ~~GTX 1080 as a second tier~~ **measured, net-negative** | a park + hit through the 1080 costs 0.454 ms per expert against the disk's 0.45 ms: break-even at a 100% hit rate, worse from there. No P2P on consumer parts; the 1080 sits at gen3 x4. A **host-RAM** tier is the one path that beats the disk (0.047 ms, 13.9 GB/s -> ~1.5x on the warm-up, nothing on the steady state) and it spends the RAM this project exists to avoid | n/a for the 1080. See `docs/SECOND_TIER.md` |
 | 6 | Productisation: one-command launch, a harness that regenerates the whole results matrix as JSON, correctness as an automated gate | 0% speed, most of the project's remaining value | low. `sabah run`, `sabah matrix`, `sabah gate` |
+
+## Related work, and why this is not compared to it
+
+| project | what it is | how it differs here |
+|---|---|---|
+| [Glyd](https://github.com/antimatter15/glyd) | SSD-resident MoE inference on a
+  consumer box, flash-attention and RAM-resident experts | different hardware class;
+  **not measured by us** |
+| [Strata](https://github.com/bdmendes/strata) | hierarchical SSD -> RAM -> VRAM
+  caching for this model family | **not measured by us**; Strata's numbers are on
+  their drives, which are not this drive |
+| [GyroStrata](https://github.com/antimatter15/gyrostrata) | a fork/continuation of
+  the Strata approach | **not measured by us** |
+| [SGLang SSD Expert Pack](https://docs.sglang.ai/advanced_features/ssd_expert_pack.html) |
+  SSD expert packing inside a serving stack | **not measured by us**; also a different
+  integration model (server, many concurrent requests) |
+
+Nothing in this README is a comparison against any of them. Every number here is
+this rig, this drive (MSI SPATIUM M371, PCIe gen3 x4, measured 1.05-1.45 GB/s fresh
+offsets) and this GPU (RTX 5060 Ti 16 GB). A faster drive or a different caching
+policy would change every figure here.
 
 ## Status
 
@@ -670,14 +734,25 @@ base and both patches.
 
 **Not done:** a faster drive (lever 1). Levers 2, 3 and 5 are measured and closed
 (the demand path is at the rate this drive serves it; speculative decoding is
-2.8-7.7x slower with this drafter; the 1080 costs what the disk costs). Lever 4 is
-attributed rather than fixed: the steady state is the floor, `30.3 + 37/B`, and
-moving it needs batching *real* concurrent requests or faster expert kernels.
+2.8-7.7x slower with this drafter; the 1080 costs what the disk costs). Lever 4 is **done for
+this rig**, and the numbers are REPORT 16: the bit-exact TILE3 kernel took the per-token cost
+60.56 -> 44.21 ms, and segmented CUDA graphs took the steady decode 42.74 -> 30.36 ms
+(32.93 tok/s) at 128K, byte-identical. What still moves it is batching real concurrent
+requests (lever 3's surviving half), not another kernel.
 Prefetching is implemented and correct but disabled; so is the merged layer fetch,
 which halves the wave count and costs ~13 ms/token for it. The n-gram prefetch
 layer of the research harness has a placeholder `index_fn`. The Python harness and
 the shipped runtime have not been unified.
 
-## License
+## License and third-party components
 
-See [`LICENSE`](LICENSE).
+`LICENSE` (MIT) covers the Sabah code in this repository. The build also pieces
+together third-party components, listed with their licences in
+[`THIRD_PARTY.md`](THIRD_PARTY.md):
+
+- **llama.cpp** - MIT, pinned at `96ffdc4`, with the Sabah patches under
+  `patches/llama.cpp/` (each patch header records the pinned commit);
+- **the model** - `ISTA-DASLab/Qwen3.8-Flash-Next` IQ3_S, not bundled; its licence
+  and the quantisation quality numbers are the quantiser's, not ours;
+- **CUDA / the NVIDIA driver** - used under their own licences, nothing
+  redistributed here.
