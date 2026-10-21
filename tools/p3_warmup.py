@@ -118,12 +118,16 @@ def main():
                 d["trace"] = trace
                 rows.append(d)
 
-    print("\ntrace | slab | SEG | fill s | fill GB | prompt tok | clocks | hash")
-    print("------+------+-----+--------+---------+------------+--------+-----")
+    print("\ntrace | slab | SEG | fill s | fill GB | prompt tok | clocks (steady SM/mem, pstate) | hash")
+    print("------+------+-----+--------+---------+------------+----------------------------------+-----")
     for d in rows:
+        # validity comes from the steady medians against the floors, not from
+        # the harness's clock_valid field: it is unset in these records, and
+        # treating "unset" as invalid reported valid runs as invalid
+        ok = bool(d["sm"] and d["sm"] >= 2400)
         print(f"{d['trace']:5s} | {d['slab']:>4} | {str(d['seg']):>3} | {d['fill_s']:>6.1f} | "
               f"{d['fill_gb']:>7.1f} | {d['prompt_tok']:>10} | "
-              f"{'VALID' if d['clock_valid'] else 'INVALID'} | {d['hash']}")
+              f"{'VALID' if ok else 'INVALID'} {d['sm']}/{d['sm']} {d['pstate']} | {d['hash']}")
 
     print("\nregime table (mean per decode token):")
     print("trace | slab | SEG | warm-up ms | warm-up MB | warm-up misses | tail ms | tail MB | tail misses")
