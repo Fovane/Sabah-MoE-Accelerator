@@ -12,7 +12,7 @@ RAM; that boundary is measured, not assumed (REPORT 23.1).
 
 That is the point of the project. An 83.6 GB MoE model either fails to load on a
 16 GB-VRAM / 15 GB-RAM machine, or it "runs" only by letting the OS page weights
-through RAM — which requires a large page file and makes latency unpredictable.
+through RAM  -  which requires a large page file and makes latency unpredictable.
 Sabah is built for the machine that has **the VRAM but not the RAM**.
 
 Measured end to end on the reference rig:
@@ -21,7 +21,9 @@ Measured end to end on the reference rig:
 |---|---|
 | model | `Qwen3.8-Flash-Next` IQ3_S, **83.6 GB** (2 shards, 48 blocks x 512 experts, top-10) |
 | time to first token | **11.2 s** (the 53-token prompt is easy; the expert tier starts empty and fills 12.68 GB at 1.11 GB/s) |
-| decode, steady state | **~67 ms/token = ~15 tok/s**, effectively disk-free (4.5 reads, 3.0 MB/token) |
+| decode, steady state, short context | **~67 ms/token = ~15 tok/s**, effectively disk-free (4.5 reads, 3.0 MB/token) |
+| decode, 128K context, short prompt, SEG=48 | **30.36 ms/token = 32.93 tok/s** over the last-256 window (REPORT 16.6, N=1) |
+| decode, **filled ~30K KV** | **280.45 ms/token = 3.57 tok/s**, 339 MB/token, 501 misses/token, still not steady at step 2048 (REPORT 21-22) |
 | decode, first 128 tokens | 79-204 ms/token: the tier is still discovering its working set |
 | 256-token answer end to end | 11.2 s + 24.6 s = **7.1 tok/s including the fill**, 10.4 over the decodes |
 | **host RAM** | **flat at 4.78 GiB** at this context (53-token prompt), `mapped_fallbacks=0`. At `-c 131072` the 6 GB slab no longer fits beside the KV cache and **~3.4 GB of it runs from system RAM** - see the limitation below |
@@ -76,7 +78,7 @@ Misses are issued as aligned unbuffered reads:
 
 - `FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED`, 4096-byte alignment, so the
   read lands in pinned host memory instead of the OS page cache. The page cache is
-  deliberately bypassed — it is what would make host RAM grow.
+  deliberately bypassed  -  it is what would make host RAM grow.
 - a double-buffered pinned staging pool (~43 MB) with a wave-boundary event gate;
   `SABAH_LLAMA_IO_DEPTH` (default 8) reads in flight per wave.
 - `SABAH_LLAMA_DIRECT_IO=0` switches back to the mapping, for A/B comparison only.
@@ -114,7 +116,7 @@ current is **4.37 -> 4.84 tok/s (+11%)**, with no change to the outputs.
 **Router id reuse** is the interesting one. The three expert tensors of a MoE
 layer (`gate`, `up`, `down`) read the *same* `selected_experts` tensor, so two of
 the three `cudaStreamSynchronize` per layer are redundant. The bridge passes
-`dst->src[2]` — the ids *tensor address* — so the runtime can recognise "same
+`dst->src[2]`  -  the ids *tensor address*  -  so the runtime can recognise "same
 tensor as the previous call" and skip both the download and the drain. Groups are
 capped at `SB_ID_GROUP_MAX=4` calls, and that cap doubles as the width of the
 eviction-protection window, which is what makes it safe to free a slot while a
@@ -131,7 +133,7 @@ is not trusted.)
 
 A staging-readahead prefetcher exists (`SABAH_LLAMA_PREFETCH=1`) and is correct:
 it reserves no tier space and leaves `hits`/`misses`/`evictions` identical to a
-prefetch-free run. It is off because it does not pay — adding reads in flight
+prefetch-free run. It is off because it does not pay  -  adding reads in flight
 raised the drive's effective rate (1.3 -> 1.6 GB/s) but not the wall clock, and
 40% of the readahead was superseded before anyone asked for it. It becomes worth
 revisiting when the disk term drops below the bookkeeping term.
@@ -187,6 +189,48 @@ is the expert working set rather than the KV depth: the coding trace shows the
 same 272 ms tail at only ~3.2K depth because it routes as widely
 (REPORT 15.4). Full evidence: REPORT sections 21-22.
 
+### Why no policy fixes it: the offline bound
+
+The routing trace for those 2048 steps was replayed offline
+(`tools/slab_replay.py`, 2,949,120 accesses = 48 layers x 10 top-k x 3 roles),
+so the best any replacement policy could do is measured, not argued:
+
+| slab | LRU (what ships) | per-layer budgets | **Belady (offline optimum)** |
+|---|---|---|---|
+| 2.4 GB (spill-free) | 45.64% | 45.65% | **68.02%** |
+| 6.0 GB | 67.64% | 67.31% | 84.25% |
+| 8.0 GB | 75.48% | - | 88.57% |
+
+The replay is trustworthy because its LRU at 6 GB predicts 466 misses/token
+against the runtime's measured 501.
+
+Each tier is a bytes-per-token budget (the regime is disk-bound: its ms/token is
+within ~1.1x of the disk service time for its bytes alone):
+
+| tier | tok/s | needs this hit rate |
+|---|---|---|
+| A | 10 | **88.0%** |
+| B | 20 | 94.0% |
+| C | 30 | 96.0% |
+
+**Tier A needs 88%, and the offline optimum at the only spill-free slab reaches
+68%.** The gap is in the trace - the distinct experts a ~30K-KV token routes to -
+not in the eviction policy. A better policy buys at most 466 -> 227 misses at
+today's slab, which is ~130 ms of disk against a 100 ms budget. So no tier is
+reachable on a deep context on this hardware, and that is a bound rather than a
+tuning result. What would move it: fewer bytes per distinct expert (a lower-bit
+quantisation), or a drive faster than the measured 1.05 GB/s.
+
+Removing the system-RAM spill was measured too: a 2.4 GB slab drops VRAM peak
+12914 -> 9350 MiB and keeps the outputs byte-identical, but its bytes get worse
+(840 misses / 570.6 MB per token against 501 / 339.5), so it trades system RAM
+for disk and does not buy a tier. That run's clocks fell to 2017 MHz steady, so
+its time is marked invalid and only its bytes are used.
+
+**The short context is unaffected**: 30.36 ms/token and byte-identical, from
+section 16.6, and it is the number the 30-33 tok/s headline refers to.
+
+
 ### Prefill with a wider ubatch (no new algorithm)
 
 A 2048-token chunk read by four 512-token ubatches re-streams the expert pool
@@ -229,13 +273,13 @@ compute buffer, VRAM and per-setting detail: [`REPORT.md`](results/phase0/REPORT
 section 20-21.
 
 The warm-up token, phase by phase (differencing `-n 32` minus `-n 8`, i.e. decode
-steps 9..32 — this is the number the README used to quote as *the* rate):
+steps 9..32  -  this is the number the README used to quote as *the* rate):
 
 | phase | per token | notes |
 |---|---|---|
-| `fetch` — disk reads + H2D | **121.8 ms** | 164.5 MB/token over 247.4 misses, 82.8% marginal hit |
-| `ids` — router download + drain | **29.3 ms** | 3 calls per layer |
-| `slot` — residency bookkeeping | **9.3 ms** | 239 evictions/token, ~39 us each |
+| `fetch`  -  disk reads + H2D | **121.8 ms** | 164.5 MB/token over 247.4 misses, 82.8% marginal hit |
+| `ids`  -  router download + drain | **29.3 ms** | 3 calls per layer |
+| `slot`  -  residency bookkeeping | **9.3 ms** | 239 evictions/token, ~39 us each |
 | `ptr` + `prime` | **2.8 ms** | |
 | outside the bridge (graph, launch, host ops) | **27.7 ms** | residual: phases sum to 163.2 of 190.9 |
 | **warm-up decode wall** | **190.9 ms** | median 205.7 ms |
@@ -253,7 +297,7 @@ ms/token**. Two different measurements, same number.
 | Sabah achieves in the demand path | **1.11-1.35 GB/s** |
 | Sabah achieves in the steady state | ~0: 3 MB/token |
 
-So the demand path is **at** the drive's rate, not below it — that is lever 2's
+So the demand path is **at** the drive's rate, not below it  -  that is lever 2's
 conclusion, and it is why raising IO depth or prefetching changes nothing: there
 is no unused bandwidth to recover. The dependency chain is also genuinely one
 layer deep (layer *L*+1's router needs layer *L*'s expert output), so the drive is
@@ -272,11 +316,11 @@ list to attack.
   a tier, the warm-up's ~110 reads/token could be served at 0.047 ms instead of
   0.45 ms per expert (measured, [`docs/SECOND_TIER.md`](docs/SECOND_TIER.md)),
   worth ~1.5x on the warm-up and nothing on the steady state. Sabah trades that
-  away for a hard guarantee about RAM — a deliberate budget decision, not a
+  away for a hard guarantee about RAM  -  a deliberate budget decision, not a
   performance claim.
 - **Virtual memory does not help.** Windows "virtual memory" is the page file on
   the same NVMe, reached through the page-fault path instead of a 676 KB
-  unbuffered read at QD 8 — the same bandwidth, a worse access path, no
+  unbuffered read at QD 8  -  the same bandwidth, a worse access path, no
   controllable queue depth. It adds capacity, and the steady state does not need
   capacity.
 - **The GTX 1080 is not used, and measurement says it should not be.** The old
@@ -297,11 +341,14 @@ list to attack.
   clock is below 2400 MHz is marked invalid by the harness and is not evidence.
   The pin needs admin; on this machine it was refused for part of one session
   and works again (REPORT 19).
-- **Deep context does not reach the steady state within 2048 steps.** The first
-  measurement at ~30K KV depth reads 310 ms/token in its last-256 window with
-  504 misses/token - every routed expert still missing, so that window is not
-  steady (REPORT 22). The 30-33 tok/s table above is a short-prompt,
-  warm-tier number and does not extend to a deep KV with a wide-routing prompt.
+- **Deep context is disk-bound, and no policy reaches a tier on this hardware.**
+  The first measurement at ~30K KV depth reads 280.45 ms/token (3.57 tok/s) with
+  339 MB/token of expert traffic and 501 misses/token; the last-256 window is
+  *not* steady (every routed expert is still missing at step 2048). Replaying the
+  same routing trace offline puts the Belady optimum at 68% hit rate on a
+  spill-free slab, where tier A (10 tok/s) needs 88% (REPORT 25). The 30-33 tok/s
+  figure above is a short-prompt, warm-tier number and does not extend to a deep
+  KV with a wide-routing prompt. Never quote one number for both.
 - **At 128K context the RAM-flat claim does not hold.** Sampling the GPU's
   Windows Shared Usage counter against its idle baseline, with the same 6.0e9
   slab: **+110 MiB at `-c 512`, +349 MiB at `-c 32768`, +3517 MiB at
@@ -371,8 +418,8 @@ outputs used for the byte-identical checks.
 
 | component | value |
 |---|---|
-| GPU 0 | NVIDIA RTX 5060 Ti, 16 GB VRAM, `sm_120` — Sabah runs here |
-| GPU 1 | NVIDIA GTX 1080, 8 GB VRAM, `sm_61` — not used |
+| GPU 0 | NVIDIA RTX 5060 Ti, 16 GB VRAM, `sm_120`  -  Sabah runs here |
+| GPU 1 | NVIDIA GTX 1080, 8 GB VRAM, `sm_61`  -  not used |
 | RAM | 15.38 GiB usable |
 | disk | MSI M371 1TB NVMe (~1.05-1.45 GB/s random 676 KB reads, measured; see `docs/DECODE_BUDGET.md`) |
 
@@ -406,7 +453,7 @@ cd sabah\runtime\cuda
 .\build_dll.bat sm_120
 ```
 
-**2. llama.cpp plus the bridge** — reproducible from the pinned upstream base:
+**2. llama.cpp plus the bridge**  -  reproducible from the pinned upstream base:
 
 ```powershell
 git clone https://github.com/ggml-org/llama.cpp.git
@@ -439,7 +486,7 @@ llama-sabah-diag.exe `
 
 `llama-sabah-diag` is the measurement driver from patch `0002`. The bridge lives
 in `ggml-cuda`, so any llama.cpp binary loads it: `llama-cli` runs this model end
-to end as well (verified — `EXITCODE=0`, zero mapped fallbacks, generated text,
+to end as well (verified  -  `EXITCODE=0`, zero mapped fallbacks, generated text,
 ~27 GB streamed for the same prompt), and so does `llama-server`, which is how a
 client reaches this model over HTTP.
 
@@ -449,7 +496,7 @@ headroom left: the run aborts with `SABAH_LLAMA could not execute the
 host-backed exact expert operation` / `Sabah over-budget expert: out of memory`
 once the tier's documented over-budget allocation has no VRAM to take. Both
 sides of that trade, measured, are in
-[`docs/CONTEXT_VRAM.md`](docs/CONTEXT_VRAM.md) — 32K works with an 8.0 GB slab or
+[`docs/CONTEXT_VRAM.md`](docs/CONTEXT_VRAM.md)  -  32K works with an 8.0 GB slab or
 with `-ub 8`.
 
 Two things to know when reproducing:
@@ -459,7 +506,7 @@ Two things to know when reproducing:
   `prompt_tokens.i32`; `prompt.txt` shows the text). The 11 s is the expert
   tier's **cold fill**: 12.68 GB at 1.11 GB/s, all of it before step 1. The
   `tokens=` field in the `SABAH_DIAG` line is a count of expert *rows*
-  (`layers x tensors x batch`), not prompt tokens — for a 6-decode run it is
+  (`layers x tensors x batch`), not prompt tokens  -  for a 6-decode run it is
   already 8484, which is where an earlier version of this README misread it.
 - **Quote decode per regime, not as one number.** `-n 1` is the fill, `-n 128`
   shows the warm-up, `-n 256` reaches the steady state (67 ms/token, disk-free);
@@ -481,7 +528,7 @@ python -m sabah.tools.cli gate   <model.gguf>
 
 `sabah run` needs `SABAH_DIAG_EXE` (a built `llama-sabah-diag.exe`) and
 `SABAH_RT_LIB`; `--diag` and `--rt` override both. The cache counters in every
-report come from the runtime's exit snapshot, which is exact — so no timed run
+report come from the runtime's exit snapshot, which is exact  -  so no timed run
 sets `SABAH_LLAMA_STATUS_FILE` (the runtime rewrites that file after *every*
 expert call, which costs ~0.3 s per token here and turns 14.6 tok/s into 1.9).
 
@@ -492,8 +539,8 @@ These are the gate, not debugging aids. Run them before believing any number.
 | variable | what it proves |
 |---|---|
 | `SABAH_LLAMA_VERIFY_BYTES=1\|fetch` | byte-compares served expert data (hits, or fetches) against the GGUF range |
-| `SABAH_LLAMA_VERIFY_LIMIT` | caps those checks — the oracle reads the mapping and inflates host RAM |
-| `SABAH_LLAMA_ID_CHECK=1` | forces the ids download even when reused and compares — proves the reuse byte for byte |
+| `SABAH_LLAMA_VERIFY_LIMIT` | caps those checks  -  the oracle reads the mapping and inflates host RAM |
+| `SABAH_LLAMA_ID_CHECK=1` | forces the ids download even when reused and compares  -  proves the reuse byte for byte |
 | `SABAH_LLAMA_TRACE=1` | prints cache, coverage and phase counters |
 | `SABAH_LLAMA_IO_WORKERS=1` | reads each wave on the calling thread; `SABAH_IO` then reports `overlap=1.00` instead of ~3.8, with the same wall time |
 | `SABAH_LLAMA_LAYER_MERGE=1` | one wave per layer instead of three; halves the wave count and costs ~13 ms/token (default off) |
@@ -503,9 +550,9 @@ Measured by `sabah gate` on the reference rig: `verify_ok=2000 verify_fail=0`,
 
 Two things about the run that prints those numbers. First, the `overflow` counter
 it also prints (448) is **not** a correctness failure: `overflow` counts
-over-budget expert allocations — when every eviction candidate is still
+over-budget expert allocations  -  when every eviction candidate is still
 referenced by the call in flight, the tier allocates past its budget rather than
-dangle a pointer — and the byte comparison above is what proves the routed result
+dangle a pointer  -  and the byte comparison above is what proves the routed result
 stayed exact. The gate reports it and does not fail on it. Second, the exit code
 is worth checking: every process that used the direct I/O wave pool used to end
 in a fast-fail (`0xC0000409`) *after* the run and its trace had completed,
@@ -513,14 +560,14 @@ because the pool's worker threads were never joined. `sabah gate` was the first
 thing here to check the exit code, and that is what found it; fixed in
 `sabah/runtime/cuda/sabah_rt.cu`.
 
-Third — read this before chasing a `differs from its GGUF bytes` failure. The
+Third  -  read this before chasing a `differs from its GGUF bytes` failure. The
 oracle reads the file through the OS mapping, i.e. the page cache; the runtime
 reads it with `FILE_FLAG_NO_BUFFERING`, which the cache cannot answer. Those two
 can disagree about the same range, and they did:
 
 - 10 bytes of one 921600-byte expert, at offset 1,367,138,304 of the first shard,
   identical in three consecutive runs, and independent of the I/O path (same 10
-  bytes at depth 1, at one worker, and at depth 2 — so not a staging race);
+  bytes at depth 1, at one worker, and at depth 2  -  so not a staging race);
 - reproduced **outside the runtime and outside llama.cpp** with a plain buffered
   `read()` against an unbuffered `ReadFile` of the same range, while the mismatch
   line named the file, the offset and the byte positions;
@@ -529,7 +576,7 @@ can disagree about the same range, and they did:
 So this failure means "the served bytes and the cached image of the file
 disagree". It does not say which side is stale: a cached page can be older than
 the disk, or newer than an unflushed write. What it does say is that the check
-fired and that the case needs to be looked at — start with the two routes on that
+fired and that the case needs to be looked at  -  start with the two routes on that
 range, not with the streaming path.
 
 ## Repository layout
@@ -554,7 +601,7 @@ results/                            raw JSON for every number quoted here
 
 `sabah/runtime/*.py` is an earlier, independent research harness. It works on a
 single block in isolation with synthetic traces, and its tables assume a **pinned
-RAM warm tier** — the configuration the shipped runtime explicitly forbids. Its
+RAM warm tier**  -  the configuration the shipped runtime explicitly forbids. Its
 `bench_moe` numbers are per-block and are not comparable to the end-to-end tok/s
 above; the two must not be quoted together.
 
