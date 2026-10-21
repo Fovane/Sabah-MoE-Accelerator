@@ -50,10 +50,13 @@ def main():
     print("label      :", label)
     print("exit       :", rec.get("exit_code"), " wall_s:", round(rec.get("wall_s", 0), 1))
     print("prompt tok :", rec.get("prompt_tokens_count"))
-    print("prefill    : %.1f s, %d chunks, %.1f GB, %.2f ms/token"
-          % (rec["prefill"]["ms"] / 1000, rec["prefill"]["chunks"],
-             rec["prefill"]["bytes"] / 1e9,
-             rec["prefill"]["ms"] / max(1, rec.get("prompt_tokens_count") or 1)))
+    pre = rec.get("prefill")
+    if pre:
+        print("prefill    : %.1f s, %d chunks, %.1f GB, %.2f ms/token"
+              % (pre["ms"] / 1000, pre["chunks"], pre["bytes"] / 1e9,
+                 pre["ms"] / max(1, rec.get("prompt_tokens_count") or 1)))
+    else:
+        print("prefill    : none (this run started from a saved state)")
 
     warm = slice(0, min(128, len(ms)))
     tail = slice(max(0, len(ms) - 256), len(ms))

@@ -1,0 +1,36 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16283 MiB):
+  Device 0: NVIDIA GeForce RTX 5060 Ti, compute capability 12.0, VMM: yes, VRAM: 16283 MiB
+0.00.871.666 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+0.02.336.593 I cmn          init: llama threadpool init, n_threads = 8
+sabah-diag: main prefill chunk 0 off=0 n=2048  71024.0 ms bytes=64844236800
+sabah-diag: main prefill chunk 1 off=2048 n=2048  74524.0 ms bytes=68317388800
+sabah-diag: main prefill chunk 2 off=4096 n=2048  73918.4 ms bytes=67319987200
+sabah-diag: main prefill chunk 3 off=6144 n=2048  76394.1 ms bytes=70549888000
+sabah-diag: main prefill chunk 4 off=8192 n=2048  80065.5 ms bytes=75152281600
+sabah-diag: main prefill chunk 5 off=10240 n=2048  80112.8 ms bytes=75619635200
+sabah-diag: main prefill chunk 6 off=12288 n=2048  78589.1 ms bytes=72385356800
+sabah-diag: main prefill chunk 7 off=14336 n=2048  79119.9 ms bytes=73967616000
+sabah-diag: main prefill chunk 8 off=16384 n=2048  78740.0 ms bytes=73332275200
+sabah-diag: main prefill chunk 9 off=18432 n=2048  81161.3 ms bytes=75751884800
+sabah-diag: main prefill chunk 10 off=20480 n=2048  81379.1 ms bytes=77230464000
+sabah-diag: main prefill chunk 11 off=22528 n=2048  78229.6 ms bytes=73270323200
+sabah-diag: main prefill chunk 12 off=24576 n=2048  80149.9 ms bytes=74456499200
+sabah-diag: main prefill chunk 13 off=26624 n=1789  75395.0 ms bytes=71043020800
+sabah-diag: main prefill total_ms=1088803.2 chunks=14 n=28413 n_batch=2048 bytes=1013240857600
+sabah-diag: main step 0 argmax 271 fed 271  0.0 ms
+sabah-diag: main step 1 argmax 248046 fed 248046  795.9 ms
+sabah-diag: main step 2 argmax 198 fed 198  406.7 ms
+sabah-diag: main step 3 argmax 248045 fed 248045  268.3 ms
+sabah-diag: main step 4 argmax 74455 fed 74455  391.8 ms
+sabah-diag: main step 5 argmax 198 fed 198  368.1 ms
+sabah-diag: main step 6 argmax 248068 fed 248068  249.9 ms
+sabah-diag: main step 7 argmax 198 fed 198  162.9 ms
+SABAH_DIAG calls=4998 tokens=4007283 lookups=40072830 overflow=143634 verify_ok=0 verify_fail=0
+SABAH_DISK unbuffered_reads=1499295 bytes=1015862912000 waves=189702 mapped_fallbacks=0 staging_bytes=0 direct_io=1 depth=8 lanes=8 lane_reads=1499295 sync=0 pending=0
+SABAH_IO read_ms=3286803.2 wave_ms=735199.7 overlap=4.47 reads_per_wave=7.90
+SABAH_PHASE calls=4998 ids=77373.5ms fetch=745991.7ms wait=735199.7ms slot=233382.5ms ptr=107.8ms prime=6.7ms | per_call us: ids=15481 fetch=149258 wait=147099 slot=46695 ptr=22 prime=1 | accounting=1056862.3ms
+SABAH_IDS reused=3332 group_max=3 check=0 check_ok=0 check_fail=0
+SABAH_MERGE enabled=0 reserved=0
+SABAH_PREFETCH enabled=0 reads=0 read_bytes=0 used=0 used_bytes=0 dropped=0 stale=0 queued=0 waits=0 wait_ms=0.0 wait_timeouts=0
+SABAH_SNAPSHOT {"calls":4998,"empty_calls":0,"tokens":4007283,"lookups":40072830,"hits":38573535,"misses":1499295,"evictions":1490949,"bytes_fetched":1015862912000,"resident_bytes":5999155200,"overflow":143634,"verify_ok":0,"verify_fail":0,"selfcheck_k":0,"selfcheck_ok":0,"selfcheck_fail":0,"selfcheck_max_rel_l2":0.000000e+00,"selfcheck_multi_token":0,"selfcheck_tensors":0,"selfcheck_slots":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"sentinel":0}
+SABAH_METRICS hits=38573535 misses=1499295 evictions=1490949 bytes_fetched=1015862912000 resident_bytes=5999155200
