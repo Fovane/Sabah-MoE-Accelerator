@@ -24,9 +24,9 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from sabah.tools import clocks, stream  # noqa: E402
+from model_dir import model_path  # noqa: E402
 
-DEFAULT_MODEL = (r"D:\Strata-data\models\IQ3_S"
-                 r"\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf")
+DEFAULT_MODEL = model_path()
 DEFAULT_DIAG = os.path.join(ROOT, "third_party", "llama.cpp", "build", "bin",
                             "llama-sabah-diag.exe")
 LOW_MHZ = clocks.MIN_STEADY_SM_MHZ

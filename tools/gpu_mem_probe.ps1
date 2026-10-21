@@ -5,7 +5,8 @@ param(
   [string]$Hot = "9.8e9"
 )
 $ErrorActionPreference = "Stop"
-$root = "C:\Projects\quantization\Sabah-MoE-Accelerator"
+# the repo root is this script's parent directory, so no absolute path is baked in
+$root = (Get-Item $PSScriptRoot).Parent.FullName
 $out  = Join-Path $root "results\phase0\$Label"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
@@ -21,7 +22,10 @@ $env:SABAH_DIAG_OUT = $out
 Remove-Item Env:SABAH_LLAMA_STATUS_FILE -ErrorAction SilentlyContinue
 
 $exe = Join-Path $root "third_party\llama.cpp\build\bin\llama-sabah-diag.exe"
-$model = "C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+# the model directory comes from SABAH_MODEL_DIR (tools/model_dir.py is the
+# single source of truth); llama.cpp resolves shard 2 from the shard-1 suffix
+if (-not $env:SABAH_MODEL_DIR) { $env:SABAH_MODEL_DIR = Join-Path "C:" "Strata-data\models\IQ3_S" }
+$model = Join-Path $env:SABAH_MODEL_DIR "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
 
 function Read-Gpu {
   $a = Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage','\GPU Adapter Memory(*)\Shared Usage' -ErrorAction SilentlyContinue

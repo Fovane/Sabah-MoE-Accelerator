@@ -5,7 +5,7 @@ param(
   [switch]$Capture
 )
 $ErrorActionPreference = "Stop"
-$root = "C:\Projects\quantization\Sabah-MoE-Accelerator"
+$root = (Get-Item $PSScriptRoot).Parent.FullName
 Set-Location $root
 $outDir = Join-Path $root $Out
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
@@ -24,7 +24,8 @@ if ($Capture) { $env:SABAH_DIAG_NAMES = "ffn_moe_topk" } else { Remove-Item Env:
 Remove-Item Env:SABAH_LLAMA_STATUS_FILE -ErrorAction SilentlyContinue
 
 $exe = Join-Path $root "third_party\llama.cpp\build\bin\llama-sabah-diag.exe"
-$model = "C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+if (-not $env:SABAH_MODEL_DIR) { $env:SABAH_MODEL_DIR = Join-Path "C:" "Strata-data\models\IQ3_S" }
+$model = Join-Path $env:SABAH_MODEL_DIR "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
 
 $ErrorActionPreference = "Continue"
 & $exe -m $model -dev CUDA0 -ngl 99 --cpu-moe -ot "\.per_layer_token_embd\.weight=CPU" -t 8 -c $Ctx -n 64 -p Hello 2>&1 |

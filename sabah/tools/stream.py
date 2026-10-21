@@ -53,6 +53,14 @@ BASE_ENV = {
     "SABAH_LLAMA_TRACE": "1",
 }
 
+# The model directory. One setting, exported by the launcher and read by every
+# tool through tools/model_dir.py, so no script in this repository carries a
+# drive letter. Set it here (or in the environment) and everything agrees.
+MODEL_DIR_ENV = {
+    "SABAH_MODEL_DIR": os.path.join(os.environ.get("SABAH_MODEL_DIR") or
+                                    os.path.join("C:" + os.sep, "Strata-data", "models", "IQ3_S")),
+}
+
 # The shipped configuration, both measured in REPORT 16/8: SEG=48 segments every
 # Sabah node into a CUDA graph (42.74 -> 30.36 ms/token at 128K) and TILE3 is
 # the default expert kernel (item 3/8). Both are the runtime default; setting
@@ -310,6 +318,8 @@ def run(model, prompt="Hello", tokens=32, context=512, threads=8,
     for k, v in SHIPPED_ENV.items():
         if os.environ.get(k) is None:
             env[k] = v
+    # the model directory, unless the caller pinned one
+    env.update(MODEL_DIR_ENV)
     env["SABAH_RT_LIB"] = os.path.abspath(rt)
     env["SABAH_LLAMA_HOT_BYTES"] = str(hot_bytes)
     if counters:

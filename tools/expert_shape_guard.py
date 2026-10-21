@@ -6,12 +6,17 @@ k_mul_mat_id. This prints the actual k of every expert tensor in every shard.
 """
 import collections
 import glob
+import os
 import sys
 
 sys.path.insert(0, r"third_party\llama.cpp\gguf-py")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gguf
 
-PAT = r"D:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-0000*-of-00002.gguf"
+from model_dir import model_dir
+
+# both shards, via the configured directory (no drive letter in this file)
+PAT = os.path.join(model_dir(), "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-0000*-of-00002.gguf")
 ROLES = ("ffn_gate_exps.weight", "ffn_up_exps.weight", "ffn_down_exps.weight")
 GUARD_NSUB = 96
 

@@ -29,9 +29,11 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from sabah.tools import clocks, stream  # noqa: E402
+from model_dir import model_path, describe  # noqa: E402
 
-DEFAULT_MODEL = (r"D:\Strata-data\models\IQ3_S"
-                 r"\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf")
+# the model comes from SABAH_MODEL_DIR (see tools/model_dir.py); the harness only
+# supplies the default when the variable is unset
+DEFAULT_MODEL = model_path()
 DEFAULT_DIAG = os.path.join(ROOT, "third_party", "llama.cpp", "build", "bin",
                             "llama-sabah-diag.exe")
 
@@ -125,6 +127,8 @@ def main():
                     help="sample this process's Dedicated/Shared GPU memory from "
                          "the Windows GPU performance counters")
     args = ap.parse_args()
+
+    print("%s: %s" % (args.label, describe()), flush=True)
 
     out_dir = os.path.join(args.out_root, args.label)
     os.makedirs(out_dir, exist_ok=True)

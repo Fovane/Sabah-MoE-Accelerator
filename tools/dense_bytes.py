@@ -1,11 +1,15 @@
 import re
 import sys
 import collections
+import os
 
 sys.path.insert(0, r"third_party\llama.cpp\gguf-py")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gguf
 
-p = r"D:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+from model_dir import model_path
+
+p = model_path()
 r = gguf.GGUFReader(p)
 
 expert_names = ("ffn_gate_exps.weight", "ffn_up_exps.weight", "ffn_down_exps.weight")

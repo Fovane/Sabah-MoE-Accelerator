@@ -4,6 +4,7 @@ Reads only the metadata (no tensor data), so it is safe to run while the GPU is
 busy. Used to settle where per_layer_token_embd lives before claiming where it
 runs.
 """
+import os
 import struct
 import sys
 
@@ -91,8 +92,9 @@ def main(path, pats):
 
 if __name__ == '__main__':
     pat = sys.argv[1:] or ['per_layer_token_embd']
-    for p in [r'D:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf',
-              r'D:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf']:
+    from model_dir import SHARDS, model_dir
+    for name in SHARDS:
+        p = os.path.join(model_dir(), name)
         try:
             main(p, pat)
         except FileNotFoundError:

@@ -4,9 +4,10 @@ param(
   [string]$Tag = "real"
 )
 $ErrorActionPreference = "Continue"
-$root = "C:\Projects\quantization\Sabah-MoE-Accelerator"
+$root = (Get-Item $PSScriptRoot).Parent.FullName
 Set-Location $root
-$model = "C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+if (-not $env:SABAH_MODEL_DIR) { $env:SABAH_MODEL_DIR = Join-Path "C:" "Strata-data\models\IQ3_S" }
+$model = Join-Path $env:SABAH_MODEL_DIR "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
 $exe = Join-Path $root "third_party\llama.cpp\build\bin\llama-sabah-diag.exe"
 $manifest = Join-Path $root "results\phase0\real-trace\manifest.jsonl"
 

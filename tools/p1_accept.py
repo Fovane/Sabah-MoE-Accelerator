@@ -19,8 +19,11 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "tools"))
 PY = sys.executable
-MODEL = r"C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+from model_dir import model_path, model_dir  # noqa: E402
+MODEL = model_path()
 P1 = "results/phase0/b-eq/prompt1630.txt"          # README text, 1888 tokens
 P2 = "results/phase0/item6-prefill64k/main/prompt.txt"  # code text, second prompt
 COMMON = ["--flag=-b", "--flag=2048", "--flag=-ub", "--flag=2048",
