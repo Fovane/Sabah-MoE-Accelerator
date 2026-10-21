@@ -1,0 +1,179 @@
+﻿olve(const void * source, size_t & file_idx, uint64_t & file_off,
+                       std::string * trace = nullptr) {
+#if defined(_WIN32)
+    const uint8_t * p = (const uint8_t *) source;
+
+    {
+        std::lock_guard<std::mutex> lock(g_disk_mutex);
+        for (const auto & m : g_host_maps) {
+            if (p >= m.base && p < m.base + m.size) {
+                file_idx = m.file;
+                file_off = (uint64_t) (p - m.base) + m.offset;
+                return true;
+            }
+        }
+    }
+
+    MEMORY_BASIC_INFORMATION mbi;
+    if (VirtualQuery(source, &mbi, sizeof(mbi)) == 0) {
+        if (trace) *trace = "VirtualQuery failed";
+        return false;
+    }
+
+    // The state of the region the pointer sits in is NOT what identifies the
+    // mapping. llama.cpp unmaps fragments of a view once their bytes have been
+    // copied elsewhere, so a tensor can legitimately point into a MEM_RESERVE
+    // hole inside a MEM_MAPPED allocation. What identifies the mapping is the
+    // allocation base, which is the view base, which carries the GGUF magic
+    // because llama.cpp maps whole files from offset 0.
+    const uint8_t * base = (const uint8_t *) mbi.AllocationBase;
+    if (base == nullptr || base > p) {
+        if (trace) *trace = "allocation base is not below the pointer";
+        return false;
+    }
+    if (std::memcmp(base, "GGUF", 4) != 0) {
+        char b[192];
+        snprintf(b, sizeof(b),
+                 "no GGUF magic at allocation base (Type=%lu State=%lu first bytes %02x %02x %02x %02x)",
+                 (unsigned long) mbi.Type, (unsigned long) mbi.State,
+                 base[0], base[1], base[2], base[3]);
+        if (trace) *trace = b;
+        return false;
+    }
+
+    char devname[4096];
+    if (GetMappedFileNameA(GetCurrentProcess(), (LPVOID) base, devname,
+                           (DWORD) sizeof(devname)) == 0) {
+        if (trace) {
+            char b[160];
+            snprintf(b, sizeof(b), "GetMappedFileName failed (err %lu)", (unsigned long) GetLastError());
+            *trace = b;
+        }
+        return false;
+    }
+    std::string path;
+    if (!sb_device_path_to_dos(devname, path)) {
+        if (trace) *trace = std::string("cannot map device path to a drive: ") + devname;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(g_disk_mutex);
+    const size_t fi = sb_disk_open_locked(path);
+    if (fi == (size_t) -1) {
+        if (trace) {
+            char b[160];
+            snprintf(b, sizeof(b), "cannot open unbuffered: %s (err %lu)",
+                     path.c_str(), (unsigned long) GetLastError());
+            *trace = b;
+        }
+        return false;
+    }
+    g_host_maps.push_back({ base, 0, g_disk_files[fi].size, fi });
+    file_idx = fi;
+    file_off = (uint64_t) (p - base);
+    return true;
+#else
+    (void) source; (void) file_idx; (void) file_off;
+    if (trace) *trace = "direct I/O is Windows only in this build";
+    return false;
+#endif
+}
+
+// --------------------------- pinned staging pool ---------------------------
+
+struct sb_io_slot {
+    void * staging = nullptr;
+    size_t cap     = 0;
+#if defined(_WIN32)
+    HANDLE ev      = nullptr;
+#endif
+};
+
+static std::vector<sb_io_slot> g_io_slots;
+static std::mutex              g_io_slots_mutex;
+
+// One event per staging parity, recorded on the copy stream after a wave's
+// host-to-device transfers so the following reuse of those buffers can wait for
+// them. Two entries are enough for double buffering.
+static cudaEvent_t g_io_wave_ev[2] = { nullptr, nullptr };
+
+static sb_io_slot * sb_io_slot_at(size_t i, size_t need) {
+    std::lock_guard<std::mutex> lock(g_io_slots_mutex);
+    while (g_io_slots.size() <= i) {
+        sb_io_slot s;
+#if defined(_WIN32)
+        s.ev = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+        if (s.ev == nullptr) return nullptr;
+#endif
+        g_io_slots.push_back(s);
+    }
+    sb_io_slot & s = g_io_slots[i];
+    if (s.cap < need) {
+        if (s.staging) { cudaFreeHost(s.staging); s.staging = nullptr; }
+        void * p = nullptr;
+        if (!ck(cudaHostAlloc(&p, need, cudaHostAllocDefault), "sabah io staging")) return nullptr;
+        s.staging = p;
+        s.cap = need;
+    }
+    return &s;
+}
+
+static void sb_io_pool_destroy() {
+    std::lock_guard<std::mutex> lock(g_io_slots_mutex);
+    for (auto & s : g_io_slots) {
+        if (s.staging) { cudaFreeHost(s.staging); s.staging = nullptr; }
+#if defined(_WIN32)
+        if (s.ev) { CloseHandle(s.ev); s.ev = nullptr; }
+#endif
+    }
+    g_io_slots.clear();
+    for (auto & e : g_io_wave_ev) {
+        if (e) { cudaEventDestroy(e); e = nullptr; }
+    }
+}
+
+// --------------------------- one unbuffered read ---------------------------
+
+// How each ReadFile actually returned. This is the difference between an
+// overlapped path and a serialised one: a request the driver completes inline
+// never overlaps with the next one, so counting them is the only way to tell
+// whether issuing several reads before waiting means anything at all.
+static uint64_t g_io_sync_reads    = 0;   // ReadFile returned TRUE: done already
+static uint64_t g_io_pending_reads = 0;   // ReadFile returned ERROR_IO_PENDING
+
+struct sb_io_req {
+    size_t   file   = 0;
+    uint64_t off    = 0;       // aligned
+    size_t   len    = 0;       // aligned
+    void *   staging = nullptr;
+    size_t   delta  = 0;       // expert bytes start here inside `staging`
+    size_t   bytes  = 0;       // expert bytes requested
+    void *   dst    = nullptr; // device slot
+    size_t   got    = 0;
+    bool     issued = false;
+    bool     ok     = false;
+#if defined(_WIN32)
+    HANDLE   ev     = nullptr;
+    OVERLAPPED ov;
+#endif
+};
+
+static bool sb_io_issue(sb_io_req & r) {
+#if defined(_WIN32)
+    std::memset(&r.ov, 0, sizeof(r.ov));
+    r.ov.Offset     = (DWORD) (r.off & 0xffffffffull);
+    r.ov.OffsetHigh = (DWORD) (r.off >> 32);
+    r.ov.hEvent     = r.ev;
+    if (r.ev) ResetEvent(r.ev);
+    DWORD got = 0;
+    HANDLE h = g_disk_files[r.file].h;
+    if (ReadFile(h, r.staging, (DWORD) r.len, &got, &r.ov)) {
+        r.issued = false; r.ok = true; r.got = got;
+        ++g_io_sync_reads;
+        return true;
+    }
+    const DWORD e = GetLastError();
+    if (e == ERROR_IO_PENDING) { r.issued = true; r.ok = true; ++g_io_pending_reads; return true; }
+    // A read that runs past EOF yields a short (or empty) transfer rather than
+    // damage: the caller checks that the expert's bytes were really delivered.
+    if (e == ERROR_HANDLE_EOF) { r.issued = f

@@ -1,0 +1,19 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16283 MiB):
+  Device 0: NVIDIA GeForce RTX 5060 Ti, compute capability 12.0, VMM: yes, VRAM: 16283 MiB
+0.00.922.732 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+0.02.404.984 I cmn          init: llama threadpool init, n_threads = 8
+0.02.432.951 W decode: prefill group n=4 passes=12 batch=1 tokens=1888 can_seek=1
+0.05.424.843 W DBG: g0u0 out_hc data=000000082D600000, g1u0 inp_hc data=0000000000000000, hc_host=000001906F5AB060
+0.09.123.454 W DBG: g1u0 inp_hc data=000000082D600000 after H2D
+sabah-diag: main prefill chunk 0 off=0 n=1888  59280.0 ms bytes=37239782400
+sabah-diag: main prefill total_ms=59280.0 chunks=1 n=1888 n_batch=2048 bytes=37239782400
+sabah-diag: main step 0 argmax 11 fed 11  0.0 ms
+SABAH_DIAG calls=567 tokens=266211 lookups=2662110 overflow=3502 verify_ok=0 verify_fail=0
+SABAH_DISK unbuffered_reads=54963 bytes=37239782400 waves=7116 mapped_fallbacks=0 staging_bytes=0 direct_io=1 depth=8 lanes=8 lane_reads=54963 sync=0 pending=0
+SABAH_IO read_ms=119271.2 wave_ms=27026.4 overlap=4.41 reads_per_wave=7.72
+SABAH_PHASE calls=567 ids=9809.6ms fetch=27558.1ms wait=27026.4ms slot=17115.9ms ptr=11.5ms prime=0.0ms | per_call us: ids=17301 fetch=48603 wait=47666 slot=30187 ptr=20 prime=0 | accounting=54495.1ms
+SABAH_IDS reused=378 group_max=3 check=0 check_ok=0 check_fail=0
+SABAH_MERGE enabled=0 reserved=0
+SABAH_PREFETCH enabled=0 reads=0 read_bytes=0 used=0 used_bytes=0 dropped=0 stale=0 queued=0 waits=0 wait_ms=0.0 wait_timeouts=0
+SABAH_SNAPSHOT {"calls":567,"empty_calls":0,"tokens":266211,"lookups":2662110,"hits":2607147,"misses":54963,"evictions":41313,"bytes_fetched":37239782400,"resident_bytes":9799769600,"overflow":3502,"verify_ok":0,"verify_fail":0,"selfcheck_k":0,"selfcheck_ok":0,"selfcheck_fail":0,"selfcheck_max_rel_l2":0.000000e+00,"selfcheck_multi_token":0,"selfcheck_tensors":0,"selfcheck_slots":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"sentinel":0}
+SABAH_METRICS hits=2607147 misses=54963 evictions=41313 bytes_fetched=37239782400 resident_bytes=9799769600

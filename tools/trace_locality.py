@@ -8,7 +8,7 @@ Trace format is Sabah's own: ``ffn_moe_topk_L<block>.i32``, i32 little endian,
 ``steps * top_k`` expert ids per block (top_k = 10 for qwen4exp).
 
 Usage:
-    python tools/trace_locality.py --trace C:\\LMStudio\\scratchpads\\dk\\trace_full
+    python tools/trace_locality.py --trace D:\\LMStudio\\scratchpads\\dk\\trace_full
     python tools/trace_locality.py --trace <dir> --model <shard1> [--model <shard2>]
                                    --disk-gbps 2.2,1.56,1.0 --json out.json
 """
@@ -58,8 +58,12 @@ def interleave(trace: dict[int, list[list[int]]]) -> tuple[list[tuple[int, int]]
 
 
 def expert_bytes_per_block(shards: list[str]) -> dict[int, int]:
-    """Per-expert bytes (gate + up + down) per block, read out of the GGUF."""
-    sys.path.insert(0, r"C:\LMStudio\scratchpads\dk")
+    """Mean per-object bytes (one expert of one projection) per block.
+
+    The runtime's cache object is a single (expert, projection) tensor, so the
+    three roles are averaged: gate/up are 0.61 MB and down is 0.84 MB.
+    """
+    sys.path.insert(0, r"D:\LMStudio\scratchpads\dk")
     from gguf_probe import parse  # type: ignore
 
     per_block: dict[int, int] = defaultdict(int)
@@ -79,7 +83,7 @@ def expert_bytes_per_block(shards: list[str]) -> dict[int, int]:
     missing = [b for b in sorted(per_block) if len(roles[b]) != 3]
     if missing:
         print("WARN: blocks missing an expert role: %s" % missing, file=sys.stderr)
-    return dict(per_block)
+    return {b: v // 3 for b, v in per_block.items()}
 
 
 # --------------------------------------------------------------------------- #
@@ -98,6 +102,29 @@ def lru_hits(seq, capacity, weights):
             if len(resident) > capacity:
                 resident.popitem(last=False)
     return hit_b / (hit_b + miss_b), miss_b
+
+
+def lru_hits_bytes(seq, capacity_bytes, weights):
+    """Exact LRU with a byte budget, as the runtime's slab actually works."""
+    resident: OrderedDict = OrderedDict()
+    used = 0.0
+    hit_b = miss_b = 0.0
+    miss_n = 0
+    for key in seq:
+        w = weights[key[0]]
+        if key in resident:
+            hit_b += w
+            resident.move_to_end(key)
+            continue
+        miss_b += w
+        miss_n += 1
+        resident[key] = w
+        used += w
+        while used > capacity_bytes and resident:
+            _, v = resident.popitem(last=False)
+            used -= v
+    total = hit_b + miss_b
+    return (hit_b / total if total else 0.0), miss_b, miss_n
 
 
 def static_topk_hits(seq, capacity, weights):
@@ -176,6 +203,8 @@ def main() -> int:
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--disk-gbps", default="2.2,1.56,1.0")
     ap.add_argument("--json", default="")
+    ap.add_argument("--caps-gb", default="",
+                    help="comma list of byte budgets, e.g. 6.0,7.0,8.0")
     args = ap.parse_args()
 
     GB = 1e9
@@ -201,6 +230,16 @@ def main() -> int:
     print("expert size: min %.3f MB  max %.3f MB  mean %.3f MB"
           % (min(eb.values()) / 1e6, max(eb.values()) / 1e6, mean_expert / 1e6))
     print("=" * 78)
+
+    if args.caps_gb:
+        print("\n-- GLOBAL LRU with a byte budget (the slab), real execution order --")
+        print("%8s %8s %10s %11s %12s"
+              % ("slab_GB", "hit%", "obj/token", "MB/token", "bytes/token"))
+        for gb in [float(x) for x in args.caps_gb.split(",")]:
+            hr, miss_b, miss_n = lru_hits_bytes(seq, gb * 1e9, eb)
+            bpt = miss_b / steps
+            print("%8.2f %8.2f %10.2f %11.1f %12.0f"
+                  % (gb, 100.0 * hr, miss_n / steps, bpt / 1e6, bpt))
 
     print("\n-- per-block: unique experts, and static top-K coverage --")
     print("blk  uniq  top64  top128 top256 top384")

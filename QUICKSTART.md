@@ -31,9 +31,9 @@ the MSVC developer environment are available.
 
 ```powershell
 sabah doctor
-sabah inspect C:\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
-sabah qualify C:\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
-sabah plan C:\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+sabah inspect $DRIVE\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+sabah qualify $DRIVE\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+sabah plan $DRIVE\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
 ```
 
 ## Build and verify the expert runtime
@@ -44,7 +44,7 @@ nvcc -O3 -arch=sm_89 -shared -Xcompiler /MD -o sabah_rt.dll sabah_rt.cu
 cd ..\..\hardware
 nvcc -O3 -arch=sm_89 -o mgpu_qualify.exe mgpu_qualify.cu
 cd ..\..
-sabah selftest C:\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+sabah selftest $DRIVE\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
 ```
 
 Replace `sm_89` with the installed GPU's compute capability. The self-test
@@ -58,7 +58,7 @@ The full-model Sabah backend is not yet integrated. To use the local API in a
 clearly labelled reference mode:
 
 ```powershell
-sabah serve C:\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf --allow-reference
+sabah serve $DRIVE\models\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf --allow-reference
 ```
 
 The default bind is `127.0.0.1`. The endpoints are `/health`, `/v1/models`,

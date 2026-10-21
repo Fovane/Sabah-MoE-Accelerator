@@ -41,7 +41,7 @@ The `.cu` changes do not take effect until the DLL is rebuilt.
 The build that works on this machine (CUDA 12.8 + Visual Studio) is:
 
 ```powershell
-cd C:\Projects\quantization\Sabah-MoE-Accelerator\sabah\runtime\cuda
+cd $WORKSPACE\sabah\runtime\cuda
 .\build_dll.bat sm_120
 ```
 
@@ -92,7 +92,7 @@ These require only Python + numpy. They cover the pure-logic pieces and are the
 quickest way to see whether the planner and the prefetch scaffolding behave.
 
 ```powershell
-cd C:\Projects\quantization\Sabah-MoE-Accelerator
+cd $WORKSPACE
 python -m pytest tests\test_accel_layer.py -q
 python -m pytest tests\test_public_contracts.py sabah\tests\test_planner.py -q
 ```
@@ -152,10 +152,10 @@ if prefetch evicts live work, or if eviction corrupts a requested expert.
 Set the paths once (two different variables are used by different tests):
 
 ```powershell
-$env:SABAH_MODEL      = "C:\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
+$env:SABAH_MODEL      = "$DRIVE\Strata-data\models\IQ3_S\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"
 $env:SABAH_TEST_MODEL = $env:SABAH_MODEL
-$env:SABAH_GGUF_PY    = "C:\Projects\qwen4exp-llama\gguf-py"
-$env:SABAH_SENTINEL_DIR = "C:\Projects\quantization\Sabah-MoE-Accelerator\build\sentinels"
+$env:SABAH_GGUF_PY    = "$DRIVE\Projects\qwen4exp-llama\gguf-py"
+$env:SABAH_SENTINEL_DIR = "$WORKSPACE\build\sentinels"
 ```
 
 `SABAH_GGUF_PY` must point at a `gguf-py` that knows the newer quant type codes
@@ -213,12 +213,12 @@ $env:SABAH_TEST_STEPS = "80"    # more steps = more evictions
 
 ```powershell
 python sabah\tools\bench_moe.py --model $env:SABAH_MODEL `
-  --trace C:\Projects\quantization\Sabah-MoE-Accelerator\tests\data\bench_trace `
+  --trace $WORKSPACE\tests\data\bench_trace `
   --block 0 --slots 16,32,64,128 --prefetch-slots 10
 ```
 
 The trace file was vendored into the repo at `tests\data\bench_trace` because
-the upstream path (`D:\sabah_scaling\v3\traces\main2`) does not exist on this
+the upstream path (`$DRIVE\sabah_scaling\v3\traces\main2`) does not exist on this
 machine. It holds 3000 routing steps for block 0 (top-10 over 512 experts).
 ```
 

@@ -347,6 +347,66 @@ floor - and the fill is paid once per fresh working set. Storage levers buy *tim
 to first token* and the warm-up, and the steady state needs the *demand or the
 floor* to change, which is what levers 3 and the floor curve above are about.
 
+## The floor, split by device (Phase 0, measured)
+
+The floor above (67.3 ms/token) was measured as a total, on an earlier binary.
+On the current one the same method gives a lower total, and the split is what
+matters. Steady state on the README configuration is now **58.59 ms median over
+127 decodes (17.07 tok/s)**; an Nsight Systems capture of a warm replay puts
+**43.3-43.7 ms on the GPU (74%)** and leaves **15.2 ms** with the host. The
+method above is unchanged; this section supersedes the split, not the method.
+
+| per steady token | ms | kernels/token |
+|---|---|---|
+| Sabah `gate`+`up` | 17.1-18.0 | 96 |
+| dense matmul (llama.cpp) | 12.4-12.8 | 752-770 |
+| Sabah `down` | 9.6-10.0 | 48 |
+| elementwise / router | 2.45-2.51 | 2,494-2,556 |
+| PLE / embedding | 0.42 | 93-98 |
+| SSM | 0.23 | 70 |
+| attention | 0.11-0.12 | 55-60 |
+| **GPU busy** | **43.3-43.7** | **3,662-3,756** |
+| host, additive | 15.2 | - |
+
+The Sabah kernels are 27.1-28.0 ms of that 43.4 (62%): 144 calls, ~1.01 GB of
+expert weights per token, ~37 GB/s effective. The trace also shows ~80
+`cudaStreamSynchronize` per token (2.6-2.8 ms) and 6.4 ms idle gaps between the
+three expert kernels of a layer when a miss occurs - the host round trip, visible.
+
+The host 15.2 ms is launch submission, priced directly (`tools/launch_latency.cu`,
+4,000 samples per case, WDDM): **3.42 us per empty-kernel submission with the GPU
+busy, 5.61 us idle**, 6.2 us for a 64 B D2H plus its sync. Schedule policy
+(`cudaDeviceScheduleSpin` vs auto) and `THREAD_PRIORITY_HIGHEST` change nothing
+(3.61 us busy, 812 us per simulated 48-step token, both within noise).
+
+| item | per token |
+|---|---|
+| 3,756 kernel submissions x 3.42 us | 12.85 ms |
+| 48 router-id drains (D2H + sync) | 0.30 ms |
+| residual (memcpy submissions, graph walk) | ~2.0 ms |
+| **sum** | **~15.2 ms** |
+
+Two things follow, and they are the Phase 1/2 split:
+
+* The host does not overlap the GPU, it adds to it: 58.6 = 43.4 + 15.2, not
+  `max(43.4, 15.2)`. The per-layer router drain empties the queue 48 times per
+  token, and after each drain ~78 launches have to be re-submitted while the GPU
+  waits - ~265 us per layer at 3.4 us/launch, ~12.7 ms per token.
+* Launch **count** is the cost driver, not launch price. Elementwise/router is
+  2,556 launches (68% of all launches) for 2.5 ms of GPU work; submitting them
+  costs ~8.7 ms of host time.
+
+So removing the exposed submission (a queue that stays deep, or a device-side id
+path) is worth 58.6 -> 44.4 ms = 22.5 tok/s on its own. It is also a precondition
+for a kernel win: halving Sabah's 27.3 ms removes 13.65 ms, which lands at
+44.95 ms (22.2 tok/s) with the host gap still additive but at 30.75 ms
+(32.5 tok/s) once the queue stays deep. The two are multiplicative.
+
+The dense matmul is already bandwidth-bound: the non-expert matmul weights on
+CUDA0 are 3,979 MiB, read once per token, so 4.17 GB in 12.6 ms = **331 GB/s,
+74% of the card's 448 GB/s**. Its header is 3.3 ms, and the lever there is more
+positions per weight read, not a faster kernel.
+
 ## Lever 3, closed: batch verification and speculative decoding are dead here
 
 The plan's "fewer bytes per token" was speculative decoding, on the theory that

@@ -1,13 +1,13 @@
 # Locality findings — the real 48-block routing trace
 
 Decisive measurement for the 10–15 tok/s target. Tool:
-`tools/trace_locality.py`. Trace: `C:\LMStudio\scratchpads\dk\trace_full`
+`tools/trace_locality.py`. Trace: `$DRIVE\LMStudio\scratchpads\dk\trace_full`
 (48 blocks × 499 steps × top-10, captured from the real model). Artifact:
 `results/trace_locality_full.json`.
 
 ## Baseline (measured, not projected)
 
-`C:\LMStudio\scratchpads\dk\cap_run.log` is a reference run of the full model
+`$DRIVE\LMStudio\scratchpads\dk\cap_run.log` is a reference run of the full model
 through llama.cpp with `sabah-diag` capturing. Per prompt step:
 
 ```

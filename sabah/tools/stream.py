@@ -39,6 +39,8 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 
+from sabah.tools import clocks  # noqa: E402
+
 DEFAULT_RT = os.path.join(ROOT, "sabah", "runtime", "cuda", "sabah_rt.dll")
 
 # The placement requirements (see patches/llama.cpp/README.md). Without both of
@@ -50,6 +52,28 @@ BASE_ENV = {
     "SABAH_LLAMA_IO_DEPTH": "8",
     "SABAH_LLAMA_TRACE": "1",
 }
+
+# The model directory. One setting, exported by the launcher and read by every
+# tool through tools/model_dir.py, so no script in this repository carries a
+# drive letter. Set it here (or in the environment) and everything agrees.
+MODEL_DIR_ENV = {
+    "SABAH_MODEL_DIR": os.path.join(os.environ.get("SABAH_MODEL_DIR") or
+                                    os.path.join("C:" + os.sep, "Strata-data", "models", "IQ3_S")),
+}
+
+# The shipped configuration, both measured in REPORT 16/8: SEG=48 segments every
+# Sabah node into a CUDA graph (42.74 -> 30.36 ms/token at 128K) and TILE3 is
+# the default expert kernel (item 3/8). Both are the runtime default; setting
+# either to 0 restores the eager and TILE2 path. They are in the profile so the
+# launcher states what it ran, and so a run can be replayed with one change.
+# SABAH_PREFILL_GROUP stays off (docs/PREFILL_GROUP_MAJOR.md 6.2).
+SHIPPED_ENV = {
+    "SABAH_CUDA_GRAPH_SEG": "48",
+    "SABAH_LLAMA_TILE3": "1",
+}
+
+# escape hatch: any of these set in the parent environment wins over SHIPPED_ENV
+OVERRIDABLE = tuple(SHIPPED_ENV)
 
 # The reproduction flags from the README, and nothing else.
 BASE_FLAGS = [
@@ -103,8 +127,10 @@ def parse_driver(text):
     """Everything the driver and the runtime printed, as plain numbers."""
     out = {}
     # Step 0 is the prefill: it must not be counted or timed as a decoded token.
+    # Single-prompt mode prints "prompt step N", manifest mode prints
+    # "<id> step N" for the same event; both mean one decode step.
     steps = [float(m.group(2)) for m in
-             re.finditer(r"prompt step (\d+) .*?([\d.]+) ms", text)
+             re.finditer(r"[\w.-]+ step (\d+) .*?([\d.]+) ms", text)
              if int(m.group(1)) >= 1]
     out["n_decodes"] = len(steps)
     if steps:
@@ -123,6 +149,11 @@ def parse_driver(text):
 
     grab("calls", r"SABAH_DIAG calls=(\d+)", int)
     grab("tokens", r"SABAH_DIAG calls=\d+ tokens=(\d+)", int)
+    # The driver times the prompt as chunks and records their total separately,
+    # so step_ms holds decoded tokens only.
+    grab("prefill_ms", r"sabah-diag: \S+ prefill total_ms=([\d.]+)")
+    grab("prefill_chunks", r"prefill total_ms=[\d.]+ chunks=(\d+)", int)
+    grab("prefill_bytes", r"prefill total_ms=[\d.]+ chunks=\d+ n=\d+ n_batch=\d+ bytes=(\d+)", int)
     grab("lookups", r"SABAH_DIAG calls=\d+ tokens=\d+ lookups=(\d+)", int)
     grab("overflow", r"overflow=(\d+)", int)
     grab("verify_ok", r"verify_ok=(\d+)", int)
@@ -140,6 +171,8 @@ def parse_driver(text):
     grab("phase_ptr_ms", r"slot=[\d.]+ms ptr=([\d.]+)ms")
     grab("phase_prime_ms", r"ptr=[\d.]+ms prime=([\d.]+)ms")
     grab("id_reuse", r"SABAH_IDS reused=(\d+)", int)
+    grab("compute_buffer_mib", r"compute buffer size\s*=\s*([\d.]+) MiB")
+    grab("graph_nodes", r"graph nodes\s*=\s*(\d+)", int)
     grab("id_group_max", r"SABAH_IDS reused=\d+ group_max=(\d+)", int)
     grab("id_check", r"SABAH_IDS reused=\d+ group_max=\d+ check=(\d+)", int)
     grab("id_check_ok", r"check=\d+ check_ok=(\d+)", int)
@@ -220,10 +253,17 @@ def regimes(out_dir, warm_tokens=128, fill_ms=None):
     against a 67 ms steady state. Quoting either one alone is a mis-measurement.
     """
     ms = step_ms(out_dir)
-    if len(ms) < 2:
-        return {}
-    fill = ms[0] if fill_ms is None else fill_ms
-    dec = ms[1:]
+    if fill_ms is None:
+        if len(ms) < 2:
+            return {}
+        fill = ms[0]
+        dec = ms[1:]
+    else:
+        # The driver measured the prompt directly, so every step is a decode.
+        if not ms:
+            return {}
+        fill = fill_ms
+        dec = ms
     warm = dec[:warm_tokens]
     steady = dec[warm_tokens:]
     out = {
@@ -274,6 +314,12 @@ def run(model, prompt="Hello", tokens=32, context=512, threads=8,
 
     env = dict(os.environ)
     env.update(BASE_ENV)
+    # the shipped profile, unless the parent environment already pins a value
+    for k, v in SHIPPED_ENV.items():
+        if os.environ.get(k) is None:
+            env[k] = v
+    # the model directory, unless the caller pinned one
+    env.update(MODEL_DIR_ENV)
     env["SABAH_RT_LIB"] = os.path.abspath(rt)
     env["SABAH_LLAMA_HOT_BYTES"] = str(hot_bytes)
     if counters:
@@ -297,10 +343,13 @@ def run(model, prompt="Hello", tokens=32, context=512, threads=8,
     clean_run_dir(out_dir)
 
     t0 = time.time()
+    clock_sampler = clocks.ClockSampler(interval=0.5)
+    clock_sampler.start()
     proc = subprocess.run(argv, env=env, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=timeout)
     wall = time.time() - t0
     rec = parse_driver(proc.stdout + proc.stderr)
+    clock_rec = clock_sampler.stop().record(decode_ms=rec.get("decode_ms_sum"))
     rec["wall_s"] = wall
     rec["exit_code"] = proc.returncode
     st = status(status_path) if counters else {}
@@ -319,6 +368,10 @@ def run(model, prompt="Hello", tokens=32, context=512, threads=8,
     rec["driver"] = os.path.abspath(diag)
     rec["runtime"] = os.path.abspath(rt)
     rec["counters_enabled"] = bool(counters)
+    rec["clocks"] = clock_rec
+    rec["clock_valid"] = clock_rec.get("valid")
+    rec["clock_invalid_reason"] = clock_rec.get("reason")
+    rec["machine"] = clocks.machine_state()
     pt = prompt_tokens(out_dir)
     if pt:
         rec["prompt_tokens_count"] = len(pt)
@@ -375,6 +428,10 @@ def print_breakdown(r):
     print("  checks       verify %s/%s, mapped_fallbacks=%s, overflow=%s"
           % (r.get("verify_ok"), r.get("verify_fail"),
              r.get("mapped_fallbacks"), r.get("overflow")))
+    if r.get("clocks"):
+        print("  " + clocks.format_steady(r["clocks"]))
+        if r["clocks"].get("valid") is False:
+            print("  CLOCK INVALID: %s" % r["clocks"].get("reason"))
 
 
 def environment_fingerprint(model, rt, diag):

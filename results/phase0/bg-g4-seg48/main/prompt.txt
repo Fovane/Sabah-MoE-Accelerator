@@ -1,0 +1,125 @@
+﻿
+
+===== README.md (pass 1) =====
+
+# Sabah-MoE-Accelerator
+
+**A streaming MoE inference runtime for RAM-constrained machines.**
+
+Sabah runs models far larger than the machine's VRAM + RAM combined. It does that
+**without a RAM tier, without the page cache and without the page file**: the
+expert path goes `disk -> pinned staging -> VRAM` with `FILE_FLAG_NO_BUFFERING`,
+so **host RAM stays flat** for the whole run.
+
+That is the point of the project. An 83.6 GB MoE model either fails to load on a
+16 GB-VRAM / 15 GB-RAM machine, or it "runs" only by letting the OS page weights
+through RAM â€” which requires a large page file and makes latency unpredictable.
+Sabah is built for the machine that has **the VRAM but not the RAM**.
+
+Measured end to end on the reference rig:
+
+| | |
+|---|---|
+| model | `Qwen3.8-Flash-Next` IQ3_S, **83.6 GB** (2 shards, 48 blocks x 512 experts, top-10) |
+| time to first token | **11.2 s** (the 53-token prompt is easy; the expert tier starts empty and fills 12.68 GB at 1.11 GB/s) |
+| decode, steady state | **~67 ms/token = ~15 tok/s**, effectively disk-free (4.5 reads, 3.0 MB/token) |
+| decode, first 128 tokens | 79-204 ms/token: the tier is still discovering its working set |
+| 256-token answer end to end | 11.2 s + 24.6 s = **7.1 tok/s including the fill**, 10.4 over the decodes |
+| **host RAM** | **flat at 4.78 GiB**, never grows, `mapped_fallbacks=0` |
+| peak VRAM | 15.36 GB of 16.31 GB |
+| correctness | byte-exact against the GGUF ranges (`verify_ok=64191 verify_fail=0`) |
+
+The shape matters here, so it is worth stating plainly: this runtime is fast once
+warm and slow to get warm, because the tier (9.8 GB) is smaller than the working
+set of a fresh prompt (12.68 GB of cold fill) and has to learn it. One long answer
+runs at 15 tok/s; many short ones pay ~11 s each before the first token. The full
+breakdown, per regime, is in [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md).
+
+Numbers describe the **shipped streaming path** (`sabah/runtime/cuda/sabah_rt.cu`
++ the llama.cpp bridge). The separate Python block-level harness in
+`sabah/runtime/*.py` is research scaffolding and is described
+[at the end](#python-block-harness-separate-from-the-shipped-path).
+
+---
+
+## Design rules
+
+1. **RAM is not a tier.** Nothing about expert delivery may depend on host memory
+   growing. Host RAM is allowed to hold only fixed-size pinned staging buffers
+   and loader bookkeeping.
+2. **Routing semantics are never changed.** Sabah decides *when* an expert's bytes
+   reach the GPU and *where* they are kept. Which experts run, and the input rows
+   they are applied to, is exactly what llama.cpp computed. The bridge exists only
+   to intercept execution, not to alter it.
+3. **Every optimisation must be provable.** Either byte-exact verification against
+   the GGUF ranges, or a preserved invariant (for example: a prefetcher is only
+   allowed to move bytes in time, so the tier's `hits`/`misses`/`evictions` must
+   come out identical).
+
+Rule 3 is why every number in this document comes with the check that proves it.
+
+## How it works
+
+### The tier: VRAM is hot, the disk is cold
+
+There is no intermediate RAM tier. The bank of expert weights is a 50.29 GB pool
+of 24576 objects (512 experts x 48 blocks) and it never fits; a VRAM slab
+(`SABAH_LLAMA_HOT_BYTES`, 9.8 GB on this rig) holds whatever is currently hot and
+everything else is read on demand from the GGUF.
+
+A decode token asks for 480 experts x 3 tensors = 1440 tensor reads (~0.97 GB of
+expert bytes). With the 9.8 GB slab, **81.8%** of those hit and **262 reads
+(174.7 MB) go to the disk**.
+
+### Direct I/O with pinned staging
+
+Misses are issued as aligned unbuffered reads:
+
+- `FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED`, 4096-byte alignment, so the
+  read lands in pinned host memory instead of the OS page cache. The page cache is
+  deliberately bypassed â€” it is what would make host RAM grow.
+- a double-buffered pinned staging pool (~43 MB) with a wave-boundary event gate;
+  `SABAH_LLAMA_IO_DEPTH` (default 8) reads in flight per wave.
+- `SABAH_LLAMA_DIRECT_IO=0` switches back to the mapping, for A/B comparison only.
+
+### The llama.cpp bridge
+
+Sabah is not a fork and not a standalone loader; it hooks one operator. Patch
+`0001` makes the scheduler keep the original host GGUF expert tensor in the graph
+for `MUL_MAT_ID` and hands that op to `sabah_rt_mul_mat_id_v2` together with the
+graph's own ids, input and output tensors. Nothing else about llama.cpp changes
+and the integration is **opt-in via `SABAH_LLAMA=1`**. See
+[`patches/llama.cpp/README.md`](patches/llama.cpp/README.md).
+
+Two placement details are required and easy to get wrong:
+
+- `GGML_OP_OFFLOAD_MIN_BATCH=1`. With `--cpu-moe`, llama.cpp only sends an expert
+  op to CUDA when its batch is at least 32 tokens (the default), so every
+  single-token decode would silently run on the CPU and never reach Sabah.
+- `-ot "\.per_layer_token_embd\.weight=CPU"`. `-ngl 99` alone pushes the 28.8 GB
+  per-layer token embedding into VRAM. It is dense and read sequentially, so the
+  CPU with the file mapping is the right home for it.
+
+### What was optimised, and what it bought
+
+Everything here came from measuring the token, not from guessing. Baseline to
+current is **4.37 -> 4.84 tok/s (+11%)**, with no change to the outputs.
+
+| change | cost before | after | tok/s |
+|---|---|---|---|
+| baseline (per-call stream drain, linear erase) | `ids` 87 ms | | 4.37 |
+| reuse the router ids across a layer's 3 expert tensors | 87 ms | ~23 ms | 4.75 |
+| single-scan residency memo per call | | | 4.79 |
+| swap-and-pop eviction instead of `vector::erase` | `slot` 30 ms | ~11.5 ms | **4.84** |
+
+**Router id reuse** is the interesting one. The three expert tensors of a MoE
+layer (`gate`, `up`, `down`) read the *same* `selected_experts` tensor, so two of
+the three `cudaStreamSynchronize` per layer are redundant. The bridge passes
+`dst->src[2]` â€” the ids *tensor address* â€” so the runtime can recognise "same
+tensor as the previous call" and skip both the download and the drain. Groups are
+capped at `SB_ID_GROUP_MAX=4` calls, and that cap doubles as the width of the
+eviction-protection window, which is what makes it safe to free a slot while a
+kernel enqueued before the last drain may still be reading it.
+
+Removing those drains exposed a latent race worth recording: the pointer table is
+**one** shared device buffer that every call rewrites, and the upload used to run

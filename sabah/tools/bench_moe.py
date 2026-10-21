@@ -33,6 +33,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
 from sabah.core.model_inspector import inspect_model
+from sabah.tools import clocks
 from sabah.runtime import rt
 from sabah.runtime.expert_bank import ExpertBank
 from sabah.runtime.hot_tier import HotTier
@@ -138,6 +139,9 @@ def main(argv=None):
     ap.add_argument("--json-out", default="")
     ap.add_argument("--pin-fixed-path", action="store_true",
                     help="pin fixed path tensors into VRAM (needs ~4.2 GB VRAM)")
+    ap.add_argument("--allow-low-clock", action="store_true",
+                    help="exit 0 even if the steady SM clock was below 2400 MHz "
+                         "(the run is still recorded as invalid)")
     args = ap.parse_args(argv)
 
     print("=" * 84)
@@ -214,6 +218,8 @@ def main(argv=None):
           % ("", "", "", "", "ms/tok", "ms/tok", "per tok", "", "per tok",
              "per tok"))
     print("-" * 100)
+    clock_sampler = clocks.ClockSampler(interval=0.5)
+    clock_sampler.start()
     for C in sweep:
         if C > prof.n_experts:
             continue
@@ -234,6 +240,14 @@ def main(argv=None):
                  r.get("prefetch_issued", 0) / r["tokens"],
                  r.get("prefetch_hits", 0) / r["tokens"]))
 
+    print()
+    # ---- clock hygiene --------------------------------------------------
+    clock_rec = clock_sampler.stop().record()
+    print(clocks.format_steady(clock_rec))
+    if clock_rec.get("valid") is False:
+        print("CLOCK INVALID: %s" % clock_rec.get("reason"))
+        print("  this run cannot be compared with a boost-clock run; re-run it "
+              "or pass --allow-low-clock to keep the exit code")
     print()
     # ---- M1 A/B ---------------------------------------------------------
     full = next((r for r in rows if r["capacity_slots"] >= prof.n_experts), None)
@@ -270,11 +284,26 @@ def main(argv=None):
                            block=args.block, quant=qmix,
                            trace=args.trace, tokens=int(ids.shape[0]),
                            n_experts=prof.n_experts,
-                           topk=prof.n_experts_used, rows=rows), f, indent=1)
+                           topk=prof.n_experts_used, rows=rows,
+                           clocks=clock_rec,
+                           machine=clocks.machine_state()), f, indent=1)
         print("\nwrote %s" % args.json_out)
     if fpr:
         fpr.free()
     bank.close()
+    if clock_rec.get("valid") is False and not args.allow_low_clock:
+        return 4
+    # Flag, do not refuse: nvidia-smi lists every process holding a compute
+    # context, and on a Windows desktop that is routinely in the double digits
+    # without any of them computing. The measured number then carries the
+    # time-slicing caveat instead of being dropped.
+    others = clocks.other_gpu_users(exclude_pid=os.getpid())
+    if others:
+        print("FLAG: %d other process(es) hold a compute context on this GPU "
+              "(%s%s). WDDM may time-slice: ms/block then belongs to the "
+              "machine state, not to this block."
+              % (len(others), ", ".join(str(p) for p in others[:8]),
+                 " ..." if len(others) > 8 else ""))
     return 0
 
 

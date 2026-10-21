@@ -1,0 +1,41 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16283 MiB):
+  Device 0: NVIDIA GeForce RTX 5060 Ti, compute capability 12.0, VMM: yes, VRAM: 16283 MiB
+0.00.858.552 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+0.02.236.874 I cmn          init: llama threadpool init, n_threads = 8
+sabah-diag: prompt prefill chunk 0 off=0 n=53  11046.7 ms bytes=13257139200
+sabah-diag: prompt prefill total_ms=11046.8 chunks=1 n=53 n_batch=512 bytes=13257139200
+sabah-diag: prompt step 0 argmax 1596 fed 1596  0.0 ms
+SABAH_SEG recapture: node 2 GLU ffn_moe_swiglu-0
+  old: data 000000080D300080 -> 000000080D300080  ne 640,10 -> 640,10
+  new: data 000000080D300080 -> 000000080D300080  ne 640,10 -> 640,10
+SABAH_SEG recapture: node 4 MUL ffn_moe_weighted-0
+  old: data 0000000811180080 -> 0000000811180080  ne 2560,10 -> 2560,10
+  new: data 0000000811180080 -> 0000000811180080  ne 2560,10 -> 2560,10
+SABAH_SEG recapture: node 5 VIEW ffn_moe_weighted-0 (view)
+  old: data 0000000811180080 -> 0000000811180080  ne 2560,53 -> 2560,1
+  new: data 0000000811180080 -> 0000000811180080  ne 2560,1 -> 2560,53
+SABAH_SEG recapture: node 6 VIEW ffn_moe_weighted-0 (view)
+  old: data 0000000811182880 -> 0000000811182880  ne 2560,53 -> 2560,1
+  new: data 0000000811182880 -> 0000000811182880  ne 2560,1 -> 2560,53
+SABAH_SEG recapture: node 7 VIEW ffn_moe_weighted-0 (view)
+  old: data 0000000811185080 -> 0000000811185080  ne 2560,53 -> 2560,1
+  new: data 0000000811185080 -> 0000000811185080  ne 2560,1 -> 2560,53
+SABAH_SEG recapture: node 8 VIEW ffn_moe_weighted-0 (view)
+  old: data 0000000811187880 -> 0000000811187880  ne 2560,53 -> 2560,1
+  new: data 0000000811187880 -> 0000000811187880  ne 2560,1 -> 2560,53
+sabah-diag: prompt step 1 argmax 1144 fed 1144  560.6 ms
+sabah-diag: prompt step 2 argmax 310 fed 310  275.4 ms
+sabah-diag: prompt step 3 argmax 5707 fed 5707  216.5 ms
+sabah-diag: prompt step 4 argmax 310 fed 310  291.2 ms
+sabah-diag: prompt step 5 argmax 1156 fed 1156  256.2 ms
+SABAH_DIAG calls=864 tokens=8196 lookups=81960 overflow=879 verify_ok=0 verify_fail=0
+SABAH_DISK unbuffered_reads=22122 bytes=14990003200 waves=3193 mapped_fallbacks=0 staging_bytes=0 direct_io=1 depth=8 lanes=8 lane_reads=22122 sync=0 pending=0
+SABAH_IO read_ms=47519.0 wave_ms=11040.3 overlap=4.30 reads_per_wave=6.93
+SABAH_PHASE calls=864 ids=320.6ms fetch=11232.6ms wait=11040.3ms slot=473.6ms ptr=8.2ms prime=5.3ms | per_call us: ids=371 fetch=13001 wait=12778 slot=548 ptr=10 prime=6 | accounting=12040.4ms
+SABAH_IDS reused=576 group_max=3 check=0 check_ok=0 check_fail=0
+SABAH_MERGE enabled=0 reserved=0
+SABAH_PREFETCH enabled=0 reads=0 read_bytes=0 used=0 used_bytes=0 dropped=0 stale=0 queued=0 waits=0 wait_ms=0.0 wait_timeouts=0
+SABAH_SNAPSHOT {"calls":864,"empty_calls":0,"tokens":8196,"lookups":81960,"hits":59838,"misses":22122,"evictions":13591,"bytes_fetched":14990003200,"resident_bytes":5999872000,"overflow":879,"verify_ok":0,"verify_fail":0,"selfcheck_k":0,"selfcheck_ok":0,"selfcheck_fail":0,"selfcheck_max_rel_l2":0.000000e+00,"selfcheck_multi_token":0,"selfcheck_tensors":0,"selfcheck_slots":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"sentinel":0}
+SABAH_METRICS hits=59838 misses=22122 evictions=13591 bytes_fetched=14990003200 resident_bytes=5999872000
+SABAH_SEG splits=30 moe_splits=24 splits_per_token=1.25 segments_per_token=24.0 split_nodes_per_token=36.0 launches_per_token=12.1 captures=96 captures_per_token=4.000 eager_per_token=47.9 fusions=2091 (69.70 per graph compute)
+SABAH_SEG host ms per token: props=0.375 launch=0.153 capture=0.847 eager=414.562 | per launch us=15.80 per eager us=10814.67 | worst call host_ms=9712.37 (settled 0.00, captures 0), all per graph compute

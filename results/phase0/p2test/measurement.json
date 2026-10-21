@@ -1,0 +1,136 @@
+{
+ "argv": [
+  "$WORKSPACE\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\third_party\\llama.cpp\\build\\bin\\llama-sabah-diag.exe",
+  "-m",
+  "$WORKSPACE\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\models\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+  "-dev",
+  "CUDA0",
+  "-ngl",
+  "99",
+  "--cpu-moe",
+  "-ot",
+  "\\.per_layer_token_embd\\.weight=CPU",
+  "-t",
+  "8",
+  "-c",
+  "2048",
+  "-n",
+  "2",
+  "-p",
+  "Hi",
+  "-b",
+  "2048",
+  "-ub",
+  "2048"
+ ],
+ "clock_invalid_reason": "no clock samples",
+ "clock_valid": null,
+ "clocks": {
+  "interval_s": 0.5,
+  "query": "clocks.sm,clocks.mem,pstate,power.draw,power.limit,temperature.gpu,utilization.gpu,fan.speed,display_active,display_attached,clocks_throttle_reasons.active",
+  "reason": "no clock samples",
+  "samples": [
+   [
+    0.03,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 405.0,
+     "power_limit_w": 180.0,
+     "power_w": 8.36,
+     "pstate": "P8",
+     "sm_mhz": 525.0,
+     "temp_c": 34.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 1.0
+    }
+   ]
+  ],
+  "steady": null,
+  "valid": null,
+  "whole": {
+   "display_active": [
+    "Enabled"
+   ],
+   "dominant_pstate": "P8",
+   "mem_mhz": {
+    "max": 405.0,
+    "mean": 405.0,
+    "median": 405.0,
+    "min": 405.0,
+    "n": 1
+   },
+   "power_w": {
+    "max": 8.36,
+    "mean": 8.36,
+    "median": 8.36,
+    "min": 8.36,
+    "n": 1
+   },
+   "pstates": {
+    "P8": 1
+   },
+   "samples": 1,
+   "sm_mhz": {
+    "max": 525.0,
+    "mean": 525.0,
+    "median": 525.0,
+    "min": 525.0,
+    "n": 1
+   },
+   "span_s": 0.0,
+   "temp_c": {
+    "max": 34.0,
+    "mean": 34.0,
+    "median": 34.0,
+    "min": 34.0,
+    "n": 1
+   },
+   "throttle": [
+    "0x0000000000000400"
+   ],
+   "util_pct": {
+    "max": 1.0,
+    "mean": 1.0,
+    "median": 1.0,
+    "min": 1.0,
+    "n": 1
+   }
+  }
+ },
+ "env": {
+  "GGML_OP_OFFLOAD_MIN_BATCH": "1",
+  "SABAH_LLAMA": "1",
+  "SABAH_LLAMA_DIRECT_IO": "1",
+  "SABAH_LLAMA_HOT_BYTES": "9.8e9",
+  "SABAH_LLAMA_IO_DEPTH": "8",
+  "SABAH_LLAMA_PREFETCH": "0",
+  "SABAH_LLAMA_TRACE": "1"
+ },
+ "exit_code": 1,
+ "label": "p2test",
+ "machine": {
+  "hags_HwSchMode": "absent (HAGS off)",
+  "nvidia_registry": {},
+  "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+  "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+ },
+ "memory": {
+  "avail_phys_first_mib": 11647.75390625,
+  "avail_phys_last_mib": 11692.734375,
+  "avail_phys_min_mib": 11647.75390625,
+  "process_peak_ws_mib": 180.953125,
+  "process_ws_first_mib": 42.17578125,
+  "process_ws_last_mib": 0.03125,
+  "vram_mib_series": [
+   210,
+   210
+  ],
+  "vram_peak_mib": 210,
+  "vram_samples": 2
+ },
+ "n_decodes": 0,
+ "wall_s": 0.5327844619750977
+}

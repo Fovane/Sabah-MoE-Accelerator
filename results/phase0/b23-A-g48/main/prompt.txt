@@ -1,0 +1,51 @@
+﻿
+
+===== README.md (pass 1) =====
+
+# Sabah-MoE-Accelerator
+
+**A streaming MoE inference runtime for RAM-constrained machines.**
+
+Sabah runs models far larger than the machine's VRAM + RAM combined. It does that
+**without a RAM tier, without the page cache and without the page file**: the
+expert path goes `disk -> pinned staging -> VRAM` with `FILE_FLAG_NO_BUFFERING`,
+so **host RAM stays flat** for the whole run.
+
+That is the point of the project. An 83.6 GB MoE model either fails to load on a
+16 GB-VRAM / 15 GB-RAM machine, or it "runs" only by letting the OS page weights
+through RAM â€” which requires a large page file and makes latency unpredictable.
+Sabah is built for the machine that has **the VRAM but not the RAM**.
+
+Measured end to end on the reference rig:
+
+| | |
+|---|---|
+| model | `Qwen3.8-Flash-Next` IQ3_S, **83.6 GB** (2 shards, 48 blocks x 512 experts, top-10) |
+| time to first token | **11.2 s** (the 53-token prompt is easy; the expert tier starts empty and fills 12.68 GB at 1.11 GB/s) |
+| decode, steady state | **~67 ms/token = ~15 tok/s**, effectively disk-free (4.5 reads, 3.0 MB/token) |
+| decode, first 128 tokens | 79-204 ms/token: the tier is still discovering its working set |
+| 256-token answer end to end | 11.2 s + 24.6 s = **7.1 tok/s including the fill**, 10.4 over the decodes |
+| **host RAM** | **flat at 4.78 GiB**, never grows, `mapped_fallbacks=0` |
+| peak VRAM | 15.36 GB of 16.31 GB |
+| correctness | byte-exact against the GGUF ranges (`verify_ok=64191 verify_fail=0`) |
+
+The shape matters here, so it is worth stating plainly: this runtime is fast once
+warm and slow to get warm, because the tier (9.8 GB) is smaller than the working
+set of a fresh prompt (12.68 GB of cold fill) and has to learn it. One long answer
+runs at 15 tok/s; many short ones pay ~11 s each before the first token. The full
+breakdown, per regime, is in [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md).
+
+Numbers describe the **shipped streaming path** (`sabah/runtime/cuda/sabah_rt.cu`
++ the llama.cpp bridge). The separate Python block-level harness in
+`sabah/runtime/*.py` is research scaffolding and is described
+[at the end](#python-block-harness-separate-from-the-shipped-path).
+
+---
+
+## Design rules
+
+1. **RAM is not a tier.** Nothing about expert delivery may depend on host memory
+   growing. Host RAM is allowed to hold only fixed-size pinned staging buffers
+   and loader bookkeeping.
+2. **Routing semantics are never changed.** Sabah decides *when* an expert's bytes
+   reach the GPU and *where* they are kept. Which experts run, and the input rows
