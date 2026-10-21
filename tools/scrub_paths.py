@@ -20,7 +20,7 @@ import re
 import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLACEHOLDER = "$WORKSPACE"
+PLACEHOLDER = "C:\\Projects\\quantization\\Sabah-MoE-Accelerator"
 DRIVE = "$DRIVE"
 
 DRIVE_RE = re.compile(r"(?<![A-Za-z0-9$.\\])([A-Za-z]):\\\\")

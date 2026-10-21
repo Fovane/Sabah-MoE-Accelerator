@@ -6,8 +6,8 @@ the element count checked against the source's declared size.
 import re
 import sys
 
-SRC = r"$DRIVE\Projects\qwen4exp-llama\ggml\src\ggml-common.h"
-OUT = r"$WORKSPACE\sabah\runtime\cuda\sabah_iq_tables.h"
+SRC = r"D:\Projects\qwen4exp-llama\ggml\src\ggml-common.h"
+OUT = r"C:\\Projects\\quantization\\Sabah-MoE-Accelerator\sabah\runtime\cuda\sabah_iq_tables.h"
 
 WANT = [
     ("uint8_t",  "kmask_iq2xs",   8),

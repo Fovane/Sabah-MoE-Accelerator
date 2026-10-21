@@ -11,8 +11,8 @@ for f in ("results/phase0/item6-prefill64k/manifest.jsonl",
         continue
     t = open(p, encoding="utf-8", errors="ignore").read()
     n_drive = t.count("$DRIVE")
-    n_ws = t.count("$WORKSPACE")
-    print(f"{f}: $DRIVE x{n_drive}  $WORKSPACE x{n_ws}  len {len(t)}")
+    n_ws = t.count("C:\\Projects\\quantization\\Sabah-MoE-Accelerator")
+    print(f"{f}: $DRIVE x{n_drive}  C:\\Projects\\quantization\\Sabah-MoE-Accelerator x{n_ws}  len {len(t)}")
     i = t.find("$DRIVE")
     if i >= 0:
         print("   context:", repr(t[max(0, i - 50):i + 20]))

@@ -23,7 +23,7 @@ PATCHES = [os.path.join(V5, "patches", "llama.cpp", p) for p in
            ("0001-sabah-native-mul-mat-id.patch", "0002-sabah-diag-capture-tool.patch")]
 FILES = ["ggml/src/ggml-backend.cpp", "ggml/src/ggml-cuda/ggml-cuda.cu", "tools/CMakeLists.txt",
          "tools/sabah-diag/sabah-diag.cpp", "tools/sabah-diag/CMakeLists.txt"]
-MSVC = r"$DRIVE\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64"
+MSVC = r"D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64"
 
 
 def sh(cmd, cwd=None, env=None):

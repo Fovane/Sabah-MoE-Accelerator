@@ -6,8 +6,8 @@ rem
 rem CMAKE_CUDA_ARCHITECTURES is forced to 120: this machine is sm_120 and the
 rem cached default (120;61) compiles every CUDA translation unit twice, once
 rem for Pascal, which nothing here can run. Dropping it halves the build.
-set VSDIR=$DRIVE\Program Files\Microsoft Visual Studio\2022\Professional
-if not exist "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" set VSDIR=$DRIVE\Program Files\Microsoft Visual Studio\18\Community
+set VSDIR=D:\Program Files\Microsoft Visual Studio\2022\Professional
+if not exist "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" set VSDIR=D:\Program Files\Microsoft Visual Studio\18\Community
 if exist "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" goto have_vs
 set "VSDIR="
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
