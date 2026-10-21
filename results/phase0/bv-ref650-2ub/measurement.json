@@ -1,2176 +1,2176 @@
 {
-  "argv": [
-    "C:\\Projects\\quantization\\Sabah-MoE-Accelerator\\third_party\\llama.cpp\\build\\bin\\llama-sabah-diag.exe",
-    "-m",
-    "C:\\Strata-data\\models\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
-    "-dev",
-    "CUDA0",
-    "-ngl",
-    "99",
-    "--cpu-moe",
-    "-ot",
-    "\\.per_layer_token_embd\\.weight=CPU",
-    "-t",
-    "8",
-    "-c",
-    "4096",
-    "-n",
-    "1",
-    "-b",
-    "2048",
-    "-ub",
-    "512"
+ "argv": [
+  "$WORKSPACE\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\third_party\\llama.cpp\\build\\bin\\llama-sabah-diag.exe",
+  "-m",
+  "$WORKSPACE\\Sabah-MoE-Accelerator\\models\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+  "-dev",
+  "CUDA0",
+  "-ngl",
+  "99",
+  "--cpu-moe",
+  "-ot",
+  "\\.per_layer_token_embd\\.weight=CPU",
+  "-t",
+  "8",
+  "-c",
+  "4096",
+  "-n",
+  "1",
+  "-b",
+  "2048",
+  "-ub",
+  "512"
+ ],
+ "bytes_fetched": 53759257600,
+ "calls": 285,
+ "clock_invalid_reason": "steady SM median 1035 MHz < 2400 MHz (min 660, max 1297, pstate P3); steady memory median 7001 MHz < 10000 MHz (the card dropped to a low P-state even if SM was pinned)",
+ "clock_valid": false,
+ "clocks": {
+  "interval_s": 0.5,
+  "min_steady_mem_mhz": 10000.0,
+  "min_steady_sm_mhz": 2400.0,
+  "query": "clocks.sm,clocks.mem,pstate,power.draw,power.limit,temperature.gpu,utilization.gpu,fan.speed,display_active,display_attached,clocks_throttle_reasons.active",
+  "reason": "steady SM median 1035 MHz < 2400 MHz (min 660, max 1297, pstate P3); steady memory median 7001 MHz < 10000 MHz (the card dropped to a low P-state even if SM was pinned)",
+  "samples": [
+   [
+    0.036,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 405.0,
+     "power_limit_w": 180.0,
+     "power_w": 9.0,
+     "pstate": "P8",
+     "sm_mhz": 615.0,
+     "temp_c": 36.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 4.0
+    }
+   ],
+   [
+    0.551,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 9.11,
+     "pstate": "P1",
+     "sm_mhz": 562.0,
+     "temp_c": 36.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 4.0
+    }
+   ],
+   [
+    1.053,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 14.99,
+     "pstate": "P1",
+     "sm_mhz": 2632.0,
+     "temp_c": 37.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 0.0
+    }
+   ],
+   [
+    1.567,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 21.85,
+     "pstate": "P1",
+     "sm_mhz": 2640.0,
+     "temp_c": 37.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 12.0
+    }
+   ],
+   [
+    2.068,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 24.44,
+     "pstate": "P1",
+     "sm_mhz": 2670.0,
+     "temp_c": 37.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 12.0
+    }
+   ],
+   [
+    2.571,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 24.42,
+     "pstate": "P1",
+     "sm_mhz": 2670.0,
+     "temp_c": 37.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 12.0
+    }
+   ],
+   [
+    3.083,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.05,
+     "pstate": "P1",
+     "sm_mhz": 2640.0,
+     "temp_c": 37.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 97.0
+    }
+   ],
+   [
+    3.584,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 31.56,
+     "pstate": "P1",
+     "sm_mhz": 2850.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 16.0
+    }
+   ],
+   [
+    4.085,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 38.83,
+     "pstate": "P1",
+     "sm_mhz": 2850.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 4.0
+    }
+   ],
+   [
+    4.6,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 46.32,
+     "pstate": "P1",
+     "sm_mhz": 2850.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 34.0
+    }
+   ],
+   [
+    5.102,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 48.27,
+     "pstate": "P1",
+     "sm_mhz": 2752.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    5.617,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 43.61,
+     "pstate": "P1",
+     "sm_mhz": 2670.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 15.0
+    }
+   ],
+   [
+    6.133,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 43.63,
+     "pstate": "P1",
+     "sm_mhz": 2662.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    6.634,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 48.13,
+     "pstate": "P1",
+     "sm_mhz": 2655.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 31.0
+    }
+   ],
+   [
+    7.15,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 47.16,
+     "pstate": "P1",
+     "sm_mhz": 2482.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 22.0
+    }
+   ],
+   [
+    7.651,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 45.79,
+     "pstate": "P1",
+     "sm_mhz": 2197.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 27.0
+    }
+   ],
+   [
+    8.167,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 38.46,
+     "pstate": "P1",
+     "sm_mhz": 2025.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    8.668,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 39.91,
+     "pstate": "P1",
+     "sm_mhz": 2032.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 39.0
+    }
+   ],
+   [
+    9.183,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 44.32,
+     "pstate": "P1",
+     "sm_mhz": 1950.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 34.0
+    }
+   ],
+   [
+    9.684,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 41.73,
+     "pstate": "P3",
+     "sm_mhz": 1897.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 15.0
+    }
+   ],
+   [
+    10.2,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 37.89,
+     "pstate": "P1",
+     "sm_mhz": 1912.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    10.701,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 40.74,
+     "pstate": "P3",
+     "sm_mhz": 1867.0,
+     "temp_c": 44.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 32.0
+    }
+   ],
+   [
+    11.217,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 36.26,
+     "pstate": "P3",
+     "sm_mhz": 1732.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 4.0
+    }
+   ],
+   [
+    11.718,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 35.19,
+     "pstate": "P3",
+     "sm_mhz": 1905.0,
+     "temp_c": 44.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 36.0
+    }
+   ],
+   [
+    12.233,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 32.88,
+     "pstate": "P3",
+     "sm_mhz": 1605.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 8.0
+    }
+   ],
+   [
+    12.734,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 36.15,
+     "pstate": "P1",
+     "sm_mhz": 2077.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 40.0
+    }
+   ],
+   [
+    13.25,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 44.4,
+     "pstate": "P1",
+     "sm_mhz": 2070.0,
+     "temp_c": 44.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 32.0
+    }
+   ],
+   [
+    13.751,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 44.06,
+     "pstate": "P1",
+     "sm_mhz": 1927.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    14.267,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 40.19,
+     "pstate": "P3",
+     "sm_mhz": 1972.0,
+     "temp_c": 46.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 32.0
+    }
+   ],
+   [
+    14.768,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 35.84,
+     "pstate": "P3",
+     "sm_mhz": 1785.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 24.0
+    }
+   ],
+   [
+    15.283,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 37.45,
+     "pstate": "P3",
+     "sm_mhz": 1770.0,
+     "temp_c": 42.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 31.0
+    }
+   ],
+   [
+    15.785,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 35.43,
+     "pstate": "P1",
+     "sm_mhz": 1957.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    16.3,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 36.08,
+     "pstate": "P1",
+     "sm_mhz": 1935.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 4.0
+    }
+   ],
+   [
+    16.817,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 34.52,
+     "pstate": "P1",
+     "sm_mhz": 1867.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    17.334,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 38.57,
+     "pstate": "P3",
+     "sm_mhz": 1897.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 40.0
+    }
+   ],
+   [
+    17.85,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 38.14,
+     "pstate": "P1",
+     "sm_mhz": 1905.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 21.0
+    }
+   ],
+   [
+    18.367,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 38.27,
+     "pstate": "P3",
+     "sm_mhz": 1792.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 33.0
+    }
+   ],
+   [
+    18.868,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 35.5,
+     "pstate": "P3",
+     "sm_mhz": 1762.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    19.384,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 39.29,
+     "pstate": "P3",
+     "sm_mhz": 1695.0,
+     "temp_c": 42.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 42.0
+    }
+   ],
+   [
+    19.885,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 36.94,
+     "pstate": "P3",
+     "sm_mhz": 1597.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    20.4,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 34.35,
+     "pstate": "P3",
+     "sm_mhz": 1567.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    20.902,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 30.94,
+     "pstate": "P3",
+     "sm_mhz": 1545.0,
+     "temp_c": 38.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    21.417,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 33.48,
+     "pstate": "P3",
+     "sm_mhz": 1612.0,
+     "temp_c": 43.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 28.0
+    }
+   ],
+   [
+    21.918,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 37.13,
+     "pstate": "P3",
+     "sm_mhz": 1605.0,
+     "temp_c": 47.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 32.0
+    }
+   ],
+   [
+    22.434,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 40.11,
+     "pstate": "P1",
+     "sm_mhz": 1987.0,
+     "temp_c": 47.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 39.0
+    }
+   ],
+   [
+    22.951,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 38.66,
+     "pstate": "P3",
+     "sm_mhz": 1777.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 11.0
+    }
+   ],
+   [
+    23.467,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 34.74,
+     "pstate": "P3",
+     "sm_mhz": 1717.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 4.0
+    }
+   ],
+   [
+    23.968,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 32.68,
+     "pstate": "P3",
+     "sm_mhz": 1635.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    24.484,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 34.6,
+     "pstate": "P3",
+     "sm_mhz": 1725.0,
+     "temp_c": 42.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    24.985,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 34.72,
+     "pstate": "P3",
+     "sm_mhz": 1530.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 37.0
+    }
+   ],
+   [
+    25.501,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 13801.0,
+     "power_limit_w": 180.0,
+     "power_w": 39.23,
+     "pstate": "P1",
+     "sm_mhz": 2062.0,
+     "temp_c": 47.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 31.0
+    }
+   ],
+   [
+    26.017,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 37.0,
+     "pstate": "P3",
+     "sm_mhz": 1837.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 41.0
+    }
+   ],
+   [
+    26.518,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 33.97,
+     "pstate": "P3",
+     "sm_mhz": 1650.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 26.0
+    }
+   ],
+   [
+    27.034,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 32.1,
+     "pstate": "P3",
+     "sm_mhz": 1717.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 16.0
+    }
+   ],
+   [
+    27.535,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 38.19,
+     "pstate": "P3",
+     "sm_mhz": 1567.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 8.0
+    }
+   ],
+   [
+    28.051,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 34.49,
+     "pstate": "P3",
+     "sm_mhz": 1665.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 14.0
+    }
+   ],
+   [
+    28.568,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 34.81,
+     "pstate": "P3",
+     "sm_mhz": 1522.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 43.0
+    }
+   ],
+   [
+    29.068,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 32.02,
+     "pstate": "P3",
+     "sm_mhz": 1387.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    29.585,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 35.82,
+     "pstate": "P3",
+     "sm_mhz": 1552.0,
+     "temp_c": 46.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 33.0
+    }
+   ],
+   [
+    30.102,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 34.81,
+     "pstate": "P3",
+     "sm_mhz": 1275.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 31.0
+    }
+   ],
+   [
+    30.617,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 33.26,
+     "pstate": "P3",
+     "sm_mhz": 1357.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 18.0
+    }
+   ],
+   [
+    31.118,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 32.96,
+     "pstate": "P3",
+     "sm_mhz": 1297.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    31.635,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 31.14,
+     "pstate": "P3",
+     "sm_mhz": 1312.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    32.151,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 32.66,
+     "pstate": "P3",
+     "sm_mhz": 1125.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 19.0
+    }
+   ],
+   [
+    32.652,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 29.18,
+     "pstate": "P3",
+     "sm_mhz": 1200.0,
+     "temp_c": 44.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 29.0
+    }
+   ],
+   [
+    33.168,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 24.88,
+     "pstate": "P3",
+     "sm_mhz": 1087.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 4.0
+    }
+   ],
+   [
+    33.684,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 27.22,
+     "pstate": "P3",
+     "sm_mhz": 1042.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 22.0
+    }
+   ],
+   [
+    34.185,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 27.92,
+     "pstate": "P3",
+     "sm_mhz": 1147.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000004",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    34.701,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 29.55,
+     "pstate": "P3",
+     "sm_mhz": 1140.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    35.218,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.67,
+     "pstate": "P3",
+     "sm_mhz": 1095.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000004",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    35.719,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.75,
+     "pstate": "P3",
+     "sm_mhz": 1102.0,
+     "temp_c": 45.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    36.234,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.92,
+     "pstate": "P3",
+     "sm_mhz": 975.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 13.0
+    }
+   ],
+   [
+    36.736,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.24,
+     "pstate": "P3",
+     "sm_mhz": 1155.0,
+     "temp_c": 43.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    37.251,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 27.38,
+     "pstate": "P3",
+     "sm_mhz": 1192.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 22.0
+    }
+   ],
+   [
+    37.752,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.1,
+     "pstate": "P3",
+     "sm_mhz": 1125.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    38.269,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 29.95,
+     "pstate": "P3",
+     "sm_mhz": 1237.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 22.0
+    }
+   ],
+   [
+    38.785,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.5,
+     "pstate": "P3",
+     "sm_mhz": 997.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    39.285,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 25.65,
+     "pstate": "P3",
+     "sm_mhz": 1012.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    39.801,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 24.84,
+     "pstate": "P3",
+     "sm_mhz": 922.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    40.301,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.44,
+     "pstate": "P3",
+     "sm_mhz": 1297.0,
+     "temp_c": 44.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 22.0
+    }
+   ],
+   [
+    40.818,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 29.12,
+     "pstate": "P3",
+     "sm_mhz": 1035.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    41.319,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 27.66,
+     "pstate": "P3",
+     "sm_mhz": 975.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 20.0
+    }
+   ],
+   [
+    41.834,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 24.85,
+     "pstate": "P3",
+     "sm_mhz": 945.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    42.335,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 24.96,
+     "pstate": "P3",
+     "sm_mhz": 1087.0,
+     "temp_c": 44.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    42.852,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.34,
+     "pstate": "P3",
+     "sm_mhz": 1065.0,
+     "temp_c": 42.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 19.0
+    }
+   ],
+   [
+    43.368,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.59,
+     "pstate": "P3",
+     "sm_mhz": 945.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 20.0
+    }
+   ],
+   [
+    43.885,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 25.34,
+     "pstate": "P3",
+     "sm_mhz": 975.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 19.0
+    }
+   ],
+   [
+    44.386,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.85,
+     "pstate": "P3",
+     "sm_mhz": 1117.0,
+     "temp_c": 43.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    44.902,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.72,
+     "pstate": "P3",
+     "sm_mhz": 1267.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    45.418,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 27.95,
+     "pstate": "P3",
+     "sm_mhz": 1035.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 17.0
+    }
+   ],
+   [
+    45.934,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.51,
+     "pstate": "P3",
+     "sm_mhz": 1095.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 19.0
+    }
+   ],
+   [
+    46.438,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.35,
+     "pstate": "P3",
+     "sm_mhz": 1155.0,
+     "temp_c": 44.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 20.0
+    }
+   ],
+   [
+    46.952,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.07,
+     "pstate": "P3",
+     "sm_mhz": 967.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    47.469,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 25.16,
+     "pstate": "P3",
+     "sm_mhz": 937.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 24.0
+    }
+   ],
+   [
+    47.985,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 25.88,
+     "pstate": "P3",
+     "sm_mhz": 877.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    48.486,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.86,
+     "pstate": "P3",
+     "sm_mhz": 1230.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 22.0
+    }
+   ],
+   [
+    49.002,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 29.17,
+     "pstate": "P3",
+     "sm_mhz": 1132.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000004",
+     "util_pct": 18.0
+    }
+   ],
+   [
+    49.518,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.11,
+     "pstate": "P3",
+     "sm_mhz": 1035.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    50.035,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.3,
+     "pstate": "P3",
+     "sm_mhz": 1050.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 23.0
+    }
+   ],
+   [
+    50.536,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 27.92,
+     "pstate": "P3",
+     "sm_mhz": 1072.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 25.0
+    }
+   ],
+   [
+    51.052,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.14,
+     "pstate": "P3",
+     "sm_mhz": 1012.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    51.569,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 27.95,
+     "pstate": "P3",
+     "sm_mhz": 1035.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 5.0
+    }
+   ],
+   [
+    52.085,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 26.85,
+     "pstate": "P3",
+     "sm_mhz": 960.0,
+     "temp_c": 41.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 24.0
+    }
+   ],
+   [
+    52.586,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.27,
+     "pstate": "P3",
+     "sm_mhz": 1237.0,
+     "temp_c": 46.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 20.0
+    }
+   ],
+   [
+    53.101,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 30.54,
+     "pstate": "P3",
+     "sm_mhz": 1117.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 12.0
+    }
+   ],
+   [
+    53.602,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 29.29,
+     "pstate": "P3",
+     "sm_mhz": 1155.0,
+     "temp_c": 42.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 19.0
+    }
+   ],
+   [
+    54.119,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.62,
+     "pstate": "P3",
+     "sm_mhz": 1102.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    54.635,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 27.45,
+     "pstate": "P3",
+     "sm_mhz": 990.0,
+     "temp_c": 40.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 6.0
+    }
+   ],
+   [
+    55.136,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 28.36,
+     "pstate": "P3",
+     "sm_mhz": 1207.0,
+     "temp_c": 44.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 24.0
+    }
+   ],
+   [
+    55.652,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 29.6,
+     "pstate": "P3",
+     "sm_mhz": 1237.0,
+     "temp_c": 42.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 25.0
+    }
+   ],
+   [
+    56.153,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 21.86,
+     "pstate": "P3",
+     "sm_mhz": 772.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 0.0
+    }
+   ],
+   [
+    56.668,
+    {
+     "display_active": "Enabled",
+     "display_attached": "Yes",
+     "fan_pct": 0.0,
+     "mem_mhz": 7001.0,
+     "power_limit_w": 180.0,
+     "power_w": 15.52,
+     "pstate": "P3",
+     "sm_mhz": 660.0,
+     "temp_c": 39.0,
+     "throttle": "0x0000000000000400",
+     "util_pct": 0.0
+    }
+   ]
   ],
+  "steady": {
+   "display_active": [
+    "Enabled"
+   ],
+   "dominant_pstate": "P3",
+   "mem_mhz": {
+    "max": 7001.0,
+    "mean": 7001.0,
+    "median": 7001.0,
+    "min": 7001.0,
+    "n": 37
+   },
+   "power_w": {
+    "max": 30.54,
+    "mean": 26.988,
+    "median": 27.66,
+    "min": 15.52,
+    "n": 37
+   },
+   "pstates": {
+    "P3": 37
+   },
+   "samples": 37,
+   "sm_mhz": {
+    "max": 1297.0,
+    "mean": 1052.568,
+    "median": 1035.0,
+    "min": 660.0,
+    "n": 37
+   },
+   "span_s": 18.4,
+   "temp_c": {
+    "max": 46.0,
+    "mean": 40.757,
+    "median": 40.0,
+    "min": 39.0,
+    "n": 37
+   },
+   "throttle": [
+    "0x0000000000000004",
+    "0x0000000000000400"
+   ],
+   "util_pct": {
+    "max": 25.0,
+    "mean": 14.784,
+    "median": 19.0,
+    "min": 0.0,
+    "n": 37
+   }
+  },
+  "valid": false,
+  "whole": {
+   "display_active": [
+    "Enabled"
+   ],
+   "dominant_pstate": "P3",
+   "mem_mhz": {
+    "max": 13801.0,
+    "mean": 8642.107,
+    "median": 7001.0,
+    "min": 405.0,
+    "n": 112
+   },
+   "power_w": {
+    "max": 48.27,
+    "mean": 31.952,
+    "median": 31.04,
+    "min": 9.0,
+    "n": 112
+   },
+   "pstates": {
+    "P1": 28,
+    "P3": 83,
+    "P8": 1
+   },
+   "samples": 112,
+   "sm_mhz": {
+    "max": 2850.0,
+    "mean": 1540.714,
+    "median": 1454.5,
+    "min": 562.0,
+    "n": 112
+   },
+   "span_s": 56.63,
+   "temp_c": {
+    "max": 47.0,
+    "mean": 40.286,
+    "median": 40.0,
+    "min": 36.0,
+    "n": 112
+   },
+   "throttle": [
+    "0x0000000000000004",
+    "0x0000000000000400"
+   ],
+   "util_pct": {
+    "max": 97.0,
+    "mean": 18.33,
+    "median": 19.0,
+    "min": 0.0,
+    "n": 112
+   }
+  }
+ },
+ "decode_only_tok_per_s": 1666666.6666666667,
+ "empty_calls": 0,
+ "end_to_end_tok_per_s": 0.01892939126185908,
+ "env": {
+  "GGML_OP_OFFLOAD_MIN_BATCH": "1",
+  "SABAH_CUDA_GRAPH_SEG": "0",
+  "SABAH_LLAMA": "1",
+  "SABAH_LLAMA_DIRECT_IO": "1",
+  "SABAH_LLAMA_HOT_BYTES": "9.8e9",
+  "SABAH_LLAMA_IO_DEPTH": "8",
+  "SABAH_LLAMA_PREFETCH": "0",
+  "SABAH_LLAMA_TRACE": "1",
+  "SABAH_PREFILL_GROUP": "0"
+ },
+ "evictions": 65778,
+ "exit_code": 0,
+ "fill_ms": 52827.9,
+ "hits": 1020285,
+ "id_check": 0,
+ "id_check_fail": 0,
+ "id_check_ok": 0,
+ "id_group_max": 3,
+ "id_reuse": 190,
+ "io_overlap": 4.46,
+ "label": "bv-ref650-2ub",
+ "lookups": 1099830,
+ "machine": {
+  "hags_HwSchMode": "absent (HAGS off)",
+  "nvidia_registry": {},
+  "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
+  "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
+ },
+ "mapped_fallbacks": 0,
+ "memory": {
+  "avail_phys_first_mib": 10380.62109375,
+  "avail_phys_last_mib": 10403.15625,
+  "avail_phys_min_mib": 5492.71875,
+  "process_peak_ws_mib": 4884.89453125,
+  "process_ws_first_mib": 5.09375,
+  "process_ws_last_mib": 0.23828125,
+  "vram_mib_series": [
+   189,
+   302,
+   2030,
+   4286,
+   4286,
+   5000,
+   14412,
+   14414,
+   14414,
+   14414,
+   14411,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14403,
+   14431,
+   14571,
+   14641,
+   14663,
+   14711,
+   14741,
+   14823,
+   14947,
+   14947,
+   14949,
+   15025,
+   15137,
+   15169,
+   15289,
+   15415,
+   15487,
+   15603,
+   15603,
+   15577,
+   15543,
+   15493,
+   15514,
+   15494,
+   15504,
+   15550,
+   15548,
+   15468,
+   15490,
+   15490,
+   15480,
+   15472,
+   15453,
+   15455,
+   15455,
+   15455,
+   15471,
+   15519,
+   15569,
+   15569,
+   15611,
+   15609,
+   15575,
+   15575,
+   15497,
+   15457,
+   15423,
+   15405,
+   15387,
+   15387,
+   15387,
+   15381,
+   15371,
+   15357,
+   15503,
+   15479,
+   15561,
+   15591,
+   15617,
+   15599,
+   15577,
+   15605,
+   15605,
+   15605,
+   15605,
+   15627,
+   15627,
+   15591,
+   15617,
+   15687,
+   15653,
+   15653,
+   15583,
+   15425,
+   15475,
+   15433,
+   15433,
+   15489,
+   15553,
+   15553,
+   15553,
+   15553,
+   15553,
+   15555,
+   15615,
+   15597,
+   10851,
+   178,
+   178
+  ],
+  "vram_peak_mib": 15687,
+  "vram_samples": 113
+ },
+ "misses": 79545,
+ "n_decodes": 0,
+ "overflow": 5491,
+ "phase_fetch_ms": 40393.0,
+ "phase_ids_ms": 2705.7,
+ "phase_prime_ms": 0.0,
+ "phase_ptr_ms": 6.3,
+ "phase_slot_ms": 8707.5,
+ "phase_wait_ms": 39728.2,
+ "prefill": {
+  "bytes": 53759257600,
+  "chunk_bytes": [
+   53759257600
+  ],
+  "chunk_ms": [
+   52827.8503
+  ],
+  "chunks": 1,
+  "ms": 52827.8503
+ },
+ "prefill_bytes": 53759257600,
+ "prefill_chunks": 1,
+ "prefill_ms": 52827.9,
+ "prompt_chars": 2586,
+ "prompt_file": "$WORKSPACE\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\Sabah-MoE-Accelerator\\results\\phase0\\b-eq\\prompt650.txt",
+ "prompt_tokens_count": 780,
+ "read_bytes": 53759257600,
+ "regimes": {
+  "decode_only_tok_per_s": 1666666.6666666667,
+  "decodes": 1,
+  "end_to_end_tok_per_s": 0.01892939126185908,
+  "fill_ms": 52827.9,
+  "warmup": {
+   "mean_ms": 0.0006,
+   "median_ms": 0.0006,
+   "n": 1
+  }
+ },
+ "resident_bytes": 9799744000,
+ "snapshot": {
   "bytes_fetched": 53759257600,
   "calls": 285,
-  "clock_invalid_reason": "steady SM median 1035 MHz < 2400 MHz (min 660, max 1297, pstate P3); steady memory median 7001 MHz < 10000 MHz (the card dropped to a low P-state even if SM was pinned)",
-  "clock_valid": false,
-  "clocks": {
-    "interval_s": 0.5,
-    "min_steady_mem_mhz": 10000.0,
-    "min_steady_sm_mhz": 2400.0,
-    "query": "clocks.sm,clocks.mem,pstate,power.draw,power.limit,temperature.gpu,utilization.gpu,fan.speed,display_active,display_attached,clocks_throttle_reasons.active",
-    "reason": "steady SM median 1035 MHz < 2400 MHz (min 660, max 1297, pstate P3); steady memory median 7001 MHz < 10000 MHz (the card dropped to a low P-state even if SM was pinned)",
-    "samples": [
-      [
-        0.036,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 405.0,
-          "power_limit_w": 180.0,
-          "power_w": 9.0,
-          "pstate": "P8",
-          "sm_mhz": 615.0,
-          "temp_c": 36.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 4.0
-        }
-      ],
-      [
-        0.551,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 9.11,
-          "pstate": "P1",
-          "sm_mhz": 562.0,
-          "temp_c": 36.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 4.0
-        }
-      ],
-      [
-        1.053,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 14.99,
-          "pstate": "P1",
-          "sm_mhz": 2632.0,
-          "temp_c": 37.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 0.0
-        }
-      ],
-      [
-        1.567,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 21.85,
-          "pstate": "P1",
-          "sm_mhz": 2640.0,
-          "temp_c": 37.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 12.0
-        }
-      ],
-      [
-        2.068,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 24.44,
-          "pstate": "P1",
-          "sm_mhz": 2670.0,
-          "temp_c": 37.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 12.0
-        }
-      ],
-      [
-        2.571,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 24.42,
-          "pstate": "P1",
-          "sm_mhz": 2670.0,
-          "temp_c": 37.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 12.0
-        }
-      ],
-      [
-        3.083,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.05,
-          "pstate": "P1",
-          "sm_mhz": 2640.0,
-          "temp_c": 37.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 97.0
-        }
-      ],
-      [
-        3.584,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 31.56,
-          "pstate": "P1",
-          "sm_mhz": 2850.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 16.0
-        }
-      ],
-      [
-        4.085,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 38.83,
-          "pstate": "P1",
-          "sm_mhz": 2850.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 4.0
-        }
-      ],
-      [
-        4.6,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 46.32,
-          "pstate": "P1",
-          "sm_mhz": 2850.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 34.0
-        }
-      ],
-      [
-        5.102,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 48.27,
-          "pstate": "P1",
-          "sm_mhz": 2752.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        5.617,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 43.61,
-          "pstate": "P1",
-          "sm_mhz": 2670.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 15.0
-        }
-      ],
-      [
-        6.133,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 43.63,
-          "pstate": "P1",
-          "sm_mhz": 2662.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        6.634,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 48.13,
-          "pstate": "P1",
-          "sm_mhz": 2655.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 31.0
-        }
-      ],
-      [
-        7.15,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 47.16,
-          "pstate": "P1",
-          "sm_mhz": 2482.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 22.0
-        }
-      ],
-      [
-        7.651,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 45.79,
-          "pstate": "P1",
-          "sm_mhz": 2197.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 27.0
-        }
-      ],
-      [
-        8.167,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 38.46,
-          "pstate": "P1",
-          "sm_mhz": 2025.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        8.668,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 39.91,
-          "pstate": "P1",
-          "sm_mhz": 2032.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 39.0
-        }
-      ],
-      [
-        9.183,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 44.32,
-          "pstate": "P1",
-          "sm_mhz": 1950.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 34.0
-        }
-      ],
-      [
-        9.684,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 41.73,
-          "pstate": "P3",
-          "sm_mhz": 1897.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 15.0
-        }
-      ],
-      [
-        10.2,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 37.89,
-          "pstate": "P1",
-          "sm_mhz": 1912.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        10.701,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 40.74,
-          "pstate": "P3",
-          "sm_mhz": 1867.0,
-          "temp_c": 44.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 32.0
-        }
-      ],
-      [
-        11.217,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 36.26,
-          "pstate": "P3",
-          "sm_mhz": 1732.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 4.0
-        }
-      ],
-      [
-        11.718,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 35.19,
-          "pstate": "P3",
-          "sm_mhz": 1905.0,
-          "temp_c": 44.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 36.0
-        }
-      ],
-      [
-        12.233,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 32.88,
-          "pstate": "P3",
-          "sm_mhz": 1605.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 8.0
-        }
-      ],
-      [
-        12.734,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 36.15,
-          "pstate": "P1",
-          "sm_mhz": 2077.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 40.0
-        }
-      ],
-      [
-        13.25,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 44.4,
-          "pstate": "P1",
-          "sm_mhz": 2070.0,
-          "temp_c": 44.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 32.0
-        }
-      ],
-      [
-        13.751,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 44.06,
-          "pstate": "P1",
-          "sm_mhz": 1927.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        14.267,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 40.19,
-          "pstate": "P3",
-          "sm_mhz": 1972.0,
-          "temp_c": 46.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 32.0
-        }
-      ],
-      [
-        14.768,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 35.84,
-          "pstate": "P3",
-          "sm_mhz": 1785.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 24.0
-        }
-      ],
-      [
-        15.283,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 37.45,
-          "pstate": "P3",
-          "sm_mhz": 1770.0,
-          "temp_c": 42.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 31.0
-        }
-      ],
-      [
-        15.785,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 35.43,
-          "pstate": "P1",
-          "sm_mhz": 1957.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        16.3,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 36.08,
-          "pstate": "P1",
-          "sm_mhz": 1935.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 4.0
-        }
-      ],
-      [
-        16.817,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 34.52,
-          "pstate": "P1",
-          "sm_mhz": 1867.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        17.334,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 38.57,
-          "pstate": "P3",
-          "sm_mhz": 1897.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 40.0
-        }
-      ],
-      [
-        17.85,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 38.14,
-          "pstate": "P1",
-          "sm_mhz": 1905.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 21.0
-        }
-      ],
-      [
-        18.367,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 38.27,
-          "pstate": "P3",
-          "sm_mhz": 1792.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 33.0
-        }
-      ],
-      [
-        18.868,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 35.5,
-          "pstate": "P3",
-          "sm_mhz": 1762.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        19.384,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 39.29,
-          "pstate": "P3",
-          "sm_mhz": 1695.0,
-          "temp_c": 42.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 42.0
-        }
-      ],
-      [
-        19.885,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 36.94,
-          "pstate": "P3",
-          "sm_mhz": 1597.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        20.4,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 34.35,
-          "pstate": "P3",
-          "sm_mhz": 1567.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        20.902,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 30.94,
-          "pstate": "P3",
-          "sm_mhz": 1545.0,
-          "temp_c": 38.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        21.417,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 33.48,
-          "pstate": "P3",
-          "sm_mhz": 1612.0,
-          "temp_c": 43.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 28.0
-        }
-      ],
-      [
-        21.918,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 37.13,
-          "pstate": "P3",
-          "sm_mhz": 1605.0,
-          "temp_c": 47.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 32.0
-        }
-      ],
-      [
-        22.434,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 40.11,
-          "pstate": "P1",
-          "sm_mhz": 1987.0,
-          "temp_c": 47.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 39.0
-        }
-      ],
-      [
-        22.951,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 38.66,
-          "pstate": "P3",
-          "sm_mhz": 1777.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 11.0
-        }
-      ],
-      [
-        23.467,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 34.74,
-          "pstate": "P3",
-          "sm_mhz": 1717.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 4.0
-        }
-      ],
-      [
-        23.968,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 32.68,
-          "pstate": "P3",
-          "sm_mhz": 1635.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        24.484,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 34.6,
-          "pstate": "P3",
-          "sm_mhz": 1725.0,
-          "temp_c": 42.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        24.985,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 34.72,
-          "pstate": "P3",
-          "sm_mhz": 1530.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 37.0
-        }
-      ],
-      [
-        25.501,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 13801.0,
-          "power_limit_w": 180.0,
-          "power_w": 39.23,
-          "pstate": "P1",
-          "sm_mhz": 2062.0,
-          "temp_c": 47.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 31.0
-        }
-      ],
-      [
-        26.017,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 37.0,
-          "pstate": "P3",
-          "sm_mhz": 1837.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 41.0
-        }
-      ],
-      [
-        26.518,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 33.97,
-          "pstate": "P3",
-          "sm_mhz": 1650.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 26.0
-        }
-      ],
-      [
-        27.034,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 32.1,
-          "pstate": "P3",
-          "sm_mhz": 1717.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 16.0
-        }
-      ],
-      [
-        27.535,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 38.19,
-          "pstate": "P3",
-          "sm_mhz": 1567.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 8.0
-        }
-      ],
-      [
-        28.051,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 34.49,
-          "pstate": "P3",
-          "sm_mhz": 1665.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 14.0
-        }
-      ],
-      [
-        28.568,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 34.81,
-          "pstate": "P3",
-          "sm_mhz": 1522.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 43.0
-        }
-      ],
-      [
-        29.068,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 32.02,
-          "pstate": "P3",
-          "sm_mhz": 1387.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        29.585,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 35.82,
-          "pstate": "P3",
-          "sm_mhz": 1552.0,
-          "temp_c": 46.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 33.0
-        }
-      ],
-      [
-        30.102,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 34.81,
-          "pstate": "P3",
-          "sm_mhz": 1275.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 31.0
-        }
-      ],
-      [
-        30.617,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 33.26,
-          "pstate": "P3",
-          "sm_mhz": 1357.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 18.0
-        }
-      ],
-      [
-        31.118,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 32.96,
-          "pstate": "P3",
-          "sm_mhz": 1297.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        31.635,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 31.14,
-          "pstate": "P3",
-          "sm_mhz": 1312.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        32.151,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 32.66,
-          "pstate": "P3",
-          "sm_mhz": 1125.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 19.0
-        }
-      ],
-      [
-        32.652,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 29.18,
-          "pstate": "P3",
-          "sm_mhz": 1200.0,
-          "temp_c": 44.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 29.0
-        }
-      ],
-      [
-        33.168,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 24.88,
-          "pstate": "P3",
-          "sm_mhz": 1087.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 4.0
-        }
-      ],
-      [
-        33.684,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 27.22,
-          "pstate": "P3",
-          "sm_mhz": 1042.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 22.0
-        }
-      ],
-      [
-        34.185,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 27.92,
-          "pstate": "P3",
-          "sm_mhz": 1147.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000004",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        34.701,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 29.55,
-          "pstate": "P3",
-          "sm_mhz": 1140.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        35.218,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.67,
-          "pstate": "P3",
-          "sm_mhz": 1095.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000004",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        35.719,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.75,
-          "pstate": "P3",
-          "sm_mhz": 1102.0,
-          "temp_c": 45.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        36.234,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.92,
-          "pstate": "P3",
-          "sm_mhz": 975.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 13.0
-        }
-      ],
-      [
-        36.736,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.24,
-          "pstate": "P3",
-          "sm_mhz": 1155.0,
-          "temp_c": 43.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        37.251,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 27.38,
-          "pstate": "P3",
-          "sm_mhz": 1192.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 22.0
-        }
-      ],
-      [
-        37.752,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.1,
-          "pstate": "P3",
-          "sm_mhz": 1125.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        38.269,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 29.95,
-          "pstate": "P3",
-          "sm_mhz": 1237.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 22.0
-        }
-      ],
-      [
-        38.785,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.5,
-          "pstate": "P3",
-          "sm_mhz": 997.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        39.285,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 25.65,
-          "pstate": "P3",
-          "sm_mhz": 1012.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        39.801,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 24.84,
-          "pstate": "P3",
-          "sm_mhz": 922.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        40.301,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.44,
-          "pstate": "P3",
-          "sm_mhz": 1297.0,
-          "temp_c": 44.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 22.0
-        }
-      ],
-      [
-        40.818,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 29.12,
-          "pstate": "P3",
-          "sm_mhz": 1035.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        41.319,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 27.66,
-          "pstate": "P3",
-          "sm_mhz": 975.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 20.0
-        }
-      ],
-      [
-        41.834,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 24.85,
-          "pstate": "P3",
-          "sm_mhz": 945.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        42.335,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 24.96,
-          "pstate": "P3",
-          "sm_mhz": 1087.0,
-          "temp_c": 44.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        42.852,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.34,
-          "pstate": "P3",
-          "sm_mhz": 1065.0,
-          "temp_c": 42.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 19.0
-        }
-      ],
-      [
-        43.368,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.59,
-          "pstate": "P3",
-          "sm_mhz": 945.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 20.0
-        }
-      ],
-      [
-        43.885,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 25.34,
-          "pstate": "P3",
-          "sm_mhz": 975.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 19.0
-        }
-      ],
-      [
-        44.386,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.85,
-          "pstate": "P3",
-          "sm_mhz": 1117.0,
-          "temp_c": 43.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        44.902,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.72,
-          "pstate": "P3",
-          "sm_mhz": 1267.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        45.418,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 27.95,
-          "pstate": "P3",
-          "sm_mhz": 1035.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 17.0
-        }
-      ],
-      [
-        45.934,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.51,
-          "pstate": "P3",
-          "sm_mhz": 1095.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 19.0
-        }
-      ],
-      [
-        46.438,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.35,
-          "pstate": "P3",
-          "sm_mhz": 1155.0,
-          "temp_c": 44.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 20.0
-        }
-      ],
-      [
-        46.952,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.07,
-          "pstate": "P3",
-          "sm_mhz": 967.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        47.469,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 25.16,
-          "pstate": "P3",
-          "sm_mhz": 937.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 24.0
-        }
-      ],
-      [
-        47.985,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 25.88,
-          "pstate": "P3",
-          "sm_mhz": 877.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        48.486,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.86,
-          "pstate": "P3",
-          "sm_mhz": 1230.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 22.0
-        }
-      ],
-      [
-        49.002,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 29.17,
-          "pstate": "P3",
-          "sm_mhz": 1132.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000004",
-          "util_pct": 18.0
-        }
-      ],
-      [
-        49.518,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.11,
-          "pstate": "P3",
-          "sm_mhz": 1035.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        50.035,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.3,
-          "pstate": "P3",
-          "sm_mhz": 1050.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 23.0
-        }
-      ],
-      [
-        50.536,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 27.92,
-          "pstate": "P3",
-          "sm_mhz": 1072.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 25.0
-        }
-      ],
-      [
-        51.052,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.14,
-          "pstate": "P3",
-          "sm_mhz": 1012.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        51.569,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 27.95,
-          "pstate": "P3",
-          "sm_mhz": 1035.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 5.0
-        }
-      ],
-      [
-        52.085,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 26.85,
-          "pstate": "P3",
-          "sm_mhz": 960.0,
-          "temp_c": 41.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 24.0
-        }
-      ],
-      [
-        52.586,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.27,
-          "pstate": "P3",
-          "sm_mhz": 1237.0,
-          "temp_c": 46.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 20.0
-        }
-      ],
-      [
-        53.101,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 30.54,
-          "pstate": "P3",
-          "sm_mhz": 1117.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 12.0
-        }
-      ],
-      [
-        53.602,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 29.29,
-          "pstate": "P3",
-          "sm_mhz": 1155.0,
-          "temp_c": 42.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 19.0
-        }
-      ],
-      [
-        54.119,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.62,
-          "pstate": "P3",
-          "sm_mhz": 1102.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        54.635,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 27.45,
-          "pstate": "P3",
-          "sm_mhz": 990.0,
-          "temp_c": 40.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 6.0
-        }
-      ],
-      [
-        55.136,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 28.36,
-          "pstate": "P3",
-          "sm_mhz": 1207.0,
-          "temp_c": 44.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 24.0
-        }
-      ],
-      [
-        55.652,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 29.6,
-          "pstate": "P3",
-          "sm_mhz": 1237.0,
-          "temp_c": 42.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 25.0
-        }
-      ],
-      [
-        56.153,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 21.86,
-          "pstate": "P3",
-          "sm_mhz": 772.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 0.0
-        }
-      ],
-      [
-        56.668,
-        {
-          "display_active": "Enabled",
-          "display_attached": "Yes",
-          "fan_pct": 0.0,
-          "mem_mhz": 7001.0,
-          "power_limit_w": 180.0,
-          "power_w": 15.52,
-          "pstate": "P3",
-          "sm_mhz": 660.0,
-          "temp_c": 39.0,
-          "throttle": "0x0000000000000400",
-          "util_pct": 0.0
-        }
-      ]
-    ],
-    "steady": {
-      "display_active": [
-        "Enabled"
-      ],
-      "dominant_pstate": "P3",
-      "mem_mhz": {
-        "max": 7001.0,
-        "mean": 7001.0,
-        "median": 7001.0,
-        "min": 7001.0,
-        "n": 37
-      },
-      "power_w": {
-        "max": 30.54,
-        "mean": 26.988,
-        "median": 27.66,
-        "min": 15.52,
-        "n": 37
-      },
-      "pstates": {
-        "P3": 37
-      },
-      "samples": 37,
-      "sm_mhz": {
-        "max": 1297.0,
-        "mean": 1052.568,
-        "median": 1035.0,
-        "min": 660.0,
-        "n": 37
-      },
-      "span_s": 18.4,
-      "temp_c": {
-        "max": 46.0,
-        "mean": 40.757,
-        "median": 40.0,
-        "min": 39.0,
-        "n": 37
-      },
-      "throttle": [
-        "0x0000000000000004",
-        "0x0000000000000400"
-      ],
-      "util_pct": {
-        "max": 25.0,
-        "mean": 14.784,
-        "median": 19.0,
-        "min": 0.0,
-        "n": 37
-      }
-    },
-    "valid": false,
-    "whole": {
-      "display_active": [
-        "Enabled"
-      ],
-      "dominant_pstate": "P3",
-      "mem_mhz": {
-        "max": 13801.0,
-        "mean": 8642.107,
-        "median": 7001.0,
-        "min": 405.0,
-        "n": 112
-      },
-      "power_w": {
-        "max": 48.27,
-        "mean": 31.952,
-        "median": 31.04,
-        "min": 9.0,
-        "n": 112
-      },
-      "pstates": {
-        "P1": 28,
-        "P3": 83,
-        "P8": 1
-      },
-      "samples": 112,
-      "sm_mhz": {
-        "max": 2850.0,
-        "mean": 1540.714,
-        "median": 1454.5,
-        "min": 562.0,
-        "n": 112
-      },
-      "span_s": 56.63,
-      "temp_c": {
-        "max": 47.0,
-        "mean": 40.286,
-        "median": 40.0,
-        "min": 36.0,
-        "n": 112
-      },
-      "throttle": [
-        "0x0000000000000004",
-        "0x0000000000000400"
-      ],
-      "util_pct": {
-        "max": 97.0,
-        "mean": 18.33,
-        "median": 19.0,
-        "min": 0.0,
-        "n": 112
-      }
-    }
-  },
-  "decode_only_tok_per_s": 1666666.6666666667,
   "empty_calls": 0,
-  "end_to_end_tok_per_s": 0.01892939126185908,
-  "env": {
-    "GGML_OP_OFFLOAD_MIN_BATCH": "1",
-    "SABAH_CUDA_GRAPH_SEG": "0",
-    "SABAH_LLAMA": "1",
-    "SABAH_LLAMA_DIRECT_IO": "1",
-    "SABAH_LLAMA_HOT_BYTES": "9.8e9",
-    "SABAH_LLAMA_IO_DEPTH": "8",
-    "SABAH_LLAMA_PREFETCH": "0",
-    "SABAH_LLAMA_TRACE": "1",
-    "SABAH_PREFILL_GROUP": "0"
-  },
   "evictions": 65778,
-  "exit_code": 0,
-  "fill_ms": 52827.9,
   "hits": 1020285,
-  "id_check": 0,
-  "id_check_fail": 0,
-  "id_check_ok": 0,
-  "id_group_max": 3,
-  "id_reuse": 190,
-  "io_overlap": 4.46,
-  "label": "bv-ref650-2ub",
   "lookups": 1099830,
-  "machine": {
-    "hags_HwSchMode": "absent (HAGS off)",
-    "nvidia_registry": {},
-    "nvidia_smi": "617.42, 180.00 W, 180.00 W, 200.00 W, Enabled, Yes",
-    "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
-    "power_plan_guid": "381b4222-f694-41f0-9685-ff5bb260df2e"
-  },
-  "mapped_fallbacks": 0,
-  "memory": {
-    "avail_phys_first_mib": 10380.62109375,
-    "avail_phys_last_mib": 10403.15625,
-    "avail_phys_min_mib": 5492.71875,
-    "process_peak_ws_mib": 4884.89453125,
-    "process_ws_first_mib": 5.09375,
-    "process_ws_last_mib": 0.23828125,
-    "vram_mib_series": [
-      189,
-      302,
-      2030,
-      4286,
-      4286,
-      5000,
-      14412,
-      14414,
-      14414,
-      14414,
-      14411,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14403,
-      14431,
-      14571,
-      14641,
-      14663,
-      14711,
-      14741,
-      14823,
-      14947,
-      14947,
-      14949,
-      15025,
-      15137,
-      15169,
-      15289,
-      15415,
-      15487,
-      15603,
-      15603,
-      15577,
-      15543,
-      15493,
-      15514,
-      15494,
-      15504,
-      15550,
-      15548,
-      15468,
-      15490,
-      15490,
-      15480,
-      15472,
-      15453,
-      15455,
-      15455,
-      15455,
-      15471,
-      15519,
-      15569,
-      15569,
-      15611,
-      15609,
-      15575,
-      15575,
-      15497,
-      15457,
-      15423,
-      15405,
-      15387,
-      15387,
-      15387,
-      15381,
-      15371,
-      15357,
-      15503,
-      15479,
-      15561,
-      15591,
-      15617,
-      15599,
-      15577,
-      15605,
-      15605,
-      15605,
-      15605,
-      15627,
-      15627,
-      15591,
-      15617,
-      15687,
-      15653,
-      15653,
-      15583,
-      15425,
-      15475,
-      15433,
-      15433,
-      15489,
-      15553,
-      15553,
-      15553,
-      15553,
-      15553,
-      15555,
-      15615,
-      15597,
-      10851,
-      178,
-      178
-    ],
-    "vram_peak_mib": 15687,
-    "vram_samples": 113
-  },
   "misses": 79545,
-  "n_decodes": 0,
   "overflow": 5491,
-  "phase_fetch_ms": 40393.0,
-  "phase_ids_ms": 2705.7,
-  "phase_prime_ms": 0.0,
-  "phase_ptr_ms": 6.3,
-  "phase_slot_ms": 8707.5,
-  "phase_wait_ms": 39728.2,
-  "prefill": {
-    "bytes": 53759257600,
-    "chunk_bytes": [
-      53759257600
-    ],
-    "chunk_ms": [
-      52827.8503
-    ],
-    "chunks": 1,
-    "ms": 52827.8503
-  },
-  "prefill_bytes": 53759257600,
-  "prefill_chunks": 1,
-  "prefill_ms": 52827.9,
-  "prompt_chars": 2586,
-  "prompt_file": "C:\\Projects\\quantization\\Sabah-MoE-Accelerator\\results\\phase0\\b-eq\\prompt650.txt",
-  "prompt_tokens_count": 780,
-  "read_bytes": 53759257600,
-  "regimes": {
-    "decode_only_tok_per_s": 1666666.6666666667,
-    "decodes": 1,
-    "end_to_end_tok_per_s": 0.01892939126185908,
-    "fill_ms": 52827.9,
-    "warmup": {
-      "mean_ms": 0.0006,
-      "median_ms": 0.0006,
-      "n": 1
-    }
-  },
   "resident_bytes": 9799744000,
-  "snapshot": {
-    "bytes_fetched": 53759257600,
-    "calls": 285,
-    "empty_calls": 0,
-    "evictions": 65778,
-    "hits": 1020285,
-    "lookups": 1099830,
-    "misses": 79545,
-    "overflow": 5491,
-    "resident_bytes": 9799744000,
-    "selfcheck_fail": 0,
-    "selfcheck_k": 0,
-    "selfcheck_max_rel_l2": 0.0,
-    "selfcheck_multi_token": 0,
-    "selfcheck_ok": 0,
-    "selfcheck_slots": [
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0
-    ],
-    "selfcheck_tensors": 0,
-    "sentinel": 0,
-    "tokens": 109983,
-    "verify_fail": 0,
-    "verify_ok": 0
-  },
-  "staging_bytes": 0,
+  "selfcheck_fail": 0,
+  "selfcheck_k": 0,
+  "selfcheck_max_rel_l2": 0.0,
+  "selfcheck_multi_token": 0,
+  "selfcheck_ok": 0,
+  "selfcheck_slots": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "selfcheck_tensors": 0,
+  "sentinel": 0,
   "tokens": 109983,
-  "unbuffered_reads": 79545,
   "verify_fail": 0,
-  "verify_ok": 0,
-  "wall_s": 56.75480794906616,
-  "waves": 10068
+  "verify_ok": 0
+ },
+ "staging_bytes": 0,
+ "tokens": 109983,
+ "unbuffered_reads": 79545,
+ "verify_fail": 0,
+ "verify_ok": 0,
+ "wall_s": 56.75480794906616,
+ "waves": 10068
 }

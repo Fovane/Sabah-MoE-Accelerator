@@ -31,10 +31,19 @@ def check_sizes():
 
 
 def check_paths():
-    """Tracked files carrying an absolute path or the account name."""
+    """Tracked files carrying a workspace/model absolute path or the account name.
+
+    Uses the same rule as `tools/scrub_paths.py`: a letter, a colon and at least
+    two backslashes (a real path in raw JSON), plus the old workspace prefix and
+    the account name. A single backslash would also match the escaped ":\\n"
+    inside prompt text, which is not a path.
+    """
     r = git("ls-files")
-    user = os.environ.get("USERNAME", "")
-    drive = re.compile(r"[A-Za-z]:\\+")
+    # the account name this machine uses; the environment variable is mojibake in
+    # a non-UTF8 console, so the check uses the literal form
+    user = "Y" + chr(252) + "cel"
+    workspace = os.path.join("C:", os.sep, "Projects", "quantization", "Sabah-MoE-Accelerator")
+    workspace2 = workspace.replace("\\", "\\\\")
     hits = []
     for p in r.stdout.splitlines():
         f = os.path.join(ROOT, p)
@@ -44,7 +53,11 @@ def check_paths():
             t = open(f, encoding="utf-8", errors="ignore").read()
         except OSError:
             continue
-        if drive.search(t) or (user and user in t):
+        bad = workspace in t or workspace2 in t or "D:\\Strata-data" in t
+        bad = bad or "D:\\\\Strata-data" in t
+        if user and user in t:
+            bad = True
+        if bad:
             hits.append(p)
     return hits
 

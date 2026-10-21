@@ -20,18 +20,37 @@ import re
 import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLACEHOLDER = "C:\\Projects\\quantization\\Sabah-MoE-Accelerator"
+PLACEHOLDER = "$WORKSPACE"
 DRIVE = "$DRIVE"
 
-DRIVE_RE = re.compile(r"(?<![A-Za-z0-9$.\\])([A-Za-z]):\\\\")
+DRIVE_RE = re.compile(r"(?<![A-Za-z0-9$.\\])([A-Za-z]):\\")
+RE2 = re.compile(r"(?<![A-Za-z0-9$.])([A-Za-z]):\\\\")
 
 
 def scrub_str(s, root):
-    s = s.replace(root, PLACEHOLDER)
-    s = s.replace(root.replace("\\", "/"), PLACEHOLDER)
-    s = DRIVE_RE.sub(DRIVE + "\\\\", s)
+    # Order matters: the doubled-spelling form ("C:\\Projects...", how a path
+    # appears inside a parsed JSON string value) contains the single-spelling
+    # form as a substring, so replacing the single form first would mangle the
+    # doubled one into another path instead of removing it.
+    literal = []
+    # longest / most specific first
+    for sep in ("\\\\\\", "\\\\", "\\"):
+        literal.append("C:" + sep + "Projects" + sep + "quantization" + sep + "Sabah-MoE-Accelerator")
+        literal.append("C:" + sep + "Projects" + sep + "quantization")
+    literal += [root, root.replace("\\", "/"), root.replace("\\", "\\\\"),
+                root.replace("\\", "\\\\\\")]
+    # the model path, on any drive and in any spelling
+    for drive in ("C:", "D:", "E:", "F:"):
+        for sep in ("\\\\\\", "\\\\", "\\"):
+            literal += [drive + sep + "Strata-data",
+                        drive + sep + "Models",
+                        drive + sep + "models"]
+    for form in literal:
+        if form and form in s:
+            s = s.replace(form, PLACEHOLDER)
+    s = re.sub(r"[A-Za-z]:\\\\+", lambda _m: DRIVE + "\\", s)
     user = os.environ.get("USERNAME")
-    if user:
+    if user and user in s:
         s = s.replace(user, "$USER")
     return s
 
@@ -47,17 +66,28 @@ def scrub_value(v, root):
 
 
 def wash(path, root, write):
+    """(was dirty, was rewritten) for one file."""
     try:
         text = open(path, "r", encoding="utf-8", errors="strict").read()
     except (UnicodeDecodeError, OSError):
-        return False
-    if root.lower() not in text.lower() and DRIVE_RE.search(text) is None:
-        return False
+        return False, False
+    # any spelling of a local path: two backslashes (raw JSON) or one (a log),
+    # the workspace prefix, or the model path
+    looks_dirty = (
+        DRIVE_RE.search(text) is not None
+        or RE2.search(text) is not None
+        or root.lower() in text.lower()
+        or "Strata-data" in text
+        or "Sabah-MoE-Accelerator" in text
+        or os.environ.get("USERNAME", "\x00") in text
+    )
+    if not looks_dirty:
+        return False, False
     if path.endswith(".json"):
         try:
             obj = json.loads(text)
         except json.JSONDecodeError:
-            return False
+            return False, False
         new = json.dumps(scrub_value(obj, root), indent=1, ensure_ascii=False) + "\n"
     elif path.endswith(".jsonl"):
         out = []
@@ -76,7 +106,8 @@ def wash(path, root, write):
     if new != text and write:
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(new)
-    return True
+        return True, True
+    return True, False
 
 
 SKIP_PREFIX = ("tools/", "sabah/", "patches/", "docs/")
@@ -88,7 +119,7 @@ def tracked():
     r = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True)
     paths = []
     for p in r.stdout.splitlines():
-        if not p.endswith((".json", ".jsonl", ".log", ".md", ".txt", ".csv", ".tsv")):
+        if not p.endswith((".json", ".jsonl", ".log", ".err", ".md", ".txt", ".csv", ".tsv")):
             continue
         # never scrub anything a tool reads: a placeholder in a build script, a
         # harness default or the launcher breaks them, and the leak they carry
@@ -106,11 +137,16 @@ def main():
     root = os.path.abspath(ROOT)
 
     dirty = []
+    changed = 0
     for f in tracked():
-        if wash(f, root, write=not args.check):
+        was, now = wash(f, root, write=not args.check)
+        if was:
             dirty.append(os.path.relpath(f, ROOT))
-    print(f"scrubbed {len(dirty)} tracked files")
-    for d in dirty:
+        if now:
+            changed += 1
+    verb = "would scrub" if args.check else "scrubbed"
+    print(f"{verb} {len(dirty)} tracked files ({changed} rewritten)")
+    for d in dirty[:20]:
         print("  ", d)
     return 1 if (dirty and args.check) else 0
 

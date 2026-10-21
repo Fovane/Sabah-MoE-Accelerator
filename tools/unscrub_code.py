@@ -49,7 +49,7 @@ def main():
             raw = open(full, "rb").read()
         except OSError:
             continue
-        if b"$DRIVE" not in raw and b"C:\\Projects\\quantization\\Sabah-MoE-Accelerator" not in raw:
+        if b"D:" not in raw and b"C:\\Projects\\quantization\\Sabah-MoE-Accelerator" not in raw:
             continue
         dirty.append(rel)
         restore.append(rel)
