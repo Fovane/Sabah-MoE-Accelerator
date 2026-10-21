@@ -27,13 +27,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
 
 TRACES = {
-    # name -> prompt file (the same two traces item 6 measured)
-    "chat": "results/phase0/b-eq/promptB.txt",
-    "code": "results/phase0/b-eq/prompt8k.txt",
+    # the two traces item 6 measured, with the prompts they used
+    "chat": "results/phase0/item6-chat/main/prompt.txt",
+    "code": "results/phase0/item6-code/main/prompt.txt",
 }
 
 
-def run(label, prompt, tokens, context, slab, seg, batch=2048, ub=2048):
+def run(label, prompt, tokens, context, slab, seg, batch=2048, ub=512):
     cmd = [PY, "tools/phase0_measure.py", "--label", label,
            "--tokens", str(tokens), "--context", str(context),
            "--prompt-file", prompt,
@@ -100,6 +100,8 @@ def main():
     ap.add_argument("--segs", default="48")
     ap.add_argument("--tokens", type=int, default=2048)
     ap.add_argument("--context", type=int, default=131072)
+    ap.add_argument("--batch", type=int, default=2048)
+    ap.add_argument("--ub", type=int, default=512)
     args = ap.parse_args()
 
     rows = []
@@ -109,7 +111,7 @@ def main():
                 seg = None if seg in ("-", "none") else seg
                 label = f"p3-{trace}-{slab.replace('.', '_').replace('e9', 'e9')}-seg{seg}"
                 print(f"[run] {label}", flush=True)
-                d = run(label, TRACES[trace], args.tokens, args.context, slab, seg)
+                d = run(label, TRACES[trace], args.tokens, args.context, slab, seg, args.batch, args.ub)
                 if d is None:
                     print("   FAILED")
                     continue
