@@ -147,6 +147,38 @@ End to end a 256-token answer is 11.2 s + 24.6 s = **7.1 tok/s including the
 fill**, 10.4 tok/s over the decodes alone, 15 tok/s once warm. Full method, phase
 attribution and the per-regime lever table: [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md).
 
+### 128K context, and the segmented CUDA graph (item 4)
+
+At 128K the steady decode is disk-bound again, and the segmented path removes
+GPU-side idle time rather than launch overhead:
+
+| | baseline (SEG=0) | SEG=48 (default) |
+|---|---|---|
+| 128K chat, 2048 steps, tail window (last 256), ms/token | 42.74 | **30.36** |
+| tok/s | 23.40 | **32.93** |
+| VRAM peak | 15745 MiB | 15872 MiB |
+| outputs | reference | byte-identical |
+
+That is N=1, at slab 6.0e9, with the tail window read at a ~3.7K-deep KV. It is
+**not** a filled-128K-context number, and the coding trace does not warm up in
+2048 steps at that slab - see the limitations below. The saving is measured, the
+mechanism is in [`docs/CUDA_GRAPH_SPLIT.md`](docs/CUDA_GRAPH_SPLIT.md).
+
+### Prefill with a wider ubatch (no new algorithm)
+
+A 2048-token chunk read by four 512-token ubatches re-streams the expert pool
+once per ubatch. With the chunk size fixed at 2048 and only the ubatch size
+changed (same prompt, same build, byte-identical routing counters):
+
+| `-ub` | disk bytes for one 2048-token chunk | vs `-ub 512` |
+|---|---|---|
+| 512 (4 ubatches) | **113.0 GB** | - |
+| 1024 (2 ubatches) | **65.9 GB** | **-42%** |
+
+Larger `-ub` moves the same work into one ubatch, so the pool is streamed once
+per chunk instead of once per ubatch. Full sweep, compute buffer, VRAM and
+ms/token per setting: [`REPORT.md`](results/phase0/REPORT.md) section 19.
+
 The warm-up token, phase by phase (differencing `-n 32` minus `-n 8`, i.e. decode
 steps 9..32 — this is the number the README used to quote as *the* rate):
 
@@ -203,6 +235,68 @@ list to attack.
   the 1080 costs 0.454 ms per expert against the disk's 0.45 ms, with no P2P on
   consumer parts and a gen3 x4 link on the 1080. Break-even at a 100% hit rate and
   worse from there ([`docs/SECOND_TIER.md`](docs/SECOND_TIER.md)).
+- **Prefill is the wall for long prompts.** One 2048-token chunk streams 113 GB
+  because the expert pool is read once per ubatch in the chunk; the 128K prompt
+  of item 6 needed ~130 min. A wider `-ub` removes the re-stream (see the table
+  above), and the layer-group prefill that was meant to remove it entirely is
+  **off by default and not fixed** ([`docs/PREFILL_GROUP_MAJOR.md`](docs/PREFILL_GROUP_MAJOR.md)
+  section 6.2 records the root cause: the fused-kernel set changes at the split
+  boundary).
+- **The machine state can double ms/token.** The same decode measured 88.9 ms and
+  58 ms on two runs (REPORT 9); the clock pin that used to remove this needs
+  admin on this machine and is currently refused. Every timed number here was
+  taken with the pin in force, and the harness refuses to call a run valid below
+  2400 MHz steady SM.
+- **Correctness is about bytes served, not model quality.** Byte-identical means
+  the runtime serves exactly what the GGUF contains (`verify_ok`,
+  `id_check`); it is not a perplexity or benchmark comparison, and none is run
+  here.
+- **Layer-group prefill is not shipped.** Off by default, and additionally gated
+  to a single ubatch per `llama_decode` call; see the design note.
+
+## How to reproduce a measured number
+
+One protocol, one command, and it refuses an invalid machine. It prints the
+command for each regime and refuses when the clock is below the floor, another
+process holds the GPU, or the GPU reports shared memory in use:
+
+```bat
+python -m sabah.tools.bench_protocol
+```
+
+```text
+gpu: {'sm_mhz': 2835, 'mem_mhz': 13801, 'pstate': 'P1'}
+processes on the gpu: none
+verdict: CLEAN
+machine is clean; run:
+  python tools/phase0_measure.py --label <name> [--prompt-file PATH] --tokens 2048 --context 131072 ...
+```
+
+The pin commands it prints, and the warning that goes with them:
+
+```bat
+nvidia-smi -lgc 2800,3090        :: SM floor 2800, ceiling left free
+nvidia-smi -lmc 13000,14001      :: memory floor 13000, ceiling left free
+```
+
+Both are reversible (`nvidia-smi -rgc` / `-rmc`) and need admin. Without them the
+card may sit at 585 MHz in P8 and the same decode measures twice the time, so a
+run whose steady SM clock is below 2400 MHz is marked **invalid** by the harness
+and is not evidence.
+
+The regimes, and the command that produces each:
+
+| regime | command shape |
+|---|---|
+| time to first token | `--tokens 32 --prompt Hello --context 131072` |
+| warm-up (first ~128 decodes) | the same run, first 128 steps of `step_ms.f64` |
+| steady / tail window | `--tokens 2048`, tail = last 256 steps of `step_ms.f64` |
+| prefill | per-chunk rows of the driver log, `--flag=-b --flag=2048` |
+
+Each run writes its own directory under `results/phase0/<label>/` with
+`measurement.json` (clocks, the harness's validity verdict, per-chunk bytes and
+ms, regime summary), `step_ms.f64`, `step_bytes.i64`, `step_misses.i64` and the
+outputs used for the byte-identical checks.
 
 ## Hardware and target artifact
 
