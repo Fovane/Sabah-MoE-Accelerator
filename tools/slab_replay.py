@@ -175,7 +175,14 @@ class PerLayer:
 
 
 def belady(trace, cap):
-    """Offline optimum: evict the resident entry whose next use is furthest away."""
+    """Offline optimum: evict the resident entry used furthest in the future.
+
+    O(n log n) with a lazy heap: pushed entries may be stale, so the eviction
+    loop pops until it finds one whose stored next use still matches the
+    current one. Anything O(n*cap) does not finish on a 2.9M-access trace.
+    """
+    import heapq
+
     n = len(trace)
     next_use = [0] * n
     last = {}
@@ -184,20 +191,24 @@ def belady(trace, cap):
         next_use[i] = last.get(k, n)
         last[k] = i
 
-    resident = set()
-    heap_next = {}
+    resident = {}   # key -> its current next-use position
+    heap = []       # (-next_use, key), lazy
     misses = 0
     for i, k in enumerate(trace):
+        cur = next_use[i]
         if k in resident:
-            heap_next[k] = next_use[i]
+            resident[k] = cur
+            heapq.heappush(heap, (-cur, k))
             continue
         misses += 1
         if len(resident) >= cap:
-            victim = max(resident, key=lambda x: heap_next[x])
-            resident.discard(victim)
-            del heap_next[victim]
-        resident.add(k)
-        heap_next[k] = next_use[i]
+            while heap:
+                neg, vk = heapq.heappop(heap)
+                if vk in resident and resident[vk] == -neg:
+                    del resident[vk]
+                    break
+        resident[k] = cur
+        heapq.heappush(heap, (-cur, k))
     return misses
 
 

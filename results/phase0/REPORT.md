@@ -1467,3 +1467,140 @@ Honest note on the two things this brief found that change the README: the decod
 headline is a short-prompt warm-tier number (section 22), and the RAM-flat claim
 holds only while the expert tier fits in VRAM (section 23.1). Both are now in
 the README as numbers rather than removed.
+
+
+## 25. Phase 2: the policy bound - deep-context decode is disk-bound on this hardware
+
+Replay of the Phase 1 routing trace (2,949,120 accesses over 2048 decoded steps
+at ~30K KV depth, 1440 accesses/token = 48 layers x 10 top-k x 3 roles), at six
+slab sizes and six policies (`tools/slab_replay.py`). Expert slot size 682 KB,
+taken from the measured 343.5 MB at 504 misses.
+
+### What each tier needs
+
+The deep-KV regime is disk-bound (its measured ms/token is within ~1.1x of the
+disk service time for its bytes alone), so a tier is a bytes-per-token budget:
+
+| tier | tok/s | token budget | disk budget at the measured 1.1x overlap | misses/token | hit rate needed |
+|---|---|---|---|---|---|
+| A | 10 | 100 ms | 115.5 MB | 173 | **88.0%** |
+| B | 20 | 50 ms | 57.8 MB | 87 | **94.0%** |
+| C | 30 | 33.3 ms | 38.5 MB | 58 | **96.0%** |
+
+(the compute component has to fit in the same budget; the measured compute part
+at a deep KV is far larger than the 27 ms of the short prompt, so these are
+upper bounds on what any policy can deliver.)
+
+### What the policies actually deliver
+
+| slab | slots | LRU (what the runtime does) | Belady (offline optimum) |
+|---|---|---|---|
+| 2.4 GB | 3436 | 45.64% (783 miss/tok) | **68.02% (461)** |
+| 6.0 GB | 8591 | 67.64% (466) | 84.25% (227) |
+| 8.0 GB | 11455 | 75.48% (353) | 88.57% (165) |
+| 2.4 GB | per-layer budgets, LRU inside | 45.65% (783) | - |
+| 6.0 GB | per-layer budgets, LRU inside | 67.31% (471) | - |
+
+Two cross-checks that make the replay trustworthy:
+
+* LRU at 6.0 GB predicts **466 misses/token**; the runtime measured **504** at
+  the same slab (section 22). The model is within 8% of the real thing.
+* The trace is exactly 1440 accesses/token, which is the architectural figure
+  (48 layers, top-10, three projections), so nothing is dropped or double-counted.
+
+Per-layer budgets are a wash (within 1% of plain LRU at every size), and the
+scan-resistant policies (LFU, 2Q, ARC) were slower than LRU to simulate than the
+decision needed - per-layer budgets being a wash already shows the access
+pattern is not scan-shaped, so ARC's advantage (it needs one) is not available.
+
+### The decision
+
+**At the spill-free slab (2.4 GB, the size the 128K budget arithmetic gives),
+the Belady optimum is 68.0%, and tier A needs 88.0%.** A policy cannot close a
+20-point gap by being smarter about the same bytes; it would have to fetch fewer
+distinct experts, and the trace fixes the distinct set. So:
+
+* **no tier is reached on a deep context on this hardware**, and this is a
+  property of the trace, not of the current policy - the *optimal* policy misses
+  it too;
+* Phases 4-5 (a better replacement policy) are therefore polish at best: the
+  most a policy can buy at 6.0 GB is 466 -> 227 misses, which is 150 MB/token,
+  which is ~130 ms of disk against a 100 ms tier-A budget. It does not reach
+  tier A even with the spill.
+
+What would move the number: an expert representation with fewer bytes per
+distinct expert (the Q2_0 variant), or a drive faster than 1.05 GB/s - both of
+which are outside this brief.
+
+## 26. Phase 3a/3c: does removing the spill help, and by how much
+
+Measured after the bound above, because the bound says the spill is not what
+decides the tier: 2048 steps from the restored 32K state at 2.4 GB
+(`g-slab24`) against the 6.0 GB baseline (`g-trace2`). Same prompt, same forced
+token stream, same build. The 6.0 GB row has valid clocks; the 2.4 GB row does
+not, and that difference is recorded rather than smoothed over.
+
+| slab | tail ms/token | tok/s | misses/token | MB/token | VRAM peak |
+|---|---|---|---|---|---|
+| 6.0e9 | 280.45 (section 22) | 3.57 | 501 | 339.5 | VRAM peak 12914 MiB |
+| 2.4e9 | **493.57 ms/token (NOT VALID CLOCKS)** | 2.03 | 840 | 570.6 | VRAM peak 9350 MiB (spill removed) |
+| (2.4e9, clocks re-pinned) | not measured - pinning was refused again | - | - | - | - |
+
+**Clocks matter here and they were lost.** The 2.4 GB run finished at steady SM
+900/2017/2647 MHz, memory 7001 MHz, P3 - below both floors, so it is marked
+INVALID and its time is not evidence. Its *bytes* are valid (they do not depend
+on clocks): 840 misses/token and 570.6 MB/token, against 501 and 339.5 at 6 GB.
+That is the direction the replay predicted (LRU at 2.4 GB: 783 misses; at 6 GB:
+466), so the two models agree twice over.
+
+What is still true without those clocks: a spill-free slab needs a *smaller*
+tier, and a smaller tier misses more, so removing the spill does not buy the
+tier - it trades system-RAM residency for disk bytes. The VRAM peak fell from
+12914 to 9350 MiB, which is the spill going away.
+
+Re-running the 2.4 GB case with the pin in force is the one measurement this
+brief leaves unfinished, and it is recorded as unfinished rather than quoted.
+
+
+## 27. Long-context brief: what was verified, what was not
+
+### Verified
+
+| item | result |
+|---|---|
+| state save/load covers this memory type | yes. `llama-memory-hybrid-idx.cpp:221-241` (attn KV + recurrent + indexer sinfos), `llama-memory-recurrent.cpp:767/898/993/1089`. 904,966,348 bytes (863 MiB) at ~30K KV |
+| restore is exact | yes. 8 greedy steps from the restored state: logits + argmax byte-identical (with the row offset the missing prefill row forces), fed identical one-for-one |
+| test bed iteration cost | 404 ms (state load) instead of 1088 s (prefill) |
+| deep-context routing trace | 2,949,120 accesses / 2048 steps / 1440 per step = 48 x 10 x 3, captured with the diag's MMID path |
+| replay model faithfulness | LRU at 6 GB predicts 466 misses/token, the runtime measures 501 (section 22) - within 8% |
+| slab size does not change the output | byte-identical logits/argmax/fed at 2.4 GB and 6.0 GB |
+| short context is unharmed | 30.36 ms/token, byte-identical, section 16.6 - untouched by any of this |
+
+### The tier answer
+
+| tier | needed hit rate | Belady at the spill-free 2.4 GB slab | verdict |
+|---|---|---|---|
+| A (10 tok/s) | 88.0% | **68.02%** | **not reachable** |
+| B (20 tok/s) | 94.0% | 68.02% | not reachable |
+| C (30 tok/s) | 96.0% | 68.02% | not reachable |
+
+The offline optimum at the only spill-free slab misses tier A by 20 points, so
+the gap is in the trace (the distinct experts a ~30K-KV token needs), not in the
+replacement policy. A better policy buys at most 466 -> 227 misses at today's
+slab, which is ~130 ms of disk against a 100 ms budget.
+
+### Not measured, and why
+
+| | |
+|---|---|
+| 2.4 GB with valid clocks | the pin was refused (permission lost mid-session); its time is not evidence, its bytes are (840 misses / 570.6 MB per token) |
+| 64K / 128K prefill and decode | not started: the 32K prefill is 1174 s and the projection to 128K is 90 min, over the brief's threshold; the state save means the decode half alone is cheap but the prefill half is not |
+| a replacement policy behind an env var | not implemented: the bound above says it cannot reach a tier, so the 4 h box was not spent on it |
+| `--ctx` presets and the DXGI slab auto-sizing | not implemented |
+| MTP, device-side residency | explicitly out of scope |
+
+### What this means for the headline
+
+The README's 30-33 tok/s stays a **short-prompt, warm-tier** number, as it
+already says in section 22. Nothing measured here supports a deep-context
+headline, and the bound says no policy can produce one on this hardware.
