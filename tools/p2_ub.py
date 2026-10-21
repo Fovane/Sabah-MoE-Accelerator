@@ -52,9 +52,23 @@ def run(label, prompt, ub, tokens, context, slab, batch=2048):
 
     cl = rec.get("clocks") or {}
     st = cl.get("steady", {}) or {}
+
+    # Shared Usage: the OS part of the GPU memory, sampled while the run went.
+    # 0 means nothing spilled into system RAM, which is the contract.
+    shared = None
+    try:
+        r2 = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total,memory.shared",
+             "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=20)
+        parts = [x.strip() for x in r2.stdout.strip().splitlines()[0].split(",")]
+        shared = int(parts[2]) if len(parts) >= 3 else None
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        pass
+
     return {
         "ub": ub, "slab": slab,
         "compute_buffer_mib": cbuf,
+        "shared_mib": shared,
         "vram_peak_mib": max(rec.get("memory", {}).get("vram_mib_series") or [0]),
         "ws_peak_mib": rec.get("memory", {}).get("process_peak_ws_mib"),
         "avail_min_mib": rec.get("memory", {}).get("avail_phys_min_mib"),
@@ -99,17 +113,18 @@ def main():
         return 1
     base = min(out)
 
-    print("\n-ub | compute buf MiB | VRAM peak | WS peak | avail min | prefill s | disk GB | "
+    print("\n-ub | compute buf MiB | VRAM peak | Shared | WS peak | avail min | prefill s | disk GB | "
           "chunks (s, GB) | decode vs -ub %d | ms/tok | clocks" % base)
-    print("----+-----------------+-----------+---------+-----------+-----------+---------+"
+    print("----+-----------------+-----------+--------+---------+-----------+-----------+---------+"
           "---------------+-------------------+--------+--------")
     for ub in sorted(out):
         d = out[ub]
         same = "IDENTICAL" if d["logits"] == out[base]["logits"] else "DIFF"
         chunks = ",".join(f"{m}s/{g}GB" for m, g in zip(d["chunk_ms"], d["chunk_gb"]))
         print(f"{ub:4d}| {str(d['compute_buffer_mib']):>15} | {d['vram_peak_mib']:>9} | "
-              f"{d['ws_peak_mib']:>7.0f} | {d['avail_min_mib']:>9.0f} | {d['prefill_s']:>9.1f} | "
-              f"{d['prefill_gb']:>7.1f} | {chunks:>13} | {same:>17} | {d['ms_per_tok']:>6.1f} | "
+              f"{str(d['shared_mib']):>6} | {d['ws_peak_mib']:>7.0f} | {d['avail_min_mib']:>9.0f} | "
+              f"{d['prefill_s']:>9.1f} | {d['prefill_gb']:>7.1f} | {chunks:>13} | {same:>17} | "
+              f"{d['ms_per_tok']:>6.1f} | "
               f"{'VALID' if d['clock_valid'] else 'INVALID'} SM {d['sm_median']} mem {d['mem_median']} {d['pstate']}")
     print("\nclock reason where INVALID:")
     for ub in sorted(out):

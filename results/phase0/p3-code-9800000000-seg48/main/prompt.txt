@@ -1,0 +1,97 @@
+Repo: sabah (private), branch phase-d-clock-hygiene
+Language: C++17 / CUDA 12.8 / CMake, single GPU (RTX 5060 Ti, sm_120)
+
+The following files are in the working tree.
+
+--- src/tier.cpp ---------------------------------------------------------------
+Tier::Tier(size_t bytes, const Pool& pool) : pool_(pool) {
+    const size_t obj = pool_.object_bytes();
+    slots_.resize(bytes / obj);
+    for (auto& s : slots_) s.state = Slot::Empty;
+}
+
+const void* Tier::lookup(uint32_t layer, uint32_t expert) {
+    const Key k{layer, expert};
+    auto it = map_.find(k);
+    if (it == map_.end()) {
+        ++stats_.misses;
+        return nullptr;
+    }
+    ++stats_.hits;
+    auto& s = slots_[it->second];
+    s.last_use = ++clock_;
+    return s.data;
+}
+
+void Tier::insert(uint32_t layer, uint32_t expert, const void* src) {
+    const Key k{layer, expert};
+    auto it = map_.find(k);
+    if (it != map_.end()) {
+        std::memcpy(slots_[it->second].data, src, pool_.object_bytes());
+        slots_[it->second].last_use = ++clock_;
+        return;
+    }
+    const size_t idx = find_victim();
+    auto& s = slots_[idx];
+    if (s.state == Slot::Live) {
+        map_.erase(s.key);
+        ++stats_.evictions;
+    }
+    std::memcpy(s.data, src, pool_.object_bytes());
+    s.key = k;
+    s.state = Slot::Live;
+    s.last_use = ++clock_;
+    map_[k] = idx;
+}
+
+size_t Tier::find_victim() {
+    // oldest last_use wins
+    size_t best = 0;
+    uint64_t best_use = std::numeric_limits<uint64_t>::max();
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        if (slots_[i].state != Slot::Live) return i;
+        if (slots_[i].last_use < best_use) { best_use = slots_[i].last_use; best = i; }
+    }
+    return best;
+}
+--- end ------------------------------------------------------------------------
+
+--- src/bridge.cpp (abridged) --------------------------------------------------
+bool Bridge::serve(const Ids& ids, Workspace& ws) {
+    for (uint32_t e : ids) {
+        const void* p = tier_.lookup(layer_, e);
+        if (!p) {
+            if (!fetch_.get(layer_, e, ws.staging)) return false;  // synchronous
+            tier_.insert(layer_, e, ws.staging);
+            p = tier_.lookup(layer_, e);
+        }
+        ws.ptrs.push_back(p);
+    }
+    return true;
+}
+--- end ------------------------------------------------------------------------
+
+--- incident/2026-10-18.md -----------------------------------------------------
+Symptom: decode time on the merge-lists prompt is 176 ms/token at a 6 GB tier,
+while the same model at a 9.8 GB tier and a 512-token context is 44 ms/token.
+Both report roughly the same 90% hit rate. Memory clock drops to 7001 MHz (P3)
+for about seven seconds mid-run when clocks are not pinned.
+
+Measurements: 257 misses/token on the slow prompt vs 195 on the fast one; reads
+175 MB/token vs 132 MB/token. Reversing run order does not change which prompt
+is slow, so it is not the page cache. Pinning both SM and memory floors removes
+the P3 window but leaves the 4x gap.
+
+Constraint: routing semantics, pruning and expert substitution are off limits.
+Output must stay byte-identical: fed.i32, argmax.i32 and logits.f32 must match
+the current build for at least 1024 tokens on two prompts, at both 2K and 128K
+context. No host-RAM expert tier.
+--- end ------------------------------------------------------------------------
+
+Task: The tier evicts purely by oldest last_use, which is thrashing the hot set
+that the current token is about to need again on the next layer. Implement a
+next-use-aware victim choice behind a flag that defaults off, without changing
+which experts are ever resident at the same time as a *set* decision, and
+without changing the numbers. Then tell me exactly which invariants the flag
+must preserve for the byte-identical test to be a valid proof, and which parts
+of the code you would not touch. Keep the diff small and explain each hunk.
