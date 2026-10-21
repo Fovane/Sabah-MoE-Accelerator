@@ -71,12 +71,15 @@ def wash(path, root, write):
         text = open(path, "r", encoding="utf-8", errors="strict").read()
     except (UnicodeDecodeError, OSError):
         return False, False
-    # any spelling of a local path: two backslashes (raw JSON) or one (a log),
-    # the workspace prefix, or the model path
+    # any spelling of a local path. A JSON string value carries the path with
+    # doubled backslashes ("C:\\Projects\\..."), a raw log with single ones, so
+    # both spellings of the root have to be tested or the file is skipped.
+    root_double = root.replace("\\", "\\\\")
     looks_dirty = (
         DRIVE_RE.search(text) is not None
         or RE2.search(text) is not None
         or root.lower() in text.lower()
+        or root_double.lower() in text.lower()
         or "Strata-data" in text
         or "Sabah-MoE-Accelerator" in text
         or os.environ.get("USERNAME", "\x00") in text
