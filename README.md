@@ -388,8 +388,17 @@ list to attack.
 ## How to run it
 
 See [`docs/HOW_TO_RUN.md`](docs/HOW_TO_RUN.md) for the working commands: the
-one-time setup, the 128K setting, what to expect per regime, the slab size for
-each context, long prompts, and the clock pinning a measurement needs.
+one-time setup, the chat server (browser page and OpenAI API), the 128K setting,
+what to expect per regime, the slab size for each context, long prompts, and the
+clock pinning a measurement needs.
+
+One thing to know before you open a chat window: **the measured served rate is
+about 2 tok/s** (REPORT 30). The 33.3 tok/s headline is the narrow-prompt,
+short-context diag measurement - `"Hello"` routes 33,557 expert reads, a real
+chat prompt routes ~84,767, and on this rig the tier misses go to the SSD while
+the GPU sits at P8. The context is not the cause: 32K and 128K differ by under
+20%. Speed on this hardware needs fewer bytes per expert, a faster drive, or
+host RAM as a tier; all three are recorded out of scope.
 
 ## How to reproduce a measured number
 

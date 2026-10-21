@@ -50,17 +50,29 @@ answers, so that is what is documented here.
 ### What to expect from the first question
 
 The first question after the model loads is the slow one, and it is the fill, not
-the decode: the expert tier has to be pulled off the SSD once
-(REPORT 15.4, REPORT 25). Measured on the first question over the API:
+the decode: the expert tier has to be pulled off the SSD once. Measured on the
+server's own `print_timing` lines, not a stopwatch over HTTP (REPORT 30):
 
-| phase | time | rate |
-|---|---|---|
-| prompt eval (67 tokens) | 35.8 s | 1.97 tok/s |
-| decode (39 tokens) | 19.4 s | 1.96 tok/s |
+| what | context | prompt eval | decode | decode tok/s |
+|---|---|---|---|---|
+| first question | 131072 | 504.5 ms/tok | 509.3 ms/tok | 1.96 |
+| second question | 131072 | 186.5 ms/tok | 467.4 ms/tok | 2.14 |
+| 200-token generation | 131072 | 246.0 ms/tok | 509.1 ms/tok | 1.96 |
+| second question | 32768 | 149.2 ms/tok | 417.4 ms/tok | 2.40 |
 
-After the fill, a short-context answer settles around **33 tok/s** and a 128K
-window around **7.5 tok/s** (see the table below). A second, longer question is
-still a slow fill if its experts are not the warm ones.
+So plan for **about 2 tok/s** on a question. Two things that table says
+plainly:
+
+* it does not warm into the 33 tok/s headline - the 200-token run holds 1.96
+  tok/s to the last token;
+* the context is not the problem: 32K and 128K differ by under 20%.
+
+The GPU is idle while this happens (`4 % util, 487 MHz, P8`), so the wait is the
+expert fetch from the SSD, not the card. The 33.3 tok/s headline is a
+narrow-prompt measurement (`"Hello"`, 33,557 expert reads); a chat-templated
+Turkish prompt routes the wide set (~84,767 reads) and lands here (REPORT 28,
+REPORT 30). Expect a rate in this range for real prompts, and use the 32K
+window for chatting if you want the smaller of the two.
 
 ## One-time setup
 
