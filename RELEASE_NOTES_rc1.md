@@ -1,4 +1,4 @@
-# Release notes: `release-candidate-rc1`
+# Release notes: v1.1.0
 
 **What it is.** A streaming MoE inference runtime for machines that have the VRAM
 but not the RAM. An 83.6 GB model (`Qwen3.8-Flash-Next` IQ3_S, 48 blocks x 512
