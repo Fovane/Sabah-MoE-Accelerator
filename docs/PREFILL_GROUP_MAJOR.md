@@ -1,7 +1,9 @@
 # Layer-group-major prefill: design note
 
-Status: proposal, nothing implemented. Pinned llama.cpp `96ffdc4`. All model
-numbers below are read from the GGUF, not assumed.
+Status: implemented behind `SABAH_PREFILL_GROUP` (default 0); the equivalence
+gate is met only for the single-ubatch, G=4 case -- see section 6.1 for the
+measured envelope and the fallback that is in place. Pinned llama.cpp `96ffdc4`.
+All model numbers below are read from the GGUF, not assumed.
 
 Rev 2 adds the two conditions requested before coding:
 
@@ -233,13 +235,87 @@ boundary. *Requirement:* a block boundary must coincide with an ubatch boundary
 -- true by construction, a block is a whole `llama_decode` call and `init_batch`
 never splits across calls.
 
-**I5 -- hc handoff.** The only cross-block data outside the memory module is
-`res_hc` `[2560, 4]` f32 (40,960 B/token). It is tapped in the last group
-(`qwen4exp.cpp:422`, before the out-ids gather), written to a device buffer,
-copied to host, and read back as the group-0 input of the next block: same type,
-same layout, a bit copy. f16/bf16 here is out of scope and would void the
-byte-identical contract. At 32K that is 1.34 GB of host RAM, which is why
-`T > 32768` tiles (section 2).
+**I5 -- hc handoff.** `res_hc` `[2560, 4]` f32 (40,960 B/token) is **per-token,
+not per-sequence**: `res_hc` at layer 0 is a repeat of that token's embedding
+and every `build_hc_combine` is elementwise, so a token's hc never depends on
+another token's hc. There is therefore **no cross-block hc handoff**: the handoff
+is cross-*group*, inside one `llama_decode` call. Group 0 taps `res_hc`
+(`qwen4exp.cpp:422`, before the out-ids gather) into a device buffer, copies it
+to host, and group 1 reads it back as `inp_hidden`: same type, same layout, a bit
+copy, and only one ubatch's worth (40,960 B x ubatch tokens, e.g. 20.5 MB at
+512). That is why `T > 32768` tiles for a different reason (the group loop cannot
+span calls) and not because of hc size alone.
+
+Measured consequence (section 6.1): this handoff is not the failure mode. The
+device round-trip was dumped and is bit-exact per ubatch, and `hc_combine_L3`
+(end of group 0) is byte-identical to the reference for all four ubatches.
+
+## 6.2 Root cause of the multi-ubatch divergence (found, October 21)
+
+Time-boxed investigation, one hypothesis at a time. Each row is one measured
+test, 1888-token prompt unless stated, `-ub 2048` = one ubatch, `-ub 512` = 2/4
+ubatches, both sides on the same binary.
+
+| hypothesis | test | result |
+|---|---|---|
+| segmented CUDA graph recapture | SABAH_CUDA_GRAPH_SEG=0 both sides | DIFF, ruled out |
+| op offload by batch size | `GGML_OP_OFFLOAD_MIN_BATCH=1000000` both sides | DIFF, ruled out |
+| graph reuse across ubatches | `LLAMA_GRAPH_REUSE_DISABLE=1` | DIFF, ruled out |
+| stock CUDA graph path | `GGML_CUDA_DISABLE_GRAPHS=1` | DIFF, ruled out |
+| CPU-thread count | `-t 1` | run failed for another reason, ruled out |
+| H1: recurrent-memory replay (`rs_z`, `head`, `s_copy/src`, cell pos) | capture `state_predelta`/`conv_state_at` at layers 24/25/44/45/46, one ubatch | **identical**, ruled out |
+| H2: state from a second diag run | n/a, single ubatch already diverges at G=24 | superseded |
+| H3: `n_rs_seq > 0` snapshots | n_rs_seq is 0 in every run here | not applicable |
+| **fusion decisions** | `GGML_CUDA_DISABLE_FUSION=1` both sides | G=24 **IDENTICAL**, G=12 IDENTICAL, G=4 IDENTICAL |
+
+**Root cause: the layer-group split changes which fusion patterns the CUDA
+backend applies, and a fused kernel does not round like the unfused sequence.**
+
+`ggml_cuda_try_fuse` refuses any pattern whose 8-node window contains a
+Sabah-routed `MUL_MAT_ID` (`ggml/src/ggml-cuda/ggml-cuda.cu:3610-3614`):
+
+```
+3610:    for (int j = i; j < cgraph->n_nodes && j < i + 8; ++j) {
+3611:        if (ggml_cuda_sabah_owns_node(cgraph->nodes[j])) {
+3612:            return 0;
+3613:        }
+3614:    }
+```
+
+A group graph is a **contiguous subsequence** of the plain chunk graph, so a
+pattern that is whole in the chunk graph straddles a group boundary and is
+refused inside each group graph. The node-level bisect showed the first
+differing value at layer 20's `hc_norm` (a `RESHAPE` of the
+`rms_norm`+`mul` pair) at token 3, with a byte-identical input tensor and the
+same backend and op reported by the capture (`buf CUDA0`, `op RESHAPE`), i.e.
+the two nodes of that pair were fused in one path and not in the other.
+
+Why the other G values looked fine is positional luck: G=12 and G=4 put the
+boundaries where no pattern straddles, so their decisions coincide with the
+chunk graph's. G=24 puts a boundary inside one.
+
+This is the same risk class Phase 1.1's fusion trace exists to catch, and the
+`SABAH_FUSE_TRACE` + `tools/fuse_diff.py` check compares *within* one graph
+shape, so it cannot see a boundary move (section 6.3).
+
+Consequences, all measured:
+
+* **the feature cannot ship as byte-identical while fusion is default-on**,
+  because the plain path it must match keeps fusion on;
+* a "run the group path with fusion off" pairing is byte-identical to a
+  fusion-off reference, but not to the shipping default;
+* `G=2` (24 groups) does not reach the numerics at all: it aborts with
+  `GGML_ASSERT(buffer)` in `ggml-backend.cpp:218`, a separate defect that is
+  still open.
+
+### State of the feature
+
+Off by default (`SABAH_PREFILL_GROUP` unset = 0), and additionally gated to a
+single ubatch per `llama_decode` call. It stays out of the release: the
+byte-identical contract is not met for any multi-ubatch setting, and the single
+-ubatch setting has no disk-I/O win (one ubatch already streams the experts
+once per call).
+
 
 **I6 -- block partition.** The blocks are disjoint and cover `[0,T)`, and every
 token keeps its absolute position (the batch of a block uses the same `pos`
@@ -286,6 +362,70 @@ If any byte differs, the design is wrong; there is no tolerance.
 
 128K test (section 4, I2): prompt 124K tokens, `-c 131072`, 8K decode budget.
 This is also the first real deep-KV decode measurement (see section 10).
+
+## 6.1 Measured equivalence status (first implementation)
+
+The gate is **not** met for the multi-ubatch case. What was measured, all with
+`SABAH_DIAG_NAMES` captures paired per `(key, occ)` by `tools/cap_cmp.py`
+(both sides same `G`, `-b`, `-ub`, prompt, `-n`; SEG as stated):
+
+| case | G | ub | SEG | result |
+|---|---|---|---|---|
+| 53-token prompt, 1 ubatch | 4 | 512 | 48 | IDENTICAL |
+| 1888-token prompt, 1 ubatch | 4 | 2048 | 48 | DIFF (first logits row) |
+| 780-token prompt, **2 ubatches** | 24 | 512 | 0 | DIFF |
+| 1888-token prompt, **4 ubatches** | 48 (= no grouping) | 512 | 0 | IDENTICAL |
+| 1888-token prompt, 4 ubatches | 24 | 512 | 0 | DIFF |
+| 1888-token prompt, 4 ubatches | 12 | 512 | 0 | DIFF |
+| 1888-token prompt, 4 ubatches | 4 | 512 | 0 | DIFF |
+| 1888-token prompt, 4 ubatches | 4 | 512 | 0, `GGML_OP_OFFLOAD_MIN_BATCH=1e6` | DIFF |
+| 1888-token prompt, 1 ubatch | 4 | 2048 | 0 | IDENTICAL |
+| 1888-token prompt, 1 ubatch | 24 | 2048 | 0 | DIFF |
+
+Two conclusions, both measured, neither inferred:
+
+* the segmented CUDA graph is **not** the cause: the divergence persists with
+  `SABAH_CUDA_GRAPH_SEG=0` on both sides (so is the op-offload threshold);
+* grouping is exact only for the single-ubatch case **and only at G=4**. Any
+  second ubatch in the same `llama_decode` call, and G other than 4 with a single
+  ubatch, drift.
+
+Node-level bisect (`tools/b_step4.py`, 4 ubatches, G=4, SEG=0), pairing the
+two callback captures per (ubatch, node) in graph order for layer 4
+(`is_recr=1`, delta-net, `is_ple=0`; layer type read from the builder):
+
+* end of group 0, `hc_combine/hc_mixed/hc_norm/hc_gate/L3`: **all identical**,
+  so the hc carry and group 0 are bit-exact for all four ubatches;
+* at layer 4 the first differing real (compute-time) capture is
+  `hc_combine_L4` for ubatch 0, with `conv_output_raw_L4` (row 4),
+  `q_conv/k_conv_L4` (row 64), `final_output_L4` (row 4) and
+  `state_predelta_L4` (occ 2) also differing, while `conv_state_at_L4` (the conv
+  state gather, occ 0/1) and `hc_mixed_L4` occ 0/1 are identical. The input hc
+  to group 1 is bit-identical (the hc staging round-trip was dumped
+  device-side, `tools/b_dbg`), so the drift is inside layer 4's delta-net block
+  on replay, not in the hc handoff.
+
+Capture-instrument caveat that invalidated the first bisect: the diag eval
+callback fires **twice per node per graph compute** (16 captures for 4 ubatches
+in one run), so `occ` is `[ub0, ub0, ub1, ub1, ub2, ub2, ub3, ub3]` and cannot be
+mapped to tokens by row index. `index.jsonl` records `ne` and `nbytes` per
+capture, which is what makes the pairing unambiguous.
+
+### Fallback (implemented)
+
+Until the replay is fixed, group a decode call only when its whole batch is one
+ubatch and `G` divides the layer count with one group per 4 layers:
+
+```cpp
+group_batch = ... && n_tokens_all <= cparams.n_ubatch;
+```
+
+Multi-ubatch calls then take the plain path, which is the reference by
+construction, and `SABAH_PREFILL_GROUP=0` still restores it for every case.
+The measured envelope above says this fallback is *not* sufficient on its own --
+G must be restricted as well (G=4 verified IDENTICAL at 1 ubatch/SEG=0) -- so the
+fallback is a bisect aid, not an acceptance.
+
 
 ## 7. Cost model (measured basis: 0.96 GB/s, 120 GB per 2048-token chunk)
 
